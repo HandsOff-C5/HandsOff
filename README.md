@@ -1,7 +1,10 @@
 # Hands-Off
 
-Code repository for the **Hands-Off** capstone (Gauntlet AI) — a spatial, multimodal
-input layer for the desktop.
+Code repository for the **Hands-Off** capstone (Gauntlet AI) — a real-time, multimodal
+collaborative canvas: design systems together by speaking, pointing, and looking.
+
+> **Project plan:** see [`PLANNING.md`](./PLANNING.md) — the team's D01 planning document
+> (problem, technical approach, scope, and ownership).
 
 ## Repos
 
