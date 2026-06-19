@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   verify:
-    name: format · lint · typecheck · test · build
+    name: format · lint · compile · test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,14 +36,11 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Typecheck
+      - name: Compile (tsc -b)
         run: pnpm typecheck
 
       - name: Test
         run: pnpm test
-
-      - name: Build
-        run: pnpm build
 
   secret-scan:
     name: secret-scan

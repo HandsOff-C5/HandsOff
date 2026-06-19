@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "files": [],
+  "references": [
+    { "path": "packages/actions" },
+    { "path": "packages/contracts" },
+    { "path": "packages/cua" },
+    { "path": "packages/desktop" },
+    { "path": "packages/gesture" },
+    { "path": "packages/intent" },
+    { "path": "packages/speech" },
+    { "path": "packages/supervision" },
+    { "path": "packages/testkit" }
+  ]
+}

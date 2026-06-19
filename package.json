@@ -11,9 +11,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "typecheck": "pnpm -r --if-present typecheck",
+    "typecheck": "tsc -b",
     "test": "vitest run",
-    "build": "pnpm -r --if-present build"
+    "build": "tsc -b"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
