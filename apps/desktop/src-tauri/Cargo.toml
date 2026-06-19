@@ -1,0 +1,22 @@
+[package]
+name = "handsoff"
+version = "0.0.0"
+description = "HandsOff — multimodal desktop control plane for agent supervision"
+authors = ["HandsOff team"]
+edition = "2021"
+
+# The Tauri shell for HandsOff. Frontend lives in ../ (Vite + React); this crate
+# only opens the dashboard window and loads it. Area lanes (CUA, readiness,
+# storage) add commands in their own issues — placeholders stay un-wired here.
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Keep parity with the Tauri template's custom-protocol toggle.
+custom-protocol = ["tauri/custom-protocol"]
