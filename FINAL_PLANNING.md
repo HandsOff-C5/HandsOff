@@ -2,11 +2,11 @@
 
 **A notarized macOS desktop mission-control app — select live desktop context by pointing (primary referent), speak intent (primary semantics), turn the multimodal signal into a scoped agent task, execute it through a computer-use agent, and supervise the result through visible status, permissions, logs, and safety gates.**
 
-> **Current product plan.** Supersedes the D01 canvas-board framing in [`PLANNING.md`](./PLANNING.md). Canonical source of truth: `../HandsOff-Knowledge/FINAL_Product Planning.md`. This file mirrors it into the code repo so contributors land on the right product.
+> The product plan for Hands-Off — the problem, the technical approach, the scope, and who owns what.
 
 - **Team:** Jason Dijols, Naama Paulemont, Hirom Alarcon, Alexander Gouyet (4 challengers)
 - **Direction:** A — Combine classical ML/CV (MediaPipe hands) with LLM applications (intent parsing + computer-use agent)
-- **Date / version:** 2026-06-18 · v3.0 (supersedes `PLANNING.md` v2.2)
+- **Date / version:** 2026-06-18 · v1.0
 - **Deadline:** live demo Mon Jun 29 (D02)
 - **Repos:** `HandsOff` (this repo — Tauri macOS app) · `HandsOff-Knowledge` (team research & decisions)
 
@@ -18,7 +18,7 @@ AI engineers now run **many agents at once** — Claude Code, Codex, browser iss
 
 Voice carries task semantics; pointing/gaze carries the referent — without it the system can't resolve "that," "this window," "the Codex run," or "the issue over there." The result is **scoped, inspectable, reversible** agent work, not a gesture-controlled computer and not a diagramming app.
 
-**Demo success (Jun 29):** point at a GitHub issue and a Claude Code terminal, say *"use these to brief the coding agent,"* see the proposed task, approve it, watch CUA execute, and supervise the result — pausing, inspecting, approving, or rejecting by voice or gesture. **Stretch:** bimanual two-target selection, gaze/head cue, and a local offline STT provider.
+**Demo success (Jun 29):** point at a GitHub issue and a Claude Code terminal, say *"use these to brief the coding agent,"* see the proposed task, approve it, watch CUA execute, and supervise the result — pausing, inspecting, approving, or rejecting by voice or gesture.
 
 ## 2. Problem
 
@@ -43,15 +43,11 @@ Computer-use agents (CUA) finally **absorb the hard OS-action layer** — clicki
 3. **Point-to-select + speak** producing a **referent candidate with confidence**, fused with the transcript into a **strict intent schema** and a **visible plan-before-act** preview.
 4. **CUA execution** of approved plans through a typed adapter, with **tiered safety gates**, an **interrupt path** ("stop/pause"), live status, and an **audit trail** for replay.
 
-**Stretch (architect for, demo if stable):** bimanual two-target selection · local/offline Parakeet STT · gaze/head cue · multi-monitor calibration polish · CUA sandbox mode · richer trace export · voice response/TTS.
-
-**Out of scope (v1) — the scope firewall:** no diagramming/canvas editor · no **custom** computer-use driver (we use CUA) · no multi-user collaboration · no cloud accounts/auth · no plugin marketplace · no general browser-automation platform · no full local-STT packaging unless cloud STT already ships · no Linux/Windows · **no claim that "this works with all apps."**
-
 > **Scope firewall rule:** a task is allowed only if it supports the core loop — *select live context → speak intent → create scoped plan → approve → execute through CUA/agent → supervise result.* Everything else goes to `Cut / Deferred`. Any new gesture, command class, STT provider, or target-app promise requires project-lead approval.
 
-**Demo moment:** *client → gateway → auth* is gone; the moment is now **"use these to brief the coding agent."** Point at a GitHub issue and a Claude Code terminal, speak it, approve the proposed task, and watch the dashboard show the action trail, assumptions, screenshots, and result — then "pause," "inspect," "approve," or "reject" by voice or gesture.
+**Demo moment:** **"use these to brief the coding agent."** Point at a GitHub issue and a Claude Code terminal, speak it, approve the proposed task, and watch the dashboard show the action trail, assumptions, screenshots, and result — then "pause," "inspect," "approve," or "reject" by voice or gesture.
 
-**Timeline:** D01 framing pivoted to this plan (2026-06-18) · desktop shell + readiness next · CUA adapter + intent loop mid-cycle · demo rehearsal Jun 28 · **D02 live demo Mon Jun 29.**
+**Timeline:** desktop shell + readiness next · CUA adapter + intent loop mid-cycle · demo rehearsal Jun 28 · **live demo Mon Jun 29.**
 
 ## 4. Technical Approach
 
@@ -124,7 +120,7 @@ Recorded in full in `HandsOff-Knowledge/FINAL_Product Planning.md` (§ Architect
 | **AD1 — App shell** | **Tauri** (Rust + web), not Swift/SwiftUI — supervision UX is dashboard-heavy and ships fastest for a web-native team; CUA owns OS-action risk | proposed |
 | **AD2 — STT provider** | **Hosted streaming (AssemblyAI realtime)** behind a provider-agnostic `STTProvider` interface, push-to-talk capture; **Parakeet local deferred** | proposed |
 | **AD3 — CUA integration** | **External cua-driver behind a typed in-app adapter** (`checkPermissions, listApps, listWindows, getWindowState, click, type, setValue, screenshot`); **no custom driver** | proposed |
-| **AD4 — Gesture vocabulary** | **Minimal referent-selection set:** point/select, hold-to-lock, confirm, cancel, pause/stop; manipulation + bimanual deferred to stretch; manual fallback per gesture | proposed |
+| **AD4 — Gesture vocabulary** | **Minimal referent-selection set:** point/select, hold-to-lock, confirm, cancel, pause/stop; manual fallback per gesture | proposed |
 | **AD5 — Safety / risk policy** | **Four tiers** (read-only · reversible · mutating · destructive/external) with **plan-before-act** and **tiered approval**; clarify on low confidence; always-available interrupt; full audit trail | proposed |
 
 ### Stack
@@ -158,20 +154,18 @@ One **accountable** owner per workstream, mapped to the `area:*` labels. ⚠️ 
 | Release / signing / notarization (`area:release`) | Hirom | Naama | clean machine installs and runs a notarized artifact |
 | Market / positioning | Alexander | — | defensible why-now / why-us / why-not-existing |
 
-> ⚠️ **Load balance:** Naama owns project lead + desktop + STT + supervision — the heaviest lane. Resolve before the build sprint: shift desktop host or supervision accountability to another owner.
-
 ## 6. Deliverables & Definition of Done
 
 "Done" is **not** merged. Per the CI/CD rules in `HandsOff-Knowledge/docs/Github CICD.md`, "done" is **Demo Verified** — merged to `main`, then the issue's "Test / demo proof" run from the built app.
 
-| Deliverable | Requirement | Owner |
-| --- | --- | --- |
-| D02 Live presentation (10 min) | live *point + speak → plan → approve → CUA action → supervise* demo + learnings, Jun 29 | Naama |
-| Downloadable macOS app | signed/notarized DMG/ZIP; a clean machine can install and run it | Hirom |
-| Code repo (`HandsOff`) | Tauri scaffold, area-owned packages, runnable demo, setup + permissions guide | Naama |
-| Mission-control dashboard | live surface cards + session cards + approval queue + audit log | Naama |
-| Knowledge graph / ADRs | research digests + AD1–AD5 recorded in `HandsOff-Knowledge` | Jason |
-| Demo recording | session capture proving select → plan → approve → act → supervise | Alexander |
-| Backup demo mode | mocked CUA + mocked surfaces fallback if live automation fails | Hirom |
+| Deliverable | Requirement |
+| --- | --- |
+| Live presentation (10 min) | live *point + speak → plan → approve → CUA action → supervise* demo + learnings, Jun 29 |
+| Downloadable macOS app | signed/notarized DMG/ZIP; a clean machine can install and run it |
+| Code repo (`HandsOff`) | Tauri scaffold, area-owned packages, runnable demo, setup + permissions guide |
+| Mission-control dashboard | live surface cards + session cards + approval queue + audit log |
+| Knowledge graph / ADRs | research digests + AD1–AD5 recorded in `HandsOff-Knowledge` |
+| Demo recording | session capture proving select → plan → approve → act → supervise |
+| Backup demo mode | mocked CUA + mocked surfaces fallback if live automation fails |
 
 *Detailed research and the full ADR records live in `HandsOff-Knowledge`. Implementation tickets are tracked as GitHub issues under the milestones/epics (`#4`, `#5`, …).*
