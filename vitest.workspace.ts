@@ -11,4 +11,6 @@ export default defineWorkspace([
       passWithNoTests: true,
     },
   },
+  // The desktop app (React + jsdom) brings its own Vite/Vitest config.
+  "./apps/desktop/vite.config.ts",
 ]);

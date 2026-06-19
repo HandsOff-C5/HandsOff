@@ -17,5 +17,5 @@ pre-push:
       run: corepack pnpm test
     build:
       run: corepack pnpm build
-    # rust:  # enabled once apps/desktop/src-tauri/Cargo.toml lands (issue #15)
-    #   run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+    rust:
+      run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml

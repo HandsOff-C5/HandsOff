@@ -5,6 +5,8 @@ pnpm-lock.yaml
 **/*.gitkeep
 # Markdown docs keep their own hand-tuned formatting
 *.md
-# Tauri app (Rust + empty placeholders) is wired in its own task
-apps/
+# Generated / native artifacts (the desktop app's TS is formatted normally)
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+apps/desktop/src-tauri/icons
 docs/
