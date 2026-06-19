@@ -1,0 +1,10 @@
+node_modules
+**/dist
+**/build
+pnpm-lock.yaml
+**/*.gitkeep
+# Markdown docs keep their own hand-tuned formatting
+*.md
+# Tauri app (Rust + empty placeholders) is wired in its own task
+apps/
+docs/

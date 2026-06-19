@@ -1,0 +1,21 @@
+# Fast local guardrails. CI is authoritative — these can be skipped, CI cannot.
+# Install once: `corepack pnpm install && corepack pnpm exec lefthook install`
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      run: corepack pnpm format:check
+    lint:
+      run: corepack pnpm lint
+    typecheck:
+      run: corepack pnpm typecheck
+
+pre-push:
+  parallel: true
+  commands:
+    test:
+      run: corepack pnpm test
+    build:
+      run: corepack pnpm build
+    # rust:  # enabled once apps/desktop/src-tauri/Cargo.toml lands (issue #15)
+    #   run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
