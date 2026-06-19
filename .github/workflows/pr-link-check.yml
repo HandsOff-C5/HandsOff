@@ -1,0 +1,35 @@
+name: PR links an issue
+# Nudges every PR to carry a "Closes #<issue>" keyword so the project board can
+# auto-move the card. Non-blocking by default (comments a reminder, does not fail
+# the merge). To enforce: change core.warning -> core.setFailed below and add this
+# check to branch protection. Uses only GITHUB_TOKEN (no PAT needed).
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+permissions:
+  pull-requests: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const text = `${pr.body || ""}\n${pr.title || ""}`;
+            const closing = /\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#\d+/i;
+            const optedOut = /No issue:/i;
+            if (closing.test(text) || optedOut.test(text)) {
+              core.info("PR links an issue (or opted out). OK.");
+              return;
+            }
+            const marker = "<!-- pr-link-check -->";
+            const msg = `${marker}\n\n⚠️ This PR has no \`Closes #<issue>\` link, so the project board can't auto-move its card.\n\nAdd a line like \`Closes #123\` (or \`No issue: <reason>\` for a genuine chore). Editing the PR re-runs this check.`;
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: pr.number });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body: msg });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body: msg });
+            }
+            core.warning("PR is missing a closing-issue keyword.");
