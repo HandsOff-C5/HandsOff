@@ -1,7 +1,6 @@
 # Agent Guide — Hands-Off (code)
 
 Instructions for coding agents (Cursor, Claude Code, Codex) working in this repo.
-Humans: read this too — these are the team's working rules.
 
 ## Project context lives next door
 
