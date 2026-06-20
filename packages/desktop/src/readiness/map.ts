@@ -14,35 +14,21 @@ import {
 // dashboard renders (issue #17). No I/O, no platform calls — this is the
 // deterministic core the readiness feature is tested against.
 
-const LABELS: Record<CapabilityId, string> = {
-  camera: "Camera",
-  microphone: "Microphone",
-  cua: "Computer-use agent",
-  accessibility: "Accessibility",
-  "screen-recording": "Screen Recording",
-};
-
-// How each capability is measured. Used to fill in capabilities the native
-// probe omitted with a correctly-typed `unknown`.
-const KIND_BY_ID: Record<CapabilityId, CapabilityProbe["kind"]> = {
-  camera: "permission",
-  microphone: "permission",
-  cua: "daemon",
-  accessibility: "permission",
-  "screen-recording": "permission",
+// Per-capability metadata: the display label and how the capability is measured.
+// `id` is the single source of truth for `kind` — which decides the state
+// vocabulary and how a capability the native probe omitted is filled in.
+const CAPABILITIES: Record<CapabilityId, { label: string; kind: CapabilityProbe["kind"] }> = {
+  camera: { label: "Camera", kind: "permission" },
+  microphone: { label: "Microphone", kind: "permission" },
+  cua: { label: "Computer-use agent", kind: "daemon" },
+  accessibility: { label: "Accessibility", kind: "permission" },
+  "screen-recording": { label: "Screen Recording", kind: "permission" },
 };
 
 const COLOR_BY_LEVEL: Record<ReadinessLevel, ReadinessColor> = {
   ready: "green",
   attention: "yellow",
   blocked: "red",
-};
-
-// Worst-first ordering, so a list of levels can be reduced to the most severe.
-const LEVEL_SEVERITY: Record<ReadinessLevel, number> = {
-  ready: 0,
-  attention: 1,
-  blocked: 2,
 };
 
 type LevelDetail = Pick<CapabilityReadiness, "level" | "status" | "hint">;
@@ -106,7 +92,7 @@ function mapDaemon(state: DaemonState): LevelDetail {
 // Map one raw probe to its rendered readiness.
 export function mapCapability(probe: CapabilityProbe): CapabilityReadiness {
   const detail = probe.kind === "permission" ? mapPermission(probe.state) : mapDaemon(probe.state);
-  return { id: probe.id, label: LABELS[probe.id], ...detail };
+  return { id: probe.id, label: CAPABILITIES[probe.id].label, ...detail };
 }
 
 // Build the full, fixed-order readiness report. Capabilities absent from the
@@ -121,7 +107,7 @@ export function buildReadinessReport(probe: ReadinessProbe): CapabilityReadiness
     const found = byId.get(id);
     if (found) return mapCapability(found);
     const probeForMissing: CapabilityProbe =
-      KIND_BY_ID[id] === "daemon"
+      CAPABILITIES[id].kind === "daemon"
         ? { id, kind: "daemon", state: "unknown" }
         : { id, kind: "permission", state: "unknown" };
     return mapCapability(probeForMissing);
@@ -131,12 +117,4 @@ export function buildReadinessReport(probe: ReadinessProbe): CapabilityReadiness
 // The green/yellow/red the issue's acceptance criteria call for.
 export function readinessColor(level: ReadinessLevel): ReadinessColor {
   return COLOR_BY_LEVEL[level];
-}
-
-// The most severe level across a report — drives an overall readiness summary.
-export function worstLevel(report: readonly CapabilityReadiness[]): ReadinessLevel {
-  return report.reduce<ReadinessLevel>(
-    (worst, c) => (LEVEL_SEVERITY[c.level] > LEVEL_SEVERITY[worst] ? c.level : worst),
-    "ready",
-  );
 }

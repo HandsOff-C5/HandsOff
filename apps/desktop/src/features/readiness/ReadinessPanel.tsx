@@ -1,27 +1,19 @@
 import type { CapabilityReadiness } from "@handsoff/contracts";
 import { readinessColor } from "@handsoff/desktop";
 
-import { useReadinessProbe } from "./useReadinessProbe";
-
 interface ReadinessPanelProps {
-  // When provided, render this report instead of probing the host. Lets the
-  // dashboard simulate readiness states (and keeps the panel testable without a
-  // native backend). Defaults to the live probe.
-  report?: CapabilityReadiness[];
+  report: CapabilityReadiness[];
 }
 
 // First-run capability readiness (issue #17): a green/yellow/red row per
 // capability so the user can see whether HandsOff can see, hear, and act before
-// they try to.
+// they try to. Pure presentation — the screen owns the probe (useReadinessProbe).
 export function ReadinessPanel({ report }: ReadinessPanelProps) {
-  const live = useReadinessProbe();
-  const items = report ?? live;
-
   return (
     <section className="panel">
       <h2 className="panel__title">Readiness</h2>
       <ul className="readiness">
-        {items.map((capability) => {
+        {report.map((capability) => {
           const color = readinessColor(capability.level);
           return (
             <li key={capability.id} className="readiness__row">

@@ -51,10 +51,10 @@ describe("ReadinessPanel", () => {
     expect(screen.getByText(/Privacy & Security/)).toBeInTheDocument();
   });
 
-  it("falls back to an all-unknown report when no probe backend is present", () => {
-    // No `report` prop and no Tauri runtime (jsdom): every capability shows its
-    // unknown/attention state rather than crashing or blanking.
-    render(<ReadinessPanel />);
+  it("renders unknown/attention states for an all-unknown report", () => {
+    // The host probe degrades to all-unknown (no backend / malformed payload);
+    // the panel shows that state rather than blanking.
+    render(<ReadinessPanel report={buildReadinessReport({ capabilities: [] })} />);
     expect(screen.getAllByText("Not checked yet").length).toBeGreaterThan(0);
   });
 });

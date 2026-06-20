@@ -9,7 +9,7 @@ import {
 } from "@handsoff/contracts";
 import { describe, expect, it } from "vitest";
 
-import { buildReadinessReport, mapCapability, readinessColor, worstLevel } from "./map";
+import { buildReadinessReport, mapCapability, readinessColor } from "./map";
 
 const permission = (id: CapabilityId, state: PermissionState): CapabilityProbe => ({
   id,
@@ -116,37 +116,6 @@ describe("buildReadinessReport", () => {
     const cameras = report.filter((c) => c.id === "camera");
     expect(cameras).toHaveLength(1);
     expect(cameras[0]?.level).toBe("ready");
-  });
-});
-
-describe("worstLevel", () => {
-  it("is ready when everything is granted/running", () => {
-    const report = buildReadinessReport({
-      capabilities: [
-        permission("camera", "granted"),
-        permission("microphone", "granted"),
-        permission("accessibility", "granted"),
-        permission("screen-recording", "granted"),
-        daemon("cua", "running"),
-      ],
-    });
-    expect(worstLevel(report)).toBe("ready");
-  });
-
-  it("is blocked when any capability is blocked", () => {
-    const report = buildReadinessReport({
-      capabilities: [permission("camera", "granted"), permission("accessibility", "denied")],
-    });
-    expect(worstLevel(report)).toBe("blocked");
-  });
-
-  it("is attention when the worst is only attention", () => {
-    expect(
-      worstLevel([
-        mapCapability(permission("camera", "granted")),
-        mapCapability(daemon("cua", "stopped")),
-      ]),
-    ).toBe("attention");
   });
 });
 
