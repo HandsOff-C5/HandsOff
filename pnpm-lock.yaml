@@ -103,7 +103,11 @@ importers:
 
   packages/supervision: {}
 
-  packages/testkit: {}
+  packages/testkit:
+    dependencies:
+      '@handsoff/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
 packages:
 
