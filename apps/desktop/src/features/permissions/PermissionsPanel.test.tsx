@@ -1,4 +1,4 @@
-import type { CapabilityProbe } from "@handsoff/contracts";
+import { APP_NAME, type CapabilityProbe } from "@handsoff/contracts";
 import { buildReadinessReport } from "@handsoff/desktop";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -65,7 +65,7 @@ describe("PermissionsPanel", () => {
   it("confirms readiness when both grants are present", () => {
     render(<PermissionsPanel report={ALL_GRANTED} isChecking={false} onRecheck={noop} />);
     expect(
-      screen.getByText(/HandsOff can see the windows you point at and act/i),
+      screen.getByText(new RegExp(`${APP_NAME} can see the windows you point at and act`, "i")),
     ).toBeInTheDocument();
     // No setup steps when nothing is blocked.
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument();

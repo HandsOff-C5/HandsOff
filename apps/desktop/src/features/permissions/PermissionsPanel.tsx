@@ -1,4 +1,4 @@
-import type { CapabilityReadiness } from "@handsoff/contracts";
+import { APP_NAME, type CapabilityReadiness } from "@handsoff/contracts";
 import { permissionSetupState } from "@handsoff/desktop";
 
 interface PermissionsPanelProps {
@@ -35,8 +35,8 @@ export function PermissionsPanel({ report, isChecking, onRecheck }: PermissionsP
 
       {allReady ? (
         <p className="permissions__ok">
-          Accessibility and Screen Recording are granted. HandsOff can see the windows you point at
-          and act on your behalf.
+          Accessibility and Screen Recording are granted. {APP_NAME} can see the windows you point
+          at and act on your behalf.
         </p>
       ) : (
         <ul className="permissions__list">

@@ -1,3 +1,4 @@
+import { APP_NAME } from "@handsoff/contracts";
 import type { CapabilityId, CapabilityReadiness, PermissionGuidance } from "@handsoff/contracts";
 
 // Targeted macOS permission education for the two TCC grants that gate
@@ -24,20 +25,19 @@ const GUIDANCE: Record<(typeof EDUCATED_PERMISSION_IDS)[number], PermissionGuida
     settingsPath: "System Settings → Privacy & Security → Accessibility",
     steps: [
       "Open System Settings → Privacy & Security → Accessibility.",
-      "Find HandsOff in the list (use the + button to add it if it isn't there).",
-      "Turn the switch next to HandsOff on.",
+      `Find ${APP_NAME} in the list (use the + button to add it if it isn't there).`,
+      `Turn the switch next to ${APP_NAME} on.`,
       "Come back here and choose Re-check.",
     ],
   },
   "screen-recording": {
-    reason:
-      "HandsOff needs Screen Recording to see the windows you point at and capture target previews before it acts. Without it, perception and previews come back blank.",
+    reason: `${APP_NAME} needs Screen Recording to see the windows you point at and capture target previews before it acts. Without it, perception and previews come back blank.`,
     settingsPath: "System Settings → Privacy & Security → Screen Recording",
     steps: [
       "Open System Settings → Privacy & Security → Screen Recording.",
-      "Find HandsOff in the list (use the + button to add it if it isn't there).",
-      "Turn the switch next to HandsOff on.",
-      "Quit and reopen HandsOff if macOS asks, then choose Re-check.",
+      `Find ${APP_NAME} in the list (use the + button to add it if it isn't there).`,
+      `Turn the switch next to ${APP_NAME} on.`,
+      `Quit and reopen ${APP_NAME} if macOS asks, then choose Re-check.`,
     ],
   },
 };

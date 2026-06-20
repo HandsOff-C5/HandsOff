@@ -1,3 +1,5 @@
+import { APP_NAME } from "@handsoff/contracts";
+
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
 import { ReadinessPanel } from "../../features/readiness/ReadinessPanel";
@@ -14,7 +16,7 @@ export function Dashboard() {
   return (
     <main className="dashboard">
       <header className="dashboard__header">
-        <h1 className="dashboard__brand">HandsOff</h1>
+        <h1 className="dashboard__brand">{APP_NAME}</h1>
         <p className="dashboard__tagline">Point. Speak. Supervise your agents.</p>
       </header>
       <div className="dashboard__panels">

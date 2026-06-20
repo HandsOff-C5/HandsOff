@@ -1,3 +1,4 @@
+import { APP_NAME } from "@handsoff/contracts";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
@@ -13,9 +14,9 @@ describe("Dashboard", () => {
     expect(() => render(<Dashboard />)).not.toThrow();
   });
 
-  it("shows the HandsOff brand in the header", () => {
+  it("shows the app brand in the header", () => {
     render(<Dashboard />);
-    expect(screen.getByRole("heading", { level: 1, name: /handsoff/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: APP_NAME })).toBeInTheDocument();
   });
 
   it("renders a panel for each core-loop concern (no blank state)", () => {
@@ -46,6 +47,6 @@ describe("Dashboard", () => {
 
   it("composes the dashboard into the app shell", () => {
     expect(() => render(<App />)).not.toThrow();
-    expect(screen.getByRole("heading", { level: 1, name: /handsoff/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: APP_NAME })).toBeInTheDocument();
   });
 });
