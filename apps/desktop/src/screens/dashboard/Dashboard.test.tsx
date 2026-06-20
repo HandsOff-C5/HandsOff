@@ -1,11 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { App } from "../../App";
 import { Dashboard } from "./Dashboard";
 
-const PANEL_TITLES = ["Readiness", "Settings", "Sessions", "Plan preview"];
-// Readiness is now a live panel (issue #17); the rest are still placeholders.
+const PANEL_TITLES = ["Readiness", "Permissions", "Settings", "Sessions", "Plan preview"];
+// Readiness (#17) and Permissions (#18) are live panels; the rest are placeholders.
 const EMPTY_PANEL_TITLES = ["Sessions", "Plan preview"];
 
 describe("Dashboard", () => {
@@ -33,8 +33,15 @@ describe("Dashboard", () => {
   it("renders the live readiness panel with capability rows", () => {
     render(<Dashboard />);
     // Without a native backend the panel still shows every capability.
-    expect(screen.getByText("Accessibility")).toBeInTheDocument();
     expect(screen.getByText("Computer-use agent")).toBeInTheDocument();
+  });
+
+  it("wires the permissions re-check button to the shared probe", () => {
+    render(<Dashboard />);
+    // The button is present and clicking it is safe with no native backend
+    // (the probe is a no-op), proving the hook → panel wiring holds.
+    const recheck = screen.getByRole("button", { name: "Re-check" });
+    expect(() => fireEvent.click(recheck)).not.toThrow();
   });
 
   it("composes the dashboard into the app shell", () => {

@@ -84,3 +84,18 @@ export interface CapabilityReadiness {
   // One-line next action. Deep, targeted permission education is issue #18.
   hint?: string;
 }
+
+// Deep, targeted setup guidance for a macOS permission that gates computer-use
+// actions (issue #18). The Readiness panel's one-line `hint` is the at-a-glance
+// nudge; this is the full "what to grant, why, and exactly where" the user needs
+// when a permission is missing. Produced by the desktop lane (static content, not
+// IPC input), so it is a plain type with no schema.
+export interface PermissionGuidance {
+  // Why HandsOff needs this grant, in core-loop terms (see → act).
+  reason: string;
+  // The exact macOS System Settings location, e.g.
+  // "System Settings → Privacy & Security → Accessibility".
+  settingsPath: string;
+  // Ordered, copy-exact steps to grant the permission and re-check.
+  steps: string[];
+}
