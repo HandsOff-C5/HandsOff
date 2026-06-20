@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 import { App } from "../../App";
 import { Dashboard } from "./Dashboard";
 
-const PANEL_TITLES = ["Readiness", "Surfaces", "Sessions", "Plan preview"];
+const PANEL_TITLES = ["Readiness", "Sessions", "Plan preview"];
 // Readiness is now a live panel (issue #17); the rest are still placeholders.
-const EMPTY_PANEL_TITLES = ["Surfaces", "Sessions", "Plan preview"];
+const EMPTY_PANEL_TITLES = ["Sessions", "Plan preview"];
 
 describe("Dashboard", () => {
   it("mounts without crashing", () => {
@@ -28,6 +28,11 @@ describe("Dashboard", () => {
   it("renders empty-state copy in the remaining placeholder panels", () => {
     render(<Dashboard />);
     expect(screen.getAllByText(/yet\./i)).toHaveLength(EMPTY_PANEL_TITLES.length);
+  });
+
+  it("keeps desktop target selection out of the dashboard", () => {
+    render(<Dashboard />);
+    expect(screen.queryByRole("heading", { level: 2, name: "Surfaces" })).not.toBeInTheDocument();
   });
 
   it("renders the live readiness panel with capability rows", () => {
