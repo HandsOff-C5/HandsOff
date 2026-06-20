@@ -1,4 +1,5 @@
 import {
+  APP_NAME,
   CAPABILITY_IDS,
   type CapabilityId,
   type CapabilityProbe,
@@ -53,7 +54,7 @@ function mapPermission(state: PermissionState): LevelDetail {
       return {
         level: "attention",
         status: "Not requested yet",
-        hint: "Grant access when HandsOff prompts you.",
+        hint: `Grant access when ${APP_NAME} prompts you.`,
       };
     case "unknown":
       return {
