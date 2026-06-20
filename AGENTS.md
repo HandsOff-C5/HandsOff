@@ -29,6 +29,9 @@ A pnpm + TypeScript workspace; the macOS shell is a Tauri app.
 - Keep this repo code-only; research and notes belong in `HandsOff-Knowledge`.
 - Many small, focused files over few large ones. Prefer immutable data; handle errors explicitly.
 - Match the conventions already in the file you're editing.
+- Prefer small high-conviction comments over long cosmetic notes.
+- Do not use mocks, placeholders, fallbacks.
+- Always defer from backwards-compatibility. Do not keep dead code.
 
 ## Local checks (run before you push)
 
@@ -48,6 +51,10 @@ its runtime: `tsconfig.node.json` (e.g. `cua`, `actions`, `supervision`),
 (neutral: `contracts`, `intent`). Set yours to match where the code runs.
 
 `lefthook` runs format/lint/typecheck on pre-commit and test/build on pre-push as a fast guardrail. **CI is authoritative** — hooks can be skipped, CI cannot.
+
+## Performance
+
+**Context management:** Avoid last 20% of context window for large refactoring and multi-file features. Lower-sensitivity tasks (single edits, docs, simple fixes) tolerate higher utilization.
 
 ## CI/CD & GitHub workflow — follow this exactly
 
