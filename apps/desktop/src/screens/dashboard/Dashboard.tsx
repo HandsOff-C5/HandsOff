@@ -3,7 +3,6 @@ import { ReadinessPanel } from "../../features/readiness/ReadinessPanel";
 import { useReadinessProbe } from "../../features/readiness/useReadinessProbe";
 import { SessionsPanel } from "../../features/sessions/SessionsPanel";
 import { SettingsPanel } from "../../features/settings/SettingsPanel";
-import { SurfacesPanel } from "../../features/surfaces/SurfacesPanel";
 
 // Mission-control dashboard shell (issue #15). Branded header plus one panel per
 // core-loop concern; the readiness panel (issue #17) is wired to the host probe.
@@ -18,7 +17,6 @@ export function Dashboard() {
       <div className="dashboard__panels">
         <ReadinessPanel report={readiness} />
         <SettingsPanel />
-        <SurfacesPanel />
         <SessionsPanel />
         <PlanPreviewPanel />
       </div>
