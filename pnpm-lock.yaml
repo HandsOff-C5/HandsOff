@@ -101,7 +101,11 @@ importers:
 
   packages/speech: {}
 
-  packages/supervision: {}
+  packages/supervision:
+    dependencies:
+      '@handsoff/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/testkit: {}
 
