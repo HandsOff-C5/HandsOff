@@ -1,3 +1,4 @@
-// Command modules wired into the Tauri builder. The `cua` and `storage`
-// placeholders stay un-declared until their owning lanes implement them.
+// Command modules wired into the Tauri builder. The `cua` placeholder stays
+// un-declared until its owning lane implements it.
 pub mod readiness;
+pub mod storage;
