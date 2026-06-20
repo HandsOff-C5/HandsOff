@@ -175,7 +175,7 @@ One **accountable** owner per workstream, mapped to the `area:*` labels. ⚠️ 
 
 ## 6. Deliverables & Definition of Done
 
-**"Done" means Demo Verified.** Per the CI/CD rules in `HandsOff-Knowledge/docs/Github CICD.md`: merged to `main`, then the issue's "Test / demo proof" run from the built app.
+**"Done" means Demo Verified.** Per the CI/CD rules in `HandsOff-Knowledge/docs/github-cicd.md`: merged to `main`, then the issue's "Test / demo proof" run from the built app.
 
 | Deliverable | Requirement |
 | --- | --- |
