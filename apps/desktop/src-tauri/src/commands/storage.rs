@@ -8,22 +8,21 @@ const CONFIG_FILE_NAME: &str = "local-config.json";
 #[serde(rename_all = "camelCase")]
 pub struct LocalConfig {
     pub stt_provider: SttProvider,
-    pub demo_mode: bool,
 }
 
+// Mirrors `STT_PROVIDERS` in `packages/contracts/src/config.ts`; keep the two in
+// sync. Any value that fails to deserialize here (an unknown provider, a drifted
+// contract) recovers to the default, so the variants must match the contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SttProvider {
     #[serde(rename = "assemblyai")]
     AssemblyAi,
-    #[serde(rename = "mock")]
-    Mock,
 }
 
 impl Default for LocalConfig {
     fn default() -> Self {
         Self {
             stt_provider: SttProvider::AssemblyAi,
-            demo_mode: false,
         }
     }
 }
@@ -116,11 +115,10 @@ mod tests {
     }
 
     #[test]
-    fn update_persists_non_secret_provider_and_demo_mode() {
+    fn update_persists_the_selected_provider() {
         let path = config_path("update");
         let updated = LocalConfig {
-            stt_provider: SttProvider::Mock,
-            demo_mode: true,
+            stt_provider: SttProvider::AssemblyAi,
         };
 
         update_config_at_path(&path, updated.clone()).expect("updated config should be stored");
@@ -138,14 +136,6 @@ mod tests {
         fs::create_dir_all(path.parent().expect("test path should have a parent"))
             .expect("test directory should be created");
         fs::write(&sibling, "keep me").expect("sibling sentinel should be written");
-        update_config_at_path(
-            &path,
-            LocalConfig {
-                stt_provider: SttProvider::Mock,
-                demo_mode: true,
-            },
-        )
-        .expect("updated config should be stored");
 
         let reset = reset_config_at_path(&path).expect("reset should restore defaults");
 
@@ -165,7 +155,7 @@ mod tests {
         let path = config_path("invalid");
         fs::create_dir_all(path.parent().expect("test path should have a parent"))
             .expect("test directory should be created");
-        fs::write(&path, r#"{"sttProvider":"ambient","demoMode":true}"#)
+        fs::write(&path, r#"{"sttProvider":"ambient"}"#)
             .expect("invalid config should be written");
 
         let recovered = load_config_at_path(&path).expect("invalid config should recover");

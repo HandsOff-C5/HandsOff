@@ -8,18 +8,13 @@ describe("local config contract", () => {
     expect(result.success).toBe(true);
   });
 
-  it("accepts a mock STT provider with demo mode enabled", () => {
-    const result = safeParseLocalConfig({ sttProvider: "mock", demoMode: true });
-    expect(result.success).toBe(true);
-  });
-
   it("rejects unknown STT providers before they cross the UI boundary", () => {
-    const result = safeParseLocalConfig({ sttProvider: "ambient", demoMode: false });
+    const result = safeParseLocalConfig({ sttProvider: "ambient" });
     expect(result.success).toBe(false);
   });
 
-  it("rejects malformed demo mode values", () => {
-    const result = safeParseLocalConfig({ sttProvider: "assemblyai", demoMode: "yes" });
+  it("rejects a missing STT provider", () => {
+    const result = safeParseLocalConfig({});
     expect(result.success).toBe(false);
   });
 });

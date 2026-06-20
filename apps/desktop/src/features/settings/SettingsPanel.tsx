@@ -1,4 +1,4 @@
-import type { LocalConfig, SttProvider } from "@handsoff/contracts";
+import { STT_PROVIDERS, type SttProvider } from "@handsoff/contracts";
 
 import { useLocalConfig } from "./useLocalConfig";
 
@@ -10,12 +10,15 @@ const STATUS_COPY = {
   error: "Could not save settings",
 } as const;
 
+// Display labels for the contract's provider list. Options derive from
+// `STT_PROVIDERS`, so a new provider in the contract shows up here once it has a
+// label — the menu never drifts from the source of truth.
+const STT_PROVIDER_LABELS: Record<SttProvider, string> = {
+  assemblyai: "AssemblyAI",
+};
+
 export function SettingsPanel() {
   const { config, status, updateConfig, resetConfig } = useLocalConfig();
-
-  function update(next: Partial<LocalConfig>) {
-    void updateConfig({ ...config, ...next });
-  }
 
   return (
     <section className="panel settings">
@@ -31,21 +34,16 @@ export function SettingsPanel() {
         <select
           id="settings-stt-provider"
           value={config.sttProvider}
-          onChange={(event) => update({ sttProvider: event.target.value as SttProvider })}
+          onChange={(event) =>
+            void updateConfig({ sttProvider: event.target.value as SttProvider })
+          }
         >
-          <option value="assemblyai">AssemblyAI</option>
-          <option value="mock">Mock</option>
+          {STT_PROVIDERS.map((provider) => (
+            <option key={provider} value={provider}>
+              {STT_PROVIDER_LABELS[provider]}
+            </option>
+          ))}
         </select>
-      </label>
-
-      <label className="settings__toggle" htmlFor="settings-demo-mode">
-        <input
-          id="settings-demo-mode"
-          type="checkbox"
-          checked={config.demoMode}
-          onChange={(event) => update({ demoMode: event.target.checked })}
-        />
-        <span>Demo mode</span>
       </label>
 
       <button className="settings__reset" type="button" onClick={() => void resetConfig()}>

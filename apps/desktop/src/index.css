@@ -172,8 +172,7 @@ body {
   color: #f87171;
 }
 
-.settings__field,
-.settings__toggle {
+.settings__field {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -191,16 +190,6 @@ body {
   color: var(--text);
   padding: 8px 10px;
   font: inherit;
-}
-
-.settings__toggle {
-  justify-content: flex-start;
-}
-
-.settings__toggle input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
 }
 
 .settings__reset {
