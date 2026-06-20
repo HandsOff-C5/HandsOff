@@ -7,15 +7,8 @@ interface PermissionsPanelProps {
   onRecheck: () => void;
 }
 
-// Permission education for the two macOS grants that gate computer-use actions
-// (issue #18): Accessibility and Screen Recording. When either is missing it
-// shows targeted, copy-exact setup guidance; when both are granted it confirms
-// HandsOff can see and act. The Re-check button re-probes readiness so the user
-// can grant access in System Settings and confirm here without restarting.
-//
-// Pure presentation — the desktop lane owns which grants matter and their order
-// (permissionSetupState); the screen owns the probe (useReadinessProbe) and
-// passes the shared report, in-flight flag, and re-check handler down.
+// Setup guidance + re-check for the macOS grants that gate computer-use actions
+// (issue #18). Pure presentation; the lane owns the projection, the screen the probe.
 export function PermissionsPanel({ report, isChecking, onRecheck }: PermissionsPanelProps) {
   const { toGrant, allReady } = permissionSetupState(report);
 

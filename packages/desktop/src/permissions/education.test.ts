@@ -3,8 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { EDUCATED_PERMISSION_IDS, permissionEducation, permissionSetupState } from "./education";
 
-// Build a minimal CapabilityReadiness for a given id/level — only the fields the
-// education lookup reads (id, level) need to be meaningful.
+// Minimal CapabilityReadiness — the education lookup only reads id and level.
 const readiness = (id: CapabilityId, level: ReadinessLevel): CapabilityReadiness => ({
   id,
   label: id,
@@ -63,8 +62,7 @@ describe("permissionEducation — capabilities this lane does not own", () => {
 });
 
 describe("permissionSetupState", () => {
-  // A report carrying just the two educated grants at the given levels — other
-  // capabilities are irrelevant to the projection.
+  // A report of just the two educated grants at the given levels.
   const report = (
     accessibility: ReadinessLevel,
     screenRecording: ReadinessLevel,
