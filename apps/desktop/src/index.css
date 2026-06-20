@@ -144,3 +144,78 @@ body {
   font-size: 12px;
   color: var(--muted);
 }
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings__header .panel__title {
+  margin: 0;
+}
+
+.settings__status {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.settings__status--error {
+  color: #f87171;
+}
+
+.settings__field,
+.settings__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings__field select {
+  min-width: 140px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #111827;
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.settings__toggle {
+  justify-content: flex-start;
+}
+
+.settings__toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.settings__reset {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+
+.settings__reset:hover {
+  border-color: var(--accent);
+}

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { App } from "../../App";
 import { Dashboard } from "./Dashboard";
 
-const PANEL_TITLES = ["Readiness", "Surfaces", "Sessions", "Plan preview"];
+const PANEL_TITLES = ["Readiness", "Settings", "Surfaces", "Sessions", "Plan preview"];
 // Readiness is now a live panel (issue #17); the rest are still placeholders.
 const EMPTY_PANEL_TITLES = ["Surfaces", "Sessions", "Plan preview"];
 
