@@ -55,49 +55,66 @@ Computer-use agents (CUA) finally **absorb the hard OS-action layer** — clicki
 
 Six layers inside one Tauri desktop app: **Mission Control UI**, **Input Layer** (camera + MediaPipe + STT), **Intent Engine** (referent fusion + schema validation + clarification + safety classification), **Orchestration Layer** (action planner + approval gates + interrupt), **Action Adapters** (CUA + non-CUA + mock), and **Persistence/Telemetry** (config + audit + traces). Voice dominates (~80%); pointing supplies the deictic referent (~20%).
 
+> The diagram is annotated with the **what** (tech stack per layer) and the **how**
+> (the user interaction and goal on each edge). Tech choices trace to the Stack table
+> and ADRs (AD1–AD5) below.
+
 ```mermaid
 flowchart TB
-  subgraph Sensors["Sensors — webcam + mic · push-to-talk / explicit capture"]
-    Cam["Webcam"]
-    Mic["Microphone"]
+  subgraph Sensors["Sensors · commodity webcam + microphone"]
+    Cam["Webcam<br/>video frames in"]
+    Mic["Microphone<br/>16 kHz audio stream"]
   end
 
-  subgraph Input["Input Layer"]
-    Hand["MediaPipe hand landmarks → pointing referent (~20%)"]
-    STT["Streaming STT (AssemblyAI) → transcript (~80%)"]
+  subgraph Input["Input Layer · in-app perception (Tauri webview + Rust)"]
+    Hand["Hand tracking — MediaPipe Hand Landmarker<br/>calibration · smoothing · confidence<br/>landmark→screen referent · ~20% of intent"]
+    STT["Streaming STT — AssemblyAI realtime (AD2)<br/>behind STTProvider interface · ~300 ms P50<br/>transcript = task semantics · ~80% of intent"]
   end
 
-  subgraph Intent["Intent Engine"]
-    Fuse["Referent fusion — transcript + pointing candidate + dashboard selection + app/window metadata"]
-    Schema["Strict intent schema + LLM parser — intent_type, referent, risk_level, requires_approval, action_plan"]
-    Clar["Clarification policy — low confidence → ask to confirm"]
+  subgraph Intent["Intent Engine · strict + inspectable"]
+    Fuse["Referent fusion<br/>transcript + pointing candidate +<br/>dashboard selection + app/window AX metadata"]
+    Schema["LLM parser → strict JSON schema<br/>intent_type · referent · risk_level ·<br/>requires_approval · action_plan"]
+    Clar["Clarification policy<br/>confidence below threshold → ask, do not act"]
   end
 
   subgraph Orch["Orchestration Layer"]
-    Plan["Action planner → visible plan-before-act"]
-    Gate["Safety gates — 4-tier risk; mutating/destructive require approval"]
-    Int["Interrupt / pause / cancel"]
+    Plan["Action planner → plan-before-act preview<br/>assumptions · target · ordered steps"]
+    Gate["Safety gates — AD5 four-tier risk<br/>read-only + reversible auto-run<br/>mutating + destructive require approval"]
+    Int["Interrupt — stop / pause / cancel<br/>always available"]
   end
 
-  subgraph Act["Action Adapters"]
-    CUA["CUA adapter — external cua-driver, typed surface"]
-    Other["Non-CUA actions — terminal / agent dispatch / browser"]
-    Mock["Mock adapter — tests + backup demo"]
+  subgraph Act["Action Adapters · typed chokepoints"]
+    CUA["CUA adapter — external cua-driver daemon (AD3)<br/>checkPermissions · listApps · listWindows ·<br/>getWindowState · click · type · setValue · screenshot"]
+    Other["Non-CUA adapters — packages/actions<br/>terminal · agent-dispatch · browser<br/>mutations draft-only, don't send"]
+    Mock["Mock adapter<br/>tests + deterministic backup demo"]
   end
 
-  Super["Supervision — surface cards · session cards · approval queue · audit log · results"]
+  subgraph Super["Mission Control · Tauri dashboard + local persistence"]
+    Surf["Surface cards + manual-selection fallback"]
+    Sess["Session cards · planned → waiting → running →<br/>blocked → complete / failed"]
+    Appr["Approval queue"]
+    Audit["Audit log + screenshots · local config / traces → replay"]
+  end
 
-  Cam --> Hand
-  Mic --> STT
+  Cam -->|"point · hold-to-lock · confirm · cancel (AD4)"| Hand
+  Mic -->|"push-to-talk capture"| STT
   Hand --> Fuse
   STT --> Fuse
-  Fuse --> Schema --> Clar --> Plan --> Gate
-  Gate -->|approved| CUA
-  Gate -->|approved| Other
-  CUA --> Super
-  Other --> Super
-  Mock --> Super
-  Super -. "select context / supervise" .-> Sensors
+  Fuse --> Schema --> Clar
+  Clar -->|"confident"| Plan
+  Clar -.->|"ambiguous — re-prompt user"| Appr
+  Plan --> Gate
+  Appr -->|"approve / reject · voice · gesture · click"| Gate
+  Gate -->|"auto-run or approved"| CUA
+  Gate -->|"auto-run or approved"| Other
+  CUA -->|"status · screenshots · outcome"| Sess
+  Other --> Sess
+  Mock -.-> Sess
+  CUA --> Audit
+  Other --> Audit
+  Int -.->|"halt in-flight"| CUA
+  Int -.->|"halt in-flight"| Other
+  Super -. "select context · supervise · re-arm" .-> Sensors
 ```
 
 **Core flow:** MediaPipe produces a pointing referent candidate with confidence; streaming STT produces the transcript; the Intent Engine fuses **where + what** into a strict, machine-checkable schema with a `risk_level`; the Orchestration Layer renders a **plan-before-act** preview and gates it by risk; an approved plan executes through the **CUA adapter** (or a **non-CUA adapter** for tasks routed off the CUA path, e.g. spinning up a Codex terminal with bash access); the dashboard streams status, screenshots, assumptions, and an audit trail you can replay.
