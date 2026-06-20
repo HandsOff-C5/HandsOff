@@ -26,8 +26,8 @@ export function createSelectionAuditStore(): SelectionAuditStore {
   let records: readonly SurfaceSelectionRecord[] = [];
 
   return {
-    record(record) {
-      const parsed = safeParseSurfaceSelectionRecord(record);
+    record(selection) {
+      const parsed = safeParseSurfaceSelectionRecord(selection);
       if (!parsed.success) {
         throw new Error(`Invalid surface selection record: ${parsed.error.message}`);
       }
