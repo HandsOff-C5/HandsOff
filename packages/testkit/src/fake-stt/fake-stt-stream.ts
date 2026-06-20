@@ -32,15 +32,6 @@ export interface FakeSttStreamOptions {
   readonly startError?: SttError;
 }
 
-// Distributive Omit — `Omit<Union, K>` would keep only shared keys; this
-// preserves each member's own shape minus the omitted key, so an emit can carry
-// `text`/`confidence` (transcript) or `error` (error event).
-type EmitInput = SttStreamEvent extends infer T
-  ? T extends unknown
-    ? Omit<T, "receivedAt">
-    : never
-  : never;
-
 export class FakeSttStream implements SttStream {
   private listener: SttStreamListener | null = null;
   private readonly clock: () => number;
@@ -98,25 +89,24 @@ export class FakeSttStream implements SttStream {
   // --- test controls -----------------------------------------------------
 
   emitPartial(text: string, confidence: SttConfidence = 1, latencyMs: SttLatencyMs = 0): void {
-    this.emit({ kind: "partial", text, confidence, latencyMs });
+    this.dispatch({ kind: "partial", text, confidence, latencyMs, receivedAt: this.clock() });
   }
 
   emitFinal(text: string, confidence: SttConfidence = 1, latencyMs: SttLatencyMs = 0): void {
-    this.emit({ kind: "final", text, confidence, latencyMs });
+    this.dispatch({ kind: "final", text, confidence, latencyMs, receivedAt: this.clock() });
   }
 
   emitError(error: SttError): void {
-    this.emit({ kind: "error", error });
+    this.dispatch({ kind: "error", error, receivedAt: this.clock() });
   }
 
-  private emit(event: EmitInput): void {
+  private dispatch(event: SttStreamEvent): void {
     if (this.currentState !== "open" || this.listener === null) {
       throw new Error(
         `FakeSttStream: cannot emit while state is "${this.currentState}" — call start() first, or stop() is already in effect`,
       );
     }
-    const full = { ...event, receivedAt: this.clock() } as SttStreamEvent;
-    this.emitted.push(full);
-    this.listener(full);
+    this.emitted.push(event);
+    this.listener(event);
   }
 }

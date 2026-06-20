@@ -95,9 +95,6 @@ export class SttLifecycleError extends Error {
     super(sttError.message);
     this.name = "SttLifecycleError";
     this.sttError = sttError;
-    if (sttError.cause !== undefined) {
-      (this as { cause?: unknown }).cause = sttError.cause;
-    }
   }
 }
 

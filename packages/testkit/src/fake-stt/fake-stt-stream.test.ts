@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { SttLifecycleError } from "@handsoff/contracts";
+import { STT_ERROR_KINDS, SttLifecycleError } from "@handsoff/contracts";
 import type { FinalTranscript, SttStreamEvent, TranscriptEvent } from "@handsoff/contracts";
 
 import { FakeSttStream } from "./fake-stt-stream";
@@ -165,18 +165,13 @@ describe("FakeSttStream — errors", () => {
 
   it("supports every declared SttErrorKind", async () => {
     const { stream, events } = await openStream();
-    const kinds = [
-      "mic-permission",
-      "start-failed",
-      "network",
-      "provider-unavailable",
-      "aborted",
-    ] as const;
-    for (const kind of kinds) {
+    for (const kind of STT_ERROR_KINDS) {
       stream.emitError({ kind, message: kind });
     }
-    expect(events).toHaveLength(kinds.length);
-    expect(events.map((e) => (e.kind === "error" ? e.error.kind : e.kind))).toEqual([...kinds]);
+    expect(events).toHaveLength(STT_ERROR_KINDS.length);
+    expect(events.map((e) => (e.kind === "error" ? e.error.kind : e.kind))).toEqual([
+      ...STT_ERROR_KINDS,
+    ]);
   });
 });
 
