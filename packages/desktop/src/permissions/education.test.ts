@@ -1,7 +1,7 @@
 import type { CapabilityId, CapabilityReadiness, ReadinessLevel } from "@handsoff/contracts";
 import { describe, expect, it } from "vitest";
 
-import { EDUCATED_PERMISSION_IDS, permissionEducation } from "./education";
+import { EDUCATED_PERMISSION_IDS, permissionEducation, permissionSetupState } from "./education";
 
 // Build a minimal CapabilityReadiness for a given id/level — only the fields the
 // education lookup reads (id, level) need to be meaningful.
@@ -60,4 +60,42 @@ describe("permissionEducation — capabilities this lane does not own", () => {
       expect(permissionEducation(readiness(id, "attention"))).toBeUndefined();
     },
   );
+});
+
+describe("permissionSetupState", () => {
+  // A report carrying just the two educated grants at the given levels — other
+  // capabilities are irrelevant to the projection.
+  const report = (
+    accessibility: ReadinessLevel,
+    screenRecording: ReadinessLevel,
+  ): CapabilityReadiness[] => [
+    readiness("accessibility", accessibility),
+    readiness("screen-recording", screenRecording),
+  ];
+
+  it("reports allReady with nothing to grant when both are ready", () => {
+    const state = permissionSetupState(report("ready", "ready"));
+    expect(state.allReady).toBe(true);
+    expect(state.toGrant).toHaveLength(0);
+  });
+
+  it("pairs each not-ready grant with its guidance, in display order", () => {
+    const state = permissionSetupState(report("blocked", "attention"));
+    expect(state.allReady).toBe(false);
+    expect(state.toGrant.map((item) => item.capability.id)).toEqual([...EDUCATED_PERMISSION_IDS]);
+    expect(state.toGrant[0]?.guidance.settingsPath).toContain("Accessibility");
+    expect(state.toGrant[1]?.guidance.settingsPath).toContain("Screen Recording");
+  });
+
+  it("surfaces only the blocked grant when the other is ready", () => {
+    const state = permissionSetupState(report("ready", "blocked"));
+    expect(state.allReady).toBe(false);
+    expect(state.toGrant.map((item) => item.capability.id)).toEqual(["screen-recording"]);
+  });
+
+  it("does not claim allReady when the educated grants are absent from the report", () => {
+    const state = permissionSetupState([readiness("camera", "ready")]);
+    expect(state.allReady).toBe(false);
+    expect(state.toGrant).toHaveLength(0);
+  });
 });

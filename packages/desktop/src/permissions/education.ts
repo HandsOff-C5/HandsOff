@@ -47,13 +47,43 @@ function isEducatedPermission(id: CapabilityId): id is (typeof EDUCATED_PERMISSI
 }
 
 // Targeted setup guidance for a capability that is not yet ready. Returns
-// `undefined` for ready capabilities and for capabilities this lane does not own,
-// so a caller can render guidance for exactly the macOS grants that still block
-// computer-use actions.
+// `undefined` for ready capabilities and for capabilities this lane does not own.
 export function permissionEducation(
   capability: CapabilityReadiness,
 ): PermissionGuidance | undefined {
   if (capability.level === "ready") return undefined;
   if (!isEducatedPermission(capability.id)) return undefined;
   return GUIDANCE[capability.id];
+}
+
+// One educated macOS grant that still needs the user's attention, paired with its
+// setup guidance — the exact unit the permissions panel renders.
+export interface PermissionToGrant {
+  capability: CapabilityReadiness;
+  guidance: PermissionGuidance;
+}
+
+// The complete render state for the permissions panel (issue #18). The lane owns
+// which grants it educates on, their order, and the readiness lookup, so the view
+// can render directly without re-deriving any of it.
+export interface PermissionSetupState {
+  // Educated grants not yet ready, in display order, each with its guidance.
+  toGrant: PermissionToGrant[];
+  // True only when every educated grant is present in the report and ready, so an
+  // empty or partial report never reads as a false "all granted".
+  allReady: boolean;
+}
+
+// Project a readiness report onto the permission-setup work that remains.
+export function permissionSetupState(report: readonly CapabilityReadiness[]): PermissionSetupState {
+  const byId = new Map(report.map((capability) => [capability.id, capability]));
+  const present = EDUCATED_PERMISSION_IDS.map((id) => byId.get(id)).filter(
+    (capability): capability is CapabilityReadiness => capability !== undefined,
+  );
+  const toGrant = present.flatMap((capability) => {
+    const guidance = permissionEducation(capability);
+    return guidance ? [{ capability, guidance }] : [];
+  });
+  const allReady = present.length === EDUCATED_PERMISSION_IDS.length && toGrant.length === 0;
+  return { toGrant, allReady };
 }

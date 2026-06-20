@@ -1,5 +1,5 @@
 import type { CapabilityReadiness } from "@handsoff/contracts";
-import { EDUCATED_PERMISSION_IDS, permissionEducation } from "@handsoff/desktop";
+import { permissionSetupState } from "@handsoff/desktop";
 
 interface PermissionsPanelProps {
   report: CapabilityReadiness[];
@@ -13,15 +13,11 @@ interface PermissionsPanelProps {
 // HandsOff can see and act. The Re-check button re-probes readiness so the user
 // can grant access in System Settings and confirm here without restarting.
 //
-// Pure presentation — the screen owns the probe (useReadinessProbe) and passes
-// the shared report, in-flight flag, and re-check handler down.
+// Pure presentation — the desktop lane owns which grants matter and their order
+// (permissionSetupState); the screen owns the probe (useReadinessProbe) and
+// passes the shared report, in-flight flag, and re-check handler down.
 export function PermissionsPanel({ report, isChecking, onRecheck }: PermissionsPanelProps) {
-  const byId = new Map(report.map((capability) => [capability.id, capability]));
-  const educated = EDUCATED_PERMISSION_IDS.map((id) => byId.get(id)).filter(
-    (capability): capability is CapabilityReadiness => capability !== undefined,
-  );
-  const blocked = educated.filter((capability) => permissionEducation(capability) !== undefined);
-  const allGranted = educated.length > 0 && blocked.length === 0;
+  const { toGrant, allReady } = permissionSetupState(report);
 
   return (
     <section className="panel permissions">
@@ -37,32 +33,28 @@ export function PermissionsPanel({ report, isChecking, onRecheck }: PermissionsP
         </button>
       </div>
 
-      {allGranted ? (
+      {allReady ? (
         <p className="permissions__ok">
           Accessibility and Screen Recording are granted. HandsOff can see the windows you point at
           and act on your behalf.
         </p>
       ) : (
         <ul className="permissions__list">
-          {blocked.map((capability) => {
-            const guidance = permissionEducation(capability);
-            if (!guidance) return null;
-            return (
-              <li key={capability.id} className="permissions__item">
-                <h3 className="permissions__name">
-                  {capability.label}
-                  <span className="permissions__state"> · {capability.status}</span>
-                </h3>
-                <p className="permissions__reason">{guidance.reason}</p>
-                <p className="permissions__path">{guidance.settingsPath}</p>
-                <ol className="permissions__steps">
-                  {guidance.steps.map((step) => (
-                    <li key={step}>{step}</li>
-                  ))}
-                </ol>
-              </li>
-            );
-          })}
+          {toGrant.map(({ capability, guidance }) => (
+            <li key={capability.id} className="permissions__item">
+              <h3 className="permissions__name">
+                {capability.label}
+                <span className="permissions__state"> · {capability.status}</span>
+              </h3>
+              <p className="permissions__reason">{guidance.reason}</p>
+              <p className="permissions__path">{guidance.settingsPath}</p>
+              <ol className="permissions__steps">
+                {guidance.steps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            </li>
+          ))}
         </ul>
       )}
     </section>
