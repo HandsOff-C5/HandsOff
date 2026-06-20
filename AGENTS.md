@@ -51,13 +51,13 @@ its runtime: `tsconfig.node.json` (e.g. `cua`, `actions`, `supervision`),
 
 ## CI/CD & GitHub workflow — follow this exactly
 
-Canonical source: `../HandsOff-Knowledge/docs/Github CICD.md`. The load-bearing rules:
+Canonical source: `../HandsOff-Knowledge/docs/github-cicd.md`. The load-bearing rules:
 
-**Flow:** issue → focused branch → PR linked to the issue → CI + human review → squash-merge → demo verification → close issue.
+**Flow:** issue → focused branch → PR linked with a closing keyword → CI + human review → squash-merge / GitHub issue automation → demo verification → Demo Verified.
 
 - **`main` is protected.** No direct pushes, no force pushes. Every change lands through a PR.
 - **One branch per issue**, named `feat/<issue>-slug` or `fix/<issue>-slug` (e.g. `feat/15-tauri-shell`, `fix/41-cua-health`). Use `chore/`, `docs/`, `test/` for non-feature work.
-- **Open a draft PR early** and link the issue with **`Refs #<n>`** — never `Closes #<n>`. "Merged" is not done; **"done" is Demo Verified** (merged, then the issue's demo proof run from the built app).
+- **Open a draft PR early** and link the issue with **`Closes #<n>`** so GitHub issue/project automation can progress it. "Merged" is not demo-complete; **"done" is Demo Verified** (merged, then the issue's demo proof run from the built app).
 - **One PR = one purpose**, with acceptance criteria. Every PR must include:
   - the user-visible behavior it improves,
   - **test proof** (actual test/CI output — never "tests should pass"),
