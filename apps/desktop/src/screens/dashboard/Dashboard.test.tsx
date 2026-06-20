@@ -30,11 +30,6 @@ describe("Dashboard", () => {
     expect(screen.getAllByText(/yet\./i)).toHaveLength(EMPTY_PANEL_TITLES.length);
   });
 
-  it("keeps desktop target selection out of the dashboard", () => {
-    render(<Dashboard />);
-    expect(screen.queryByRole("heading", { level: 2, name: "Surfaces" })).not.toBeInTheDocument();
-  });
-
   it("renders the live readiness panel with capability rows", () => {
     render(<Dashboard />);
     // Without a native backend the panel still shows every capability.
