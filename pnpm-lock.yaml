@@ -35,6 +35,12 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@handsoff/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@handsoff/desktop':
+        specifier: workspace:*
+        version: link:../../packages/desktop
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
@@ -83,7 +89,11 @@ importers:
 
   packages/cua: {}
 
-  packages/desktop: {}
+  packages/desktop:
+    dependencies:
+      '@handsoff/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/gesture: {}
 

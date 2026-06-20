@@ -5,6 +5,8 @@ import { App } from "../../App";
 import { Dashboard } from "./Dashboard";
 
 const PANEL_TITLES = ["Readiness", "Surfaces", "Sessions", "Plan preview"];
+// Readiness is now a live panel (issue #17); the rest are still placeholders.
+const EMPTY_PANEL_TITLES = ["Surfaces", "Sessions", "Plan preview"];
 
 describe("Dashboard", () => {
   it("mounts without crashing", () => {
@@ -23,9 +25,16 @@ describe("Dashboard", () => {
     }
   });
 
-  it("renders empty-state copy in every panel", () => {
+  it("renders empty-state copy in the remaining placeholder panels", () => {
     render(<Dashboard />);
-    expect(screen.getAllByText(/yet\./i)).toHaveLength(PANEL_TITLES.length);
+    expect(screen.getAllByText(/yet\./i)).toHaveLength(EMPTY_PANEL_TITLES.length);
+  });
+
+  it("renders the live readiness panel with capability rows", () => {
+    render(<Dashboard />);
+    // Without a native backend the panel still shows every capability.
+    expect(screen.getByText("Accessibility")).toBeInTheDocument();
+    expect(screen.getByText("Computer-use agent")).toBeInTheDocument();
   });
 
   it("composes the dashboard into the app shell", () => {
