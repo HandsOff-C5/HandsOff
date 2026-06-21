@@ -84,3 +84,11 @@ export interface CapabilityReadiness {
   // One-line next action. Deep, targeted permission education is issue #18.
   hint?: string;
 }
+
+// Targeted setup guidance for a macOS permission that gates computer-use actions
+// (issue #18). Lane-produced static content, not IPC input, so it carries no schema.
+export interface PermissionGuidance {
+  reason: string;
+  settingsPath: string;
+  steps: string[];
+}
