@@ -8,13 +8,14 @@ import { z } from "zod";
 //   2. The mapped `CapabilityReadiness` the dashboard renders — produced by the
 //      desktop lane's pure mapping (`@handsoff/desktop`), consumed by the app.
 //
-// The capability set mirrors epic #5: camera, microphone, the computer-use
-// agent (CUA) daemon, and the two macOS TCC permissions (Accessibility and
-// Screen Recording).
+// The capability set mirrors epic #5: camera, microphone, speech recognition
+// (the on-device STT permission, #31), the computer-use agent (CUA) daemon, and
+// the two macOS TCC permissions (Accessibility and Screen Recording).
 
 export const CAPABILITY_IDS = [
   "camera",
   "microphone",
+  "speech-recognition",
   "cua",
   "accessibility",
   "screen-recording",

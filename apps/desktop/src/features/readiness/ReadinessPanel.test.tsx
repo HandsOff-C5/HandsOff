@@ -13,6 +13,7 @@ const SIMULATED: CapabilityReadiness[] = buildReadinessReport({
   capabilities: [
     { id: "camera", kind: "permission", state: "granted" },
     { id: "microphone", kind: "permission", state: "not-determined" },
+    { id: "speech-recognition", kind: "permission", state: "granted" },
     { id: "accessibility", kind: "permission", state: "denied" },
     { id: "screen-recording", kind: "permission", state: "granted" },
     { id: "cua", kind: "daemon", state: "running" },
@@ -30,6 +31,7 @@ describe("ReadinessPanel", () => {
     for (const label of [
       "Camera",
       "Microphone",
+      "Speech Recognition",
       "Computer-use agent",
       "Accessibility",
       "Screen Recording",
