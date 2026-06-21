@@ -60,6 +60,11 @@ describe("mapTurn", () => {
     expect(event.latencyMs).toBe(500);
     expect(event.receivedAt).toBe(1500);
   });
+
+  it("reports zero latency when a Turn arrives before Begin (no session start)", () => {
+    const event = mapTurn(turn(), { sessionStartMs: 0, now: 1_700_000_000_000 });
+    expect(event.latencyMs).toBe(0);
+  });
 });
 
 describe("parseServerMessage", () => {

@@ -37,8 +37,12 @@ function lastWordEndMs(words: readonly AssemblyAiWord[]): number {
 // yields a `PartialTranscript`; `true` yields a `FinalTranscript`.
 export function mapTurn(turn: AssemblyAiTurnMessage, timing: MapTurnTiming): TranscriptEvent {
   const confidence = meanConfidence(turn.words);
-  const audioEndMs = timing.sessionStartMs + lastWordEndMs(turn.words);
-  const latencyMs = Math.max(0, timing.now - audioEndMs);
+  // Until `Begin` has set a real session start, word timings can't be placed on
+  // the wall clock; report 0 rather than an epoch-scale garbage latency.
+  const latencyMs =
+    timing.sessionStartMs <= 0
+      ? 0
+      : Math.max(0, timing.now - (timing.sessionStartMs + lastWordEndMs(turn.words)));
 
   const base = {
     text: turn.transcript,

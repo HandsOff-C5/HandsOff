@@ -72,13 +72,21 @@ export function useSttStream(createStream: () => SttStream): SttStreamState {
   const start = useCallback(() => {
     setError(null);
     setPartial("");
+    // Release any prior session before opening a new one. A mid-stream error
+    // does not auto-close the stream (per contract), so a retry must stop the
+    // old mic + socket — otherwise two streams feed this same listener.
+    void streamRef.current?.stop();
     const stream = createStream();
     streamRef.current = stream;
     setStatus("listening");
     void stream.start(onEvent).catch((caught: unknown) => {
       if (!mounted.current) return;
+      // An `aborted` rejection means stop() raced an in-flight start — that's a
+      // user-initiated stop, not a failure to surface.
+      const error = toSttError(caught);
+      if (error.kind === "aborted") return;
       streamRef.current = null;
-      setError(toSttError(caught));
+      setError(error);
       setStatus("error");
     });
   }, [createStream, onEvent]);

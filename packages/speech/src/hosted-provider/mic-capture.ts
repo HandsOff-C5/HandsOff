@@ -93,19 +93,34 @@ export async function startMicCapture(options: MicCaptureOptions): Promise<MicCa
   }
 
   const inputRate = context.sampleRate;
-  const source = context.createMediaStreamSource(stream);
-  const processor = context.createScriptProcessor(PROCESSOR_BUFFER_SIZE, 1, 1);
+  let source: ReturnType<MinimalAudioContext["createMediaStreamSource"]>;
+  let processor: ScriptProcessorNode;
+  try {
+    source = context.createMediaStreamSource(stream);
+    processor = context.createScriptProcessor(PROCESSOR_BUFFER_SIZE, 1, 1);
 
-  processor.onaudioprocess = (event: AudioProcessingEvent) => {
-    const channel = event.inputBuffer.getChannelData(0);
-    const frame = resampleToPcm16(channel, inputRate, TARGET_SAMPLE_RATE);
-    if (frame.length > 0) options.onFrame(frame);
-  };
+    processor.onaudioprocess = (event: AudioProcessingEvent) => {
+      const channel = event.inputBuffer.getChannelData(0);
+      const frame = resampleToPcm16(channel, inputRate, TARGET_SAMPLE_RATE);
+      if (frame.length > 0) options.onFrame(frame);
+    };
 
-  source.connect(processor as unknown as AudioNode);
-  // ScriptProcessor only fires `onaudioprocess` while connected to a
-  // destination; routing through the context keeps the callback alive.
-  processor.connect((context as unknown as { destination: AudioNode }).destination);
+    source.connect(processor as unknown as AudioNode);
+    // ScriptProcessor only fires `onaudioprocess` while connected to a
+    // destination; routing through the context keeps the callback alive.
+    processor.connect((context as unknown as { destination: AudioNode }).destination);
+  } catch (error) {
+    // The mic is already live at this point; release it (and the context)
+    // before propagating so a graph-construction failure never leaves the
+    // microphone recording.
+    stream.getTracks().forEach((track) => track.stop());
+    await context.close();
+    throw new SttLifecycleError({
+      kind: "start-failed",
+      message: "Could not start the audio graph",
+      cause: error,
+    });
+  }
 
   let stopped = false;
   return {

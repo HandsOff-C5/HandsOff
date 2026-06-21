@@ -86,8 +86,11 @@ describe("TranscriptPanel", () => {
     act(() => latest().emitError({ kind: "network", message: "dropped" }));
     expect(screen.getByRole("alert")).toHaveTextContent(/connection dropped/i);
 
+    const erroredStream = latest();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await flush();
+    // The abandoned stream is released (mic + socket), not left feeding events.
+    expect(erroredStream.stopCallCount).toBe(1);
     // A new session starts; the error clears and new partials render.
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     act(() => latest().emitPartial("recovered"));

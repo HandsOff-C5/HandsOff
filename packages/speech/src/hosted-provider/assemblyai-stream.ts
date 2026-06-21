@@ -35,7 +35,7 @@ export interface AssemblyAiStreamOptions {
   readonly webSocketFactory?: (url: string) => WebSocket;
 }
 
-type State = "idle" | "open" | "stopped";
+type State = "idle" | "starting" | "open" | "stopped";
 
 function buildConnectUrl(token: string): string {
   const params = new URLSearchParams({
@@ -56,6 +56,10 @@ export function createAssemblyAiStream(options: AssemblyAiStreamOptions): SttStr
   let mic: MicCaptureHandle | null = null;
   let listener: SttStreamListener | null = null;
   let sessionStartMs = 0;
+  // Set when stop() is called while a start() is still in flight, so the
+  // pending start tears itself down at the next checkpoint instead of
+  // resurrecting a session the caller already abandoned.
+  let stopRequested = false;
 
   async function teardown(): Promise<void> {
     if (mic) {
@@ -72,6 +76,29 @@ export function createAssemblyAiStream(options: AssemblyAiStreamOptions): SttStr
         // Socket already closing/closed.
       }
       socket = null;
+    }
+  }
+
+  // Release everything, clear the listener, and mark the stream stopped, then
+  // reject the in-flight start() with `error`. Used on every start failure so
+  // no path leaves the mic or socket live.
+  async function failStart(error: unknown): Promise<never> {
+    await teardown();
+    listener = null;
+    state = "stopped";
+    throw error;
+  }
+
+  // Bail out of a pending start() if stop() was called while awaiting. Emits no
+  // transcripts (contract `aborted` semantics).
+  async function throwIfStopped(): Promise<void> {
+    if (stopRequested) {
+      await failStart(
+        new SttLifecycleError({
+          kind: "aborted",
+          message: "Listening was stopped before the stream opened",
+        }),
+      );
     }
   }
 
@@ -94,25 +121,29 @@ export function createAssemblyAiStream(options: AssemblyAiStreamOptions): SttStr
 
   return {
     async start(nextListener: SttStreamListener): Promise<void> {
-      if (state === "open") {
+      if (state === "open" || state === "starting") {
         throw new SttLifecycleError({
           kind: "start-failed",
-          message: "start() called on an already-open AssemblyAI stream",
+          message: "start() called on an already-active AssemblyAI stream",
         });
       }
+      state = "starting";
+      stopRequested = false;
       listener = nextListener;
 
       let token: string;
       try {
         token = await options.tokenProvider();
       } catch (error) {
-        state = "stopped";
-        throw new SttLifecycleError({
-          kind: "provider-unavailable",
-          message: "Could not obtain a streaming token",
-          cause: error,
-        });
+        return failStart(
+          new SttLifecycleError({
+            kind: "provider-unavailable",
+            message: "Could not obtain a streaming token",
+            cause: error,
+          }),
+        );
       }
+      await throwIfStopped();
 
       // Open the WebSocket and wait for it to connect (or fail) before
       // starting the mic, so a connect failure surfaces as a start rejection.
@@ -120,27 +151,28 @@ export function createAssemblyAiStream(options: AssemblyAiStreamOptions): SttStr
       ws.binaryType = "arraybuffer";
       socket = ws;
 
-      await new Promise<void>((resolve, reject) => {
-        const onOpen = () => {
-          ws.removeEventListener("error", onError);
-          resolve();
-        };
-        const onError = () => {
-          ws.removeEventListener("open", onOpen);
-          reject(
-            new SttLifecycleError({
-              kind: "provider-unavailable",
-              message: "Could not connect to the AssemblyAI streaming service",
-            }),
-          );
-        };
-        ws.addEventListener("open", onOpen, { once: true });
-        ws.addEventListener("error", onError, { once: true });
-      }).catch(async (error) => {
-        await teardown();
-        state = "stopped";
-        throw error;
-      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const onOpen = () => {
+            ws.removeEventListener("error", onError);
+            resolve();
+          };
+          const onError = () => {
+            ws.removeEventListener("open", onOpen);
+            reject(
+              new SttLifecycleError({
+                kind: "provider-unavailable",
+                message: "Could not connect to the AssemblyAI streaming service",
+              }),
+            );
+          };
+          ws.addEventListener("open", onOpen, { once: true });
+          ws.addEventListener("error", onError, { once: true });
+        });
+      } catch (error) {
+        return failStart(error);
+      }
+      await throwIfStopped();
 
       ws.addEventListener("message", (event: MessageEvent) => handleMessage(event.data));
       ws.addEventListener("error", () =>
@@ -164,19 +196,33 @@ export function createAssemblyAiStream(options: AssemblyAiStreamOptions): SttStr
           },
         });
       } catch (error) {
-        await teardown();
-        state = "stopped";
-        throw error;
+        return failStart(error);
+      }
+      await throwIfStopped();
+
+      // The socket may have closed during mic initialization (e.g. a rejected
+      // token); don't report a live session over a dead socket.
+      if (ws.readyState !== WebSocket.OPEN) {
+        return failStart(
+          new SttLifecycleError({
+            kind: "provider-unavailable",
+            message: "The streaming session closed before audio could start",
+          }),
+        );
       }
 
       state = "open";
     },
 
     async stop(): Promise<void> {
-      if (state === "stopped" || state === "idle") {
+      if (state === "stopped") return;
+      if (state === "idle") {
         state = "stopped";
         return;
       }
+      // "starting" or "open": signal any in-flight start to abort, release the
+      // mic + socket, and stop delivering events.
+      stopRequested = true;
       state = "stopped";
       await teardown();
       listener = null;
