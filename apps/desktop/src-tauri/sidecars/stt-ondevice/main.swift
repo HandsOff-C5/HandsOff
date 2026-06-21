@@ -58,22 +58,47 @@ final class OnDeviceSttSession {
         self.recognizer = recognizer
     }
 
-    // Ask for Speech + microphone authorization, then open the stream. Each
+    // Ensure Speech + microphone authorization, then open the stream. Each
     // failure maps to an `SttError` kind the transcript panel already classifies.
     func start() {
-        SFSpeechRecognizer.requestAuthorization { [weak self] speechAuth in
-            guard let self else { return }
-            guard speechAuth == .authorized else {
-                Emitter.error("mic-permission", "speech recognition not authorized (\(speechAuth.rawValue))")
+        ensureSpeechAuthorized { [weak self] in
+            self?.ensureMicAuthorized { [weak self] in
+                DispatchQueue.main.async { self?.beginRecognition() }
+            }
+        }
+    }
+
+    // Gate on Speech authorization. When the grant already exists we must NOT
+    // call `requestAuthorization`: its completion handler never fires for a helper
+    // process spawned by the app, deadlocking the start path even though the
+    // status is already `.authorized`. Only request when undetermined.
+    private func ensureSpeechAuthorized(_ next: @escaping () -> Void) {
+        if SFSpeechRecognizer.authorizationStatus() == .authorized {
+            next()
+            return
+        }
+        SFSpeechRecognizer.requestAuthorization { status in
+            guard status == .authorized else {
+                Emitter.error(
+                    "mic-permission", "speech recognition not authorized (\(status.rawValue))")
                 exit(1)
             }
-            AVCaptureDevice.requestAccess(for: .audio) { micGranted in
-                guard micGranted else {
-                    Emitter.error("mic-permission", "microphone access denied")
-                    exit(1)
-                }
-                DispatchQueue.main.async { self.beginRecognition() }
+            next()
+        }
+    }
+
+    // Same guard for the microphone: skip the request when already authorized.
+    private func ensureMicAuthorized(_ next: @escaping () -> Void) {
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
+            next()
+            return
+        }
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            guard granted else {
+                Emitter.error("mic-permission", "microphone access denied")
+                exit(1)
             }
+            next()
         }
     }
 
@@ -101,7 +126,8 @@ final class OnDeviceSttSession {
         do {
             try engine.start()
         } catch {
-            Emitter.error("start-failed", "audio engine failed to start: \(error.localizedDescription)")
+            Emitter.error(
+                "start-failed", "audio engine failed to start: \(error.localizedDescription)")
             exit(1)
         }
 
@@ -185,11 +211,20 @@ func requestPermissions() {
 
 let arguments = CommandLine.arguments
 
+// Retained for the whole process lifetime. These MUST be top-level globals, not
+// locals: the recognition session owns the AVAudioEngine + recognitionTask, and
+// if its last strong reference is a local that goes out of scope, ARC frees the
+// session — tearing down the engine — the instant `start()` returns, before any
+// audio is captured. The signal source is likewise retained so it stays active.
+var activeSession: OnDeviceSttSession?
+var activeTermSource: DispatchSourceSignal?
+
 if arguments.contains("--request-permissions") {
     requestPermissions()
 } else {
     let locale = parseLocale(arguments)
     guard let session = OnDeviceSttSession(localeIdentifier: locale) else { exit(1) }
+    activeSession = session
 
     // Stop cleanly when Rust terminates us.
     signal(SIGTERM, SIG_IGN)
@@ -199,6 +234,7 @@ if arguments.contains("--request-permissions") {
         exit(0)
     }
     termSource.resume()
+    activeTermSource = termSource
 
     session.start()
 }
