@@ -38,6 +38,17 @@ jobs:
         working-directory: apps/desktop/src-tauri
     steps:
       - uses: actions/checkout@v4
+      # `tauri::generate_context!` embeds the built frontend, so `../dist` must
+      # exist before clippy compiles the bin. Build it first.
+      - run: corepack enable
+        working-directory: .
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Build the frontend (dist) for generate_context
+        working-directory: .
+        run: pnpm install --frozen-lockfile && pnpm --filter @handsoff/desktop-app build
       - name: Install Rust (pinned by rust-toolchain.toml) + components
         run: rustup component add rustfmt clippy
       - run: cargo fmt --all --check
