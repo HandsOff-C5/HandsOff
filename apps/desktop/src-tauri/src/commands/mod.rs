@@ -2,3 +2,4 @@
 // un-declared until its owning lane implements it.
 pub mod readiness;
 pub mod storage;
+pub mod stt;

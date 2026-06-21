@@ -14,7 +14,8 @@ fn main() {
             commands::readiness::readiness_probe,
             commands::storage::load_local_config,
             commands::storage::update_local_config,
-            commands::storage::reset_local_config
+            commands::storage::reset_local_config,
+            commands::stt::stt_mint_token
         ])
         .run(tauri::generate_context!())
         .expect("error while running the HandsOff application");
