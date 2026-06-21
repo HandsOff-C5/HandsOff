@@ -27,13 +27,28 @@ permissions:
 jobs:
   rust:
     name: rust · fmt · clippy · audit · deny
-    runs-on: ubuntu-latest
+    # HandsOff is a macOS-only Tauri app (objc FFI + a swiftc sidecar). Building
+    # it on Linux pulls the GTK/webkit2gtk backend (glib-2.0), which the runner
+    # lacks — so clippy can't even compile. Run on macOS, the actual target,
+    # where the cfg(macos) code is what gets checked.
+    runs-on: macos-latest
     continue-on-error: true
     defaults:
       run:
         working-directory: apps/desktop/src-tauri
     steps:
       - uses: actions/checkout@v4
+      # `tauri::generate_context!` embeds the built frontend, so `../dist` must
+      # exist before clippy compiles the bin. Build it first.
+      - run: corepack enable
+        working-directory: .
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Build the frontend (dist) for generate_context
+        working-directory: .
+        run: pnpm install --frozen-lockfile && pnpm --filter @handsoff/desktop-app build
       - name: Install Rust (pinned by rust-toolchain.toml) + components
         run: rustup component add rustfmt clippy
       - run: cargo fmt --all --check
@@ -41,7 +56,7 @@ jobs:
       - name: cargo-audit (RustSec advisory DB)
         run: cargo install cargo-audit --locked && cargo audit
       - name: cargo-deny (licenses · bans · advisories · sources)
-        run: cargo install cargo-deny --locked && cargo deny --config ../../../deny.toml check
+        run: cargo install cargo-deny --locked && cargo deny check --config ../../../deny.toml
 
   dead-code:
     name: typescript · knip

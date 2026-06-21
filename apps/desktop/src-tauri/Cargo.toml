@@ -4,6 +4,7 @@ version = "0.0.0"
 description = "HandsOff — multimodal desktop control plane for agent supervision"
 authors = ["HandsOff team"]
 edition = "2021"
+publish = false
 
 # The Tauri shell for HandsOff. Frontend lives in ../ (Vite + React); this crate
 # only opens the dashboard window and loads it. Area lanes (CUA, readiness,
