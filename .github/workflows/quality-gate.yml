@@ -27,7 +27,11 @@ permissions:
 jobs:
   rust:
     name: rust · fmt · clippy · audit · deny
-    runs-on: ubuntu-latest
+    # HandsOff is a macOS-only Tauri app (objc FFI + a swiftc sidecar). Building
+    # it on Linux pulls the GTK/webkit2gtk backend (glib-2.0), which the runner
+    # lacks — so clippy can't even compile. Run on macOS, the actual target,
+    # where the cfg(macos) code is what gets checked.
+    runs-on: macos-latest
     continue-on-error: true
     defaults:
       run:
@@ -41,7 +45,7 @@ jobs:
       - name: cargo-audit (RustSec advisory DB)
         run: cargo install cargo-audit --locked && cargo audit
       - name: cargo-deny (licenses · bans · advisories · sources)
-        run: cargo install cargo-deny --locked && cargo deny --config ../../../deny.toml check
+        run: cargo install cargo-deny --locked && cargo deny check --config ../../../deny.toml
 
   dead-code:
     name: typescript · knip
