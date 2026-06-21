@@ -8,8 +8,12 @@ import { z } from "zod";
 // `SttProvider` enum in `apps/desktop/src-tauri/src/commands/storage.rs` mirrors
 // this list; keep the two in sync. The native side recovers any value it cannot
 // deserialize back to the default, so a drift surfaces as a silent reset.
+//
+// The two transcription modes (AD2): "native" = macOS on-device recognition
+// (default — no key, no network); "assemblyai" = hosted realtime streaming.
+// User-facing labels deliberately avoid the provider names; see SettingsPanel.
 
-export const STT_PROVIDERS = ["assemblyai"] as const;
+export const STT_PROVIDERS = ["native", "assemblyai"] as const;
 
 export const sttProviderSchema = z.enum(STT_PROVIDERS);
 export type SttProvider = z.infer<typeof sttProviderSchema>;
@@ -20,7 +24,7 @@ export const localConfigSchema = z.object({
 export type LocalConfig = z.infer<typeof localConfigSchema>;
 
 export const DEFAULT_LOCAL_CONFIG: LocalConfig = {
-  sttProvider: "assemblyai",
+  sttProvider: "native",
 };
 
 export function safeParseLocalConfig(input: unknown): z.SafeParseReturnType<unknown, LocalConfig> {

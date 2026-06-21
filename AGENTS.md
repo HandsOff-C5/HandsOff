@@ -52,6 +52,18 @@ its runtime: `tsconfig.node.json` (e.g. `cua`, `actions`, `supervision`),
 
 `lefthook` runs format/lint/typecheck on pre-commit and test/build on pre-push as a fast guardrail. **CI is authoritative** — hooks can be skipped, CI cannot.
 
+## Quality gate (`just check`)
+
+One entry point for humans, CI, and agents (implements `../HandsOff-Knowledge/docs/agent-dev-baseline.md` §7, issue #78):
+
+```bash
+just check       # authoritative TS gate — mirrors CI; green on a clean checkout
+just check-rust  # Rust/Tauri gate (rustfmt, clippy, tests) — opt-in
+just check-full  # + opt-in analyzers (knip, cargo audit/deny, semgrep); see `just setup`
+```
+
+Pinned toolchain is committed: `.node-version`, `rust-toolchain.toml`, `knip.json`, `deny.toml`. The Rust gate is opt-in/advisory until pre-existing `cargo fmt` drift in the desktop crate is cleaned up (child task of #78). Install `just` with `brew install just`. Shared agent MCP servers live in `.mcp.json` (Claude Code), `.cursor/mcp.json` (Cursor), and `.codex/config.toml` (Codex).
+
 ## Performance
 
 **Context management:** Avoid last 20% of context window for large refactoring and multi-file features. Lower-sensitivity tasks (single edits, docs, simple fixes) tolerate higher utilization.

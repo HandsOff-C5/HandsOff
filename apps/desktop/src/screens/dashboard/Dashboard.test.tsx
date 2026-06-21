@@ -5,8 +5,16 @@ import { describe, expect, it } from "vitest";
 import { App } from "../../App";
 import { Dashboard } from "./Dashboard";
 
-const PANEL_TITLES = ["Readiness", "Permissions", "Settings", "Sessions", "Plan preview"];
-// Readiness (#17) and Permissions (#18) are live panels; the rest are placeholders.
+const PANEL_TITLES = [
+  "Readiness",
+  "Permissions",
+  "Settings",
+  "Transcript",
+  "Sessions",
+  "Plan preview",
+];
+// Readiness (#17), Permissions (#18), and Transcript (#31) are live panels; the
+// rest are placeholders.
 const EMPTY_PANEL_TITLES = ["Sessions", "Plan preview"];
 
 describe("Dashboard", () => {

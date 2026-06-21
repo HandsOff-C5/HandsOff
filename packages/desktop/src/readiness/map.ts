@@ -21,6 +21,7 @@ import {
 const CAPABILITIES: Record<CapabilityId, { label: string; kind: CapabilityProbe["kind"] }> = {
   camera: { label: "Camera", kind: "permission" },
   microphone: { label: "Microphone", kind: "permission" },
+  "speech-recognition": { label: "Speech Recognition", kind: "permission" },
   cua: { label: "Computer-use agent", kind: "daemon" },
   accessibility: { label: "Accessibility", kind: "permission" },
   "screen-recording": { label: "Screen Recording", kind: "permission" },

@@ -1,0 +1,12 @@
+# Project-scoped Codex MCP servers (issue #78 / baseline §5). TOML, not JSON.
+[mcp_servers.cua-driver]
+command = "~/.local/bin/cua-driver"
+args = ["mcp"]
+
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp@latest"]

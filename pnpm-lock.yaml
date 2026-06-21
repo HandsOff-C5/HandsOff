@@ -41,6 +41,9 @@ importers:
       '@handsoff/desktop':
         specifier: workspace:*
         version: link:../../packages/desktop
+      '@handsoff/speech':
+        specifier: workspace:*
+        version: link:../../packages/speech
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
@@ -51,6 +54,9 @@ importers:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
     devDependencies:
+      '@handsoff/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
       '@tauri-apps/cli':
         specifier: ^2
         version: 2.11.3
@@ -99,7 +105,11 @@ importers:
 
   packages/intent: {}
 
-  packages/speech: {}
+  packages/speech:
+    dependencies:
+      '@handsoff/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/supervision:
     dependencies:

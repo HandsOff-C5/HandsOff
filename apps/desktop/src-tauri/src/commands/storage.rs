@@ -15,6 +15,10 @@ pub struct LocalConfig {
 // contract) recovers to the default, so the variants must match the contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SttProvider {
+    // macOS on-device recognition (default; AD2). Shown to the user as "Native".
+    #[serde(rename = "native")]
+    Native,
+    // Hosted realtime streaming. Shown to the user as "Realtime".
     #[serde(rename = "assemblyai")]
     AssemblyAi,
 }
@@ -22,7 +26,7 @@ pub enum SttProvider {
 impl Default for LocalConfig {
     fn default() -> Self {
         Self {
-            stt_provider: SttProvider::AssemblyAi,
+            stt_provider: SttProvider::Native,
         }
     }
 }
@@ -155,8 +159,7 @@ mod tests {
         let path = config_path("invalid");
         fs::create_dir_all(path.parent().expect("test path should have a parent"))
             .expect("test directory should be created");
-        fs::write(&path, r#"{"sttProvider":"ambient"}"#)
-            .expect("invalid config should be written");
+        fs::write(&path, r#"{"sttProvider":"ambient"}"#).expect("invalid config should be written");
 
         let recovered = load_config_at_path(&path).expect("invalid config should recover");
 

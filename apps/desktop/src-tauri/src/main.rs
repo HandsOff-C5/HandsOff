@@ -10,11 +10,18 @@ mod commands;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .manage(commands::stt_ondevice::OnDeviceSttState::default())
         .invoke_handler(tauri::generate_handler![
             commands::readiness::readiness_probe,
             commands::storage::load_local_config,
             commands::storage::update_local_config,
-            commands::storage::reset_local_config
+            commands::storage::reset_local_config,
+            commands::stt::stt_mint_token,
+            commands::stt_ondevice::stt_ondevice_start,
+            commands::stt_ondevice::stt_ondevice_stop,
+            commands::permissions::request_media_permissions,
+            commands::permissions::open_privacy_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running the HandsOff application");

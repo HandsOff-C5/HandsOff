@@ -49,6 +49,9 @@ describe("mapCapability — permission states", () => {
 
   it("uses the human label for the capability", () => {
     expect(mapCapability(permission("screen-recording", "granted")).label).toBe("Screen Recording");
+    expect(mapCapability(permission("speech-recognition", "granted")).label).toBe(
+      "Speech Recognition",
+    );
   });
 });
 

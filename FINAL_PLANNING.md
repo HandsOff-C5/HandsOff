@@ -69,7 +69,7 @@ flowchart TB
   subgraph Input["Input Layer · in-app perception (Tauri webview + Rust)"]
     Hand["Hand tracking — MediaPipe Hand Landmarker<br/>calibration · smoothing · confidence<br/>landmark→screen referent · ~20% of intent"]
     FaceEye["Face/eye tracking — MediaPipe Face Landmarker<br/>gaze/head cues · attention region<br/>referent disambiguation"]
-    STT["Streaming STT — AssemblyAI realtime (AD2)<br/>behind STTProvider interface · ~300 ms P50<br/>transcript = task semantics · ~80% of intent"]
+    STT["On-device STT — macOS (AD2)<br/>SFSpeechRecognizer (all Macs) · SpeechAnalyzer on 26 (later)<br/>behind SttStream · AssemblyAI deferred · ~80% of intent"]
   end
 
   subgraph Intent["Intent Engine · strict + inspectable"]
@@ -128,7 +128,7 @@ flowchart TB
 - **Safety on real desktop state** — CUA can mutate things; a four-tier risk policy gates mutating/destructive actions behind explicit approval (see AD5).
 - **Target reliability** — prioritize AX-rich surfaces (browsers, terminals, IDE/Cursor/Codex terminals, text docs) and report every action's outcome so the user always sees what happened (see AD3).
 - **Deliberate activation** — push-to-talk and dwell/hold gestures so the user explicitly arms every action; false-activation rate is a tracked metric.
-- **Latency** — hosted streaming STT (~300 ms P50) and a local perception loop keep command-to-plan within budget.
+- **Latency** — on-device STT (no network round-trip) and a local perception loop keep command-to-plan within budget.
 
 ### Architecture decisions (ADRs)
 
@@ -137,7 +137,7 @@ Recorded in full in `HandsOff-Knowledge/FINAL_Product Planning.md` (§ Architect
 | ADR | Decision | Status |
 | --- | --- | --- |
 | **AD1 — App shell** | **Tauri** (Rust + web) — supervision UX is dashboard-heavy and ships fastest for a web-native team; CUA owns OS-action risk | proposed |
-| **AD2 — STT provider** | **Hosted streaming (AssemblyAI realtime)** behind a provider-agnostic `STTProvider` interface, push-to-talk capture | proposed |
+| **AD2 — STT provider** | **macOS on-device STT as the default**, behind the provider-agnostic `SttStream` interface, push-to-talk capture — **no key, no network, no provisioning**. Baseline is on-device **`SFSpeechRecognizer`**, which builds with today's SDK and covers **all supported Macs (macOS 15–26)**; **`SpeechAnalyzer` is the preferred path on macOS 26** (tracked in #81, built with the macOS 26 SDK by a teammate on Xcode 26), added behind `if #available` with the `SFSpeechRecognizer` fallback. **Hosted streaming (AssemblyAI realtime) is deferred** behind the same seam; provisioned in a **fast-follow Cloudflare Worker** that holds the key (and other service keys) server-side — never shipped in the app | proposed |
 | **AD3 — CUA integration** | **External cua-driver behind a typed in-app adapter** (`checkPermissions, listApps, listWindows, getWindowState, click, type, setValue, screenshot`) | proposed |
 | **AD4 — Gesture vocabulary** | **Minimal referent-selection set:** point/select, hold-to-lock, confirm, cancel, pause/stop; target selection stays in the perception layer | proposed |
 | **AD5 — Safety / risk policy** | **Four tiers** (read-only · reversible · mutating · destructive/external) with **plan-before-act** and **tiered approval**; clarify on low confidence; always-available interrupt; full audit trail | proposed |
@@ -148,7 +148,7 @@ Recorded in full in `HandsOff-Knowledge/FINAL_Product Planning.md` (§ Architect
 | --- | --- | --- |
 | App shell | **Tauri** (Rust backend + web frontend) — AD1 | dashboard-heavy supervision UX ships fastest for a web-native team; CUA absorbs OS-action risk |
 | Hand + face/eye tracking | **MediaPipe Hand Landmarker + Face Landmarker** | real-time landmarks from a commodity webcam; we add calibration, smoothing, confidence, and landmark/gaze/head cues → referent mapping |
-| Speech / STT | **AssemblyAI realtime** (hosted streaming, ~300 ms P50) — AD2 | voice is ~80% of intent; hosted streaming hits the latency budget and keeps packaging and notarization simple |
+| Speech / STT | **macOS on-device STT** default (`SFSpeechRecognizer` across all supported Macs; `SpeechAnalyzer` preferred on macOS 26 — #81); **AssemblyAI realtime deferred** — AD2 | voice is ~80% of intent; on-device needs **no key, no network, no provisioning** and runs on **all supported Macs**, so a downloaded build transcribes with **zero setup** and audio never leaves the device. Hosted AssemblyAI stays behind the `SttStream` seam, provisioned later via a **fast-follow Cloudflare Worker** |
 | Intent engine | **Strict JSON schema + LLM parser + referent fusion** | machine-checkable, scoped, inspectable action plans |
 | Safety | **4-tier risk + plan-before-act + tiered approval** — AD5 | CUA can mutate real state; mutating/destructive actions are gated and audited |
 | CUA action | **External cua-driver behind a typed adapter** — AD3 | CUA owns OS-action complexity; the adapter is the single typed chokepoint for typing, retries, health/permission gating, and outcome reporting |
@@ -180,7 +180,7 @@ One **accountable** owner per workstream, mapped to the `area:*` labels. ⚠️ 
 | Deliverable | Requirement |
 | --- | --- |
 | Live presentation (10 min) | live *point + speak → plan → approve → CUA action → supervise* demo + learnings, Jun 29 |
-| Downloadable macOS app | signed/notarized DMG/ZIP; a clean machine can install and run it |
+| Downloadable macOS app | signed/notarized DMG/ZIP; a clean machine can install and run it — **including on-device STT (no API key, no network, nothing for the user to configure)** |
 | Code repo (`HandsOff`) | Tauri scaffold, area-owned packages, runnable demo, setup + permissions guide |
 | Mission-control dashboard | readiness, session cards, plan preview, approval queue, audit log, and results |
 | Knowledge graph / ADRs | research digests + AD1–AD5 recorded in `HandsOff-Knowledge` |

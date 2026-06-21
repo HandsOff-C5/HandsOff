@@ -1,0 +1,5 @@
+# Pin the Rust toolchain so every teammate and coding agent resolves the same
+# compiler + lints. Tracks issue #78 (baseline §7). channel = stable matches CI.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

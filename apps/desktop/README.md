@@ -25,6 +25,37 @@ WebView at it.
 > Frontend only? `corepack pnpm --filter @handsoff/desktop-app dev` serves the
 > UI at <http://localhost:1420> in a browser (no native window).
 
+## Speech-to-text (on-device, no setup)
+
+STT is **provisioned by HandsOff, not bring-your-own-key** (AD2). The **default
+provider is macOS on-device recognition**, so end users who download the app
+need **no API key, no network, and nothing to configure**. It targets **all
+supported Macs**: the baseline is on-device `SFSpeechRecognizer` (macOS 15–26,
+builds with the current SDK), with `SpeechAnalyzer` added as a macOS-26 fast-path
+(tracked in #81, built with the macOS 26 SDK). Audio never leaves the device.
+The OS prompts once for Speech Recognition + microphone permission, surfaced
+through the readiness/permissions panels.
+
+### Deferred: AssemblyAI hosted provider (optional)
+
+AssemblyAI realtime stays behind the same `SttStream` seam as a deferred,
+optional provider and is **off by default**. In production it will be
+provisioned by a **fast-follow Cloudflare Worker** that holds the key
+server-side; the app ships no credentials. For local dev against the hosted
+provider, `stt_mint_token` reads the key from the **Rust process environment**
+(not a Vite `.env` var — Vite only exposes `VITE_`-prefixed vars to the webview,
+and this secret must never reach the webview):
+
+```bash
+# export into the shell that launches Tauri (the Rust binary inherits it)
+set -a; source apps/desktop/.env.local; set +a   # .env.local is gitignored
+corepack pnpm --filter @handsoff/desktop-app tauri dev
+```
+
+`apps/desktop/.env.local` holds `ASSEMBLYAI_API_KEY=<dev key>` and is gitignored.
+Without it, `stt_mint_token` returns `missing-credentials` — expected when using
+the on-device default.
+
 ## Layout
 
 - `src/` — React frontend (`main.tsx` → `App` → `screens/dashboard/Dashboard`).
