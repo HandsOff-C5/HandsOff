@@ -4,3 +4,4 @@ export {
   type RawLandmark,
   type RawCategory,
 } from "./perception/parse";
+export * from "./confidence";
