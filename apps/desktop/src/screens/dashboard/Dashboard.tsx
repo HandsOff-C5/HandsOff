@@ -61,7 +61,17 @@ export function Dashboard() {
       </header>
       <div className="dashboard__panels">
         <ReadinessPanel report={report} />
-        <PermissionsPanel report={report} isChecking={isChecking} onRecheck={recheck} />
+        <PermissionsPanel
+          report={report}
+          isChecking={isChecking}
+          onRecheck={recheck}
+          onRequestMedia={() => {
+            // Fire the OS mic + speech prompts, then re-probe so the panel
+            // reflects the new grants.
+            void invoke("request_media_permissions").finally(() => recheck());
+          }}
+          onOpenSettings={(pane) => void invoke("open_privacy_settings", { pane })}
+        />
         <SettingsPanel
           config={config}
           status={status}

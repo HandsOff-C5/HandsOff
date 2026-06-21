@@ -85,8 +85,57 @@ fn speech_recognition_state() -> &'static str {
     }
 }
 
+// Microphone authorization (#31), read without prompting via
+// `AVCaptureDevice.authorizationStatusForMediaType:` with the `AVMediaTypeAudio`
+// constant. Note the AVAuthorizationStatus ordering differs from Speech's.
+#[cfg(target_os = "macos")]
+fn microphone_state() -> &'static str {
+    use std::ffi::{c_char, c_void};
+
+    #[link(name = "objc")]
+    extern "C" {
+        fn objc_getClass(name: *const c_char) -> *const c_void;
+        fn sel_registerName(name: *const c_char) -> *const c_void;
+        fn objc_msgSend();
+    }
+    #[link(name = "AVFoundation", kind = "framework")]
+    extern "C" {
+        // NSString * media-type constant exported by AVFoundation.
+        static AVMediaTypeAudio: *const c_void;
+    }
+
+    // Safety: `AVCaptureDevice` responds to `authorizationStatusForMediaType:`
+    // taking an NSString and returning an NSInteger. We reinterpret `objc_msgSend`
+    // with that exact signature (required on arm64); a null class degrades to
+    // "unknown".
+    let status = unsafe {
+        let class = objc_getClass(c"AVCaptureDevice".as_ptr());
+        if class.is_null() {
+            return "unknown";
+        }
+        let selector = sel_registerName(c"authorizationStatusForMediaType:".as_ptr());
+        let msg_send: extern "C" fn(*const c_void, *const c_void, *const c_void) -> isize =
+            std::mem::transmute(objc_msgSend as *const c_void);
+        msg_send(class, selector, AVMediaTypeAudio)
+    };
+
+    // AVAuthorizationStatus: 0 notDetermined, 1 restricted, 2 denied, 3 authorized.
+    match status {
+        0 => "not-determined",
+        1 => "restricted",
+        2 => "denied",
+        3 => "granted",
+        _ => "unknown",
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 fn accessibility_state() -> &'static str {
+    "unknown"
+}
+
+#[cfg(not(target_os = "macos"))]
+fn microphone_state() -> &'static str {
     "unknown"
 }
 
@@ -106,7 +155,7 @@ pub fn readiness_probe() -> Value {
     json!({
         "capabilities": [
             { "id": "camera", "kind": "permission", "state": "unknown" },
-            { "id": "microphone", "kind": "permission", "state": "unknown" },
+            { "id": "microphone", "kind": "permission", "state": microphone_state() },
             { "id": "speech-recognition", "kind": "permission", "state": speech_recognition_state() },
             { "id": "cua", "kind": "daemon", "state": "unknown" },
             { "id": "accessibility", "kind": "permission", "state": accessibility_state() },

@@ -86,3 +86,69 @@ describe("PermissionsPanel", () => {
     expect(button).toBeDisabled();
   });
 });
+
+// Microphone + speech accept/revoke controls (#31).
+const MEDIA_NOT_GRANTED = report([
+  { id: "microphone", kind: "permission", state: "not-determined" },
+  { id: "speech-recognition", kind: "permission", state: "not-determined" },
+]);
+
+const MEDIA_GRANTED = report([
+  { id: "microphone", kind: "permission", state: "granted" },
+  { id: "speech-recognition", kind: "permission", state: "granted" },
+]);
+
+describe("PermissionsPanel — microphone & speech", () => {
+  it("shows the microphone and speech statuses", () => {
+    render(<PermissionsPanel report={MEDIA_NOT_GRANTED} isChecking={false} onRecheck={noop} />);
+    expect(
+      screen.getByRole("heading", { level: 3, name: /Microphone & Speech/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Microphone · /)).toBeInTheDocument();
+    expect(screen.getByText(/Speech Recognition · /)).toBeInTheDocument();
+  });
+
+  it("requests the OS prompt when Allow is pressed", () => {
+    const onRequestMedia = vi.fn();
+    render(
+      <PermissionsPanel
+        report={MEDIA_NOT_GRANTED}
+        isChecking={false}
+        onRecheck={noop}
+        onRequestMedia={onRequestMedia}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Allow microphone & speech/ }));
+    expect(onRequestMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the right System Settings pane to manage a permission", () => {
+    const onOpenSettings = vi.fn();
+    render(
+      <PermissionsPanel
+        report={MEDIA_NOT_GRANTED}
+        isChecking={false}
+        onRecheck={noop}
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+    // The first "Open System Settings" button is microphone's.
+    fireEvent.click(screen.getAllByRole("button", { name: "Open System Settings" })[0]!);
+    expect(onOpenSettings).toHaveBeenCalledWith("microphone");
+  });
+
+  it("hides Allow and offers Manage once both are granted", () => {
+    render(
+      <PermissionsPanel
+        report={MEDIA_GRANTED}
+        isChecking={false}
+        onRecheck={noop}
+        onOpenSettings={noop}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Allow microphone & speech/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(2);
+  });
+});

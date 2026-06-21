@@ -155,17 +155,52 @@ func parseLocale(_ args: [String]) -> String {
     return Locale.current.identifier
 }
 
-let locale = parseLocale(CommandLine.arguments)
-guard let session = OnDeviceSttSession(localeIdentifier: locale) else { exit(1) }
-
-// Stop cleanly when Rust terminates us.
-signal(SIGTERM, SIG_IGN)
-let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-termSource.setEventHandler {
-    session.stop()
-    exit(0)
+func authString(_ status: SFSpeechRecognizerAuthorizationStatus) -> String {
+    switch status {
+    case .authorized: return "granted"
+    case .denied: return "denied"
+    case .restricted: return "restricted"
+    case .notDetermined: return "not-determined"
+    @unknown default: return "unknown"
+    }
 }
-termSource.resume()
 
-session.start()
+// `--request-permissions` mode (#31): trigger the macOS Speech + microphone
+// authorization prompts and report the resulting grants, then exit. Requesting
+// an already-determined permission does not re-prompt — it returns the current
+// state — so this is safe to call from the dashboard's "Allow" action whatever
+// the starting state. The dashboard re-probes readiness afterward.
+func requestPermissions() {
+    SFSpeechRecognizer.requestAuthorization { speechAuth in
+        AVCaptureDevice.requestAccess(for: .audio) { micGranted in
+            Emitter.emit([
+                "kind": "permissions",
+                "speech": authString(speechAuth),
+                "microphone": micGranted ? "granted" : "denied",
+            ])
+            exit(0)
+        }
+    }
+}
+
+let arguments = CommandLine.arguments
+
+if arguments.contains("--request-permissions") {
+    requestPermissions()
+} else {
+    let locale = parseLocale(arguments)
+    guard let session = OnDeviceSttSession(localeIdentifier: locale) else { exit(1) }
+
+    // Stop cleanly when Rust terminates us.
+    signal(SIGTERM, SIG_IGN)
+    let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    termSource.setEventHandler {
+        session.stop()
+        exit(0)
+    }
+    termSource.resume()
+
+    session.start()
+}
+
 RunLoop.main.run()

@@ -19,7 +19,9 @@ fn main() {
             commands::storage::reset_local_config,
             commands::stt::stt_mint_token,
             commands::stt_ondevice::stt_ondevice_start,
-            commands::stt_ondevice::stt_ondevice_stop
+            commands::stt_ondevice::stt_ondevice_stop,
+            commands::permissions::request_media_permissions,
+            commands::permissions::open_privacy_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running the HandsOff application");
