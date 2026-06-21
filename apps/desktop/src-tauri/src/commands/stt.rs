@@ -1,11 +1,34 @@
 // Mints short-lived AssemblyAI v3 streaming tokens for the webview (#31, AD2).
 //
+// NOTE (AD2): the *default* STT provider is macOS on-device recognition — no
+// key, no network, no provisioning, targeting all supported Macs. The baseline
+// is `SFSpeechRecognizer` (builds on the macOS 15 SDK, runs on macOS 15–26);
+// `SpeechAnalyzer` is a macOS-26 fast-path (tracked in #81, needs the 26 SDK).
+// AssemblyAI
+// hosted streaming is the DEFERRED provider behind the same `SttStream` seam —
+// this command exists for it but is off the critical path for the distributed
+// launch. It only runs when the app is configured to use the hosted provider.
+//
 // The AssemblyAI API key is a secret: it must never reach the Tauri webview or
 // `local-config.json`. Browsers also cannot set the `Authorization` header on a
 // WebSocket, so the v3 streaming API offers a temporary-token flow. This command
-// keeps the key server-side — read from the `ASSEMBLYAI_API_KEY` environment
-// variable — calls `GET https://streaming.assemblyai.com/v3/token`, and returns
-// only the single-use token. The webview opens the WS with `?token=<token>`.
+// keeps the key out of the webview by reading it from the `ASSEMBLYAI_API_KEY`
+// environment variable, calling `GET https://streaming.assemblyai.com/v3/token`,
+// and returning only the single-use token. The webview opens the WS with
+// `?token=<token>`.
+//
+// PROVISIONING (AD2): STT is a provisioned service, not bring-your-own-key.
+// This local-env mint is the *development* provisioning path — the key lives in
+// the developer's environment (e.g. `apps/desktop/.env.local`, gitignored) and
+// the mint runs in this Rust process. The Rust process is the CLIENT, so for the
+// *distributed* build this is NOT a server-side secret: a shipped binary's
+// environment is extractable, and bundling the account key would leak it to
+// every user. Before distribution the mint must move behind a HandsOff-operated
+// token service — planned as a fast-follow Cloudflare Worker that holds the
+// AssemblyAI key (and other service keys) server-side and authenticates each app
+// instance; the distributed app then requests a token over HTTPS and ships no
+// provider credentials. The `StreamingToken` contract and the webview WS flow
+// stay identical across both paths.
 //
 // The request construction is split into a pure `build_token_request` so its
 // shape (URL, header) is unit-tested without a key or the network. The live HTTP
