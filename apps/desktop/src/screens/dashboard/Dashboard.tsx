@@ -1,6 +1,7 @@
 import { APP_NAME, type SttStream } from "@handsoff/contracts";
-import { createAssemblyAiStream } from "@handsoff/speech";
+import { createOnDeviceSttStream } from "@handsoff/speech";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
@@ -14,15 +15,16 @@ function hasTauriBackend(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-// Build a live AssemblyAI stream whose token is minted host-side (#31), so the
-// API key never reaches the webview. Only available with a native backend; in a
+// Build the default on-device STT stream (#31, AD2): recognition runs in a
+// native Swift sidecar driven by the `stt_ondevice_*` commands — no API key, no
+// network, no provisioning. Only available with a native backend; in a
 // browser/jsdom context the transcript panel shows its unavailable state.
-function createLiveSttStream(): SttStream {
-  return createAssemblyAiStream({
-    tokenProvider: async () => {
-      const result = await invoke<{ token: string }>("stt_mint_token", { expiresInSeconds: 60 });
-      return result.token;
-    },
+// (AssemblyAI hosted streaming stays behind the same `SttStream` seam as the
+// deferred provider, provisioned later via a fast-follow Cloudflare Worker.)
+function createOnDeviceStream(): SttStream {
+  return createOnDeviceSttStream({
+    invoke: (command) => invoke(command),
+    listen: (event, handler) => listen(event, ({ payload }) => handler({ payload })),
   });
 }
 
@@ -33,7 +35,7 @@ function createLiveSttStream(): SttStream {
 // transcript panel (#31) turns speech into visible partial/final transcripts.
 export function Dashboard() {
   const { report, isChecking, recheck } = useReadinessProbe();
-  const createStream = hasTauriBackend() ? createLiveSttStream : undefined;
+  const createStream = hasTauriBackend() ? createOnDeviceStream : undefined;
   return (
     <main className="dashboard">
       <header className="dashboard__header">

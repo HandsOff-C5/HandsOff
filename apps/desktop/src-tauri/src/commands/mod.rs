@@ -3,3 +3,4 @@
 pub mod readiness;
 pub mod storage;
 pub mod stt;
+pub mod stt_ondevice;
