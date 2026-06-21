@@ -12,11 +12,13 @@
   "dependencies": {
     "@handsoff/contracts": "workspace:*",
     "@handsoff/desktop": "workspace:*",
+    "@handsoff/speech": "workspace:*",
     "@tauri-apps/api": "^2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@handsoff/testkit": "workspace:*",
     "@tauri-apps/cli": "^2",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
