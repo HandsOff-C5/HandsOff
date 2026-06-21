@@ -99,7 +99,11 @@ importers:
 
   packages/intent: {}
 
-  packages/speech: {}
+  packages/speech:
+    dependencies:
+      '@handsoff/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/supervision:
     dependencies:
