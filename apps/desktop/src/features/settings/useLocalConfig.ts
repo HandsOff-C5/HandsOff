@@ -2,7 +2,7 @@ import { DEFAULT_LOCAL_CONFIG, safeParseLocalConfig, type LocalConfig } from "@h
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
-type LocalConfigStatus = "ready" | "saved" | "saving" | "unavailable" | "error";
+export type LocalConfigStatus = "ready" | "saved" | "saving" | "unavailable" | "error";
 
 function hasTauriBackend(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

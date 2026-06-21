@@ -1,6 +1,6 @@
-import { STT_PROVIDERS, type SttProvider } from "@handsoff/contracts";
+import { STT_PROVIDERS, type LocalConfig, type SttProvider } from "@handsoff/contracts";
 
-import { useLocalConfig } from "./useLocalConfig";
+import type { LocalConfigStatus } from "./useLocalConfig";
 
 const STATUS_COPY = {
   ready: "Ready",
@@ -10,16 +10,26 @@ const STATUS_COPY = {
   error: "Could not save settings",
 } as const;
 
-// Display labels for the contract's provider list. Options derive from
-// `STT_PROVIDERS`, so a new provider in the contract shows up here once it has a
-// label — the menu never drifts from the source of truth.
+// User-facing labels for the two transcription modes (AD2). The provider names
+// are deliberately hidden: "Native" is macOS on-device recognition, "Realtime"
+// is hosted streaming. Options derive from `STT_PROVIDERS`, so a new mode shows
+// up here once it has a label — the menu never drifts from the contract.
 const STT_PROVIDER_LABELS: Record<SttProvider, string> = {
-  assemblyai: "AssemblyAI",
+  native: "Native",
+  assemblyai: "Realtime",
 };
 
-export function SettingsPanel() {
-  const { config, status, updateConfig, resetConfig } = useLocalConfig();
+interface SettingsPanelProps {
+  config: LocalConfig;
+  status: LocalConfigStatus;
+  updateConfig: (next: LocalConfig) => void | Promise<void>;
+  resetConfig: () => void | Promise<void>;
+}
 
+// Presentational settings view. The dashboard owns the config state (so changing
+// the transcription mode immediately re-targets the live stream) and passes it
+// down here.
+export function SettingsPanel({ config, status, updateConfig, resetConfig }: SettingsPanelProps) {
   return (
     <section className="panel settings">
       <div className="settings__header">
@@ -30,7 +40,7 @@ export function SettingsPanel() {
       </div>
 
       <label className="settings__field" htmlFor="settings-stt-provider">
-        <span>STT provider</span>
+        <span>Transcription</span>
         <select
           id="settings-stt-provider"
           value={config.sttProvider}
