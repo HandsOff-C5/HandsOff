@@ -125,7 +125,11 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
-  packages/gesture: {}
+  packages/gesture:
+    dependencies:
+      '@handsoff/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/intent:
     dependencies:
