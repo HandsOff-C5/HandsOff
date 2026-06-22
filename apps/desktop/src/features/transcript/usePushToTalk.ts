@@ -32,7 +32,10 @@ export interface PushToTalkState {
   cancel(): void;
 }
 
-export function usePushToTalk(createStream: () => SttStream): PushToTalkState {
+export function usePushToTalk(
+  createStream: () => SttStream,
+  options: { onUtterance?: (utterance: FinalTranscript) => void } = {},
+): PushToTalkState {
   const [status, setStatus] = useState<CaptureStatus>("idle");
   const [partial, setPartial] = useState("");
   const [utterances, setUtterances] = useState<readonly UtteranceEntry[]>([]);
@@ -46,6 +49,8 @@ export function usePushToTalk(createStream: () => SttStream): PushToTalkState {
   // capturing the factory at build time.
   const createStreamRef = useRef(createStream);
   createStreamRef.current = createStream;
+  const onUtteranceRef = useRef(options.onUtterance);
+  onUtteranceRef.current = options.onUtterance;
 
   const controllerRef = useRef<ReturnType<typeof createCaptureController> | null>(null);
   if (controllerRef.current === null) {
@@ -54,6 +59,7 @@ export function usePushToTalk(createStream: () => SttStream): PushToTalkState {
         if (!mounted.current) return;
         setUtterances((prev) => [...prev, toEntry(utterance)]);
         setPartial("");
+        onUtteranceRef.current?.(utterance);
       },
       onPartial: (text) => {
         if (mounted.current) setPartial(text);

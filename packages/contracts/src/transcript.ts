@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { PermissionState } from "./readiness";
 
 // The streaming speech-to-text provider contract (issue #30, AD2).
@@ -38,6 +40,17 @@ export interface PartialTranscript {
   readonly receivedAt: SttReceivedAtMs;
 }
 
+const transcriptBaseSchema = z.object({
+  text: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  latencyMs: z.number().nonnegative(),
+  receivedAt: z.number().nonnegative(),
+});
+
+export const partialTranscriptSchema = transcriptBaseSchema.extend({
+  kind: z.literal("partial"),
+});
+
 // Final transcript — stable; will not be revised. This is what the intent
 // engine fuses with the referent candidate.
 export interface FinalTranscript {
@@ -48,7 +61,16 @@ export interface FinalTranscript {
   readonly receivedAt: SttReceivedAtMs;
 }
 
+export const finalTranscriptSchema = transcriptBaseSchema.extend({
+  kind: z.literal("final"),
+});
+
 export type TranscriptEvent = PartialTranscript | FinalTranscript;
+
+export const transcriptEventSchema = z.discriminatedUnion("kind", [
+  partialTranscriptSchema,
+  finalTranscriptSchema,
+]);
 
 // Typed provider lifecycle error kinds. Surfaced as `SttErrorEvent` on the
 // stream listener for mid-stream failures, or carried by `SttLifecycleError`

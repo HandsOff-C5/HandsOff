@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { safeParseSurfaceSelectionRecord } from "./audit";
-import type { SurfaceSelectionRecord } from "./audit";
+import { safeParseSupervisionAuditEvent, safeParseSurfaceSelectionRecord } from "./audit";
+import type { SupervisionAuditEvent, SurfaceSelectionRecord } from "./audit";
 
 function validRecord(): SurfaceSelectionRecord {
   return {
@@ -79,6 +79,42 @@ describe("surface selection audit record contract", () => {
   it("rejects a non-ISO selection timestamp", () => {
     const base = validRecord();
     const result = safeParseSurfaceSelectionRecord({ ...base, selectedAt: "yesterday" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("supervision audit event contract", () => {
+  it("round-trips a fetched CUA call event", () => {
+    const event: SupervisionAuditEvent = {
+      kind: "cua_call",
+      sessionId: "session-1",
+      actionId: "action-1",
+      stepId: "step-1",
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      request: {
+        kind: "click",
+        target: { surface: validRecord().surface, elementIndex: 0 },
+      },
+      result: {
+        status: "succeeded",
+        summary: "Clicked selected target",
+      },
+    };
+
+    const result = safeParseSupervisionAuditEvent(event);
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data).toEqual(event);
+  });
+
+  it("rejects audit events with no action link", () => {
+    const result = safeParseSupervisionAuditEvent({
+      kind: "execution_finished",
+      sessionId: "session-1",
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      status: "succeeded",
+    });
+
     expect(result.success).toBe(false);
   });
 });

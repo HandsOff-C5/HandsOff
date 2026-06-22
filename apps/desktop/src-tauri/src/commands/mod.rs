@@ -1,5 +1,5 @@
-// Command modules wired into the Tauri builder. The `cua` placeholder stays
-// un-declared until its owning lane implements it.
+// Command modules wired into the Tauri builder.
+pub mod cua;
 pub mod permissions;
 pub mod readiness;
 pub mod storage;

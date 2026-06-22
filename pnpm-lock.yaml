@@ -35,15 +35,27 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@handsoff/actions':
+        specifier: workspace:*
+        version: link:../../packages/actions
       '@handsoff/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@handsoff/cua':
+        specifier: workspace:*
+        version: link:../../packages/cua
       '@handsoff/desktop':
         specifier: workspace:*
         version: link:../../packages/desktop
+      '@handsoff/intent':
+        specifier: workspace:*
+        version: link:../../packages/intent
       '@handsoff/speech':
         specifier: workspace:*
         version: link:../../packages/speech
+      '@handsoff/supervision':
+        specifier: workspace:*
+        version: link:../../packages/supervision
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
@@ -85,7 +97,15 @@ importers:
         specifier: ^6.0.0
         version: 6.4.3(@types/node@22.19.21)
 
-  packages/actions: {}
+  packages/actions:
+    dependencies:
+      '@handsoff/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@handsoff/testkit':
+        specifier: workspace:*
+        version: link:../testkit
 
   packages/contracts:
     dependencies:
@@ -93,7 +113,11 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
 
-  packages/cua: {}
+  packages/cua:
+    dependencies:
+      '@handsoff/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/desktop:
     dependencies:
@@ -103,7 +127,11 @@ importers:
 
   packages/gesture: {}
 
-  packages/intent: {}
+  packages/intent:
+    dependencies:
+      '@handsoff/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/speech:
     dependencies:

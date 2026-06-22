@@ -2,8 +2,8 @@
 //
 // Opens the mission-control dashboard window and wires the commands the frontend
 // invokes. Readiness reports host capability state; storage keeps non-secret
-// local preferences for settings. CUA command placeholders stay un-declared
-// until their owning lane (#19) lands.
+// local preferences for settings. CUA exposes a typed unavailable state until
+// the live driver transport lands.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
@@ -20,6 +20,12 @@ fn main() {
             commands::stt::stt_mint_token,
             commands::stt_ondevice::stt_ondevice_start,
             commands::stt_ondevice::stt_ondevice_stop,
+            commands::cua::cua_permissions,
+            commands::cua::cua_list_windows,
+            commands::cua::cua_get_window_state,
+            commands::cua::cua_click,
+            commands::cua::cua_type_text,
+            commands::cua::cua_set_value,
             commands::permissions::request_media_permissions,
             commands::permissions::open_privacy_settings
         ])

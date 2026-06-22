@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { approvalDecisionSchema, executionStatusSchema } from "./action-plan";
+import { cuaActionRequestSchema, cuaActionResultSchema, cuaWindowStateSchema } from "./cua";
+import { resolvedIntentSchema } from "./intent";
 import { selectedReferentSchema } from "./referent";
 import { surfaceSnapshotSchema } from "./surface";
 
@@ -32,4 +35,45 @@ export function safeParseSurfaceSelectionRecord(
   input: unknown,
 ): z.SafeParseReturnType<unknown, SurfaceSelectionRecord> {
   return surfaceSelectionRecordSchema.safeParse(input);
+}
+
+const auditEventBaseSchema = z.object({
+  sessionId: z.string().min(1),
+  actionId: z.string().min(1),
+  recordedAt: z.string().datetime(),
+});
+
+export const supervisionAuditEventSchema = z.discriminatedUnion("kind", [
+  auditEventBaseSchema.extend({
+    kind: z.literal("intent_created"),
+    intent: resolvedIntentSchema,
+  }),
+  auditEventBaseSchema.extend({
+    kind: z.literal("approval_decided"),
+    approval: approvalDecisionSchema,
+  }),
+  auditEventBaseSchema.extend({
+    kind: z.literal("cua_state_captured"),
+    phase: z.enum(["pre", "post"]),
+    stepId: z.string().min(1),
+    state: cuaWindowStateSchema,
+  }),
+  auditEventBaseSchema.extend({
+    kind: z.literal("cua_call"),
+    stepId: z.string().min(1),
+    request: cuaActionRequestSchema,
+    result: cuaActionResultSchema,
+  }),
+  auditEventBaseSchema.extend({
+    kind: z.literal("execution_finished"),
+    status: executionStatusSchema,
+    result: cuaActionResultSchema.optional(),
+  }),
+]);
+export type SupervisionAuditEvent = z.infer<typeof supervisionAuditEventSchema>;
+
+export function safeParseSupervisionAuditEvent(
+  input: unknown,
+): z.SafeParseReturnType<unknown, SupervisionAuditEvent> {
+  return supervisionAuditEventSchema.safeParse(input);
 }

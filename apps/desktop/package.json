@@ -10,8 +10,12 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@handsoff/actions": "workspace:*",
     "@handsoff/contracts": "workspace:*",
+    "@handsoff/cua": "workspace:*",
     "@handsoff/desktop": "workspace:*",
+    "@handsoff/intent": "workspace:*",
+    "@handsoff/supervision": "workspace:*",
     "@handsoff/speech": "workspace:*",
     "@tauri-apps/api": "^2",
     "react": "^18.3.1",
