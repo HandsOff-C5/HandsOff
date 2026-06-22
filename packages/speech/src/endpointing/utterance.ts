@@ -4,8 +4,8 @@ import type { FinalTranscript, TranscriptEvent } from "@handsoff/contracts";
 // final utterance (#32, AD2).
 //
 // A provider may emit several `FinalTranscript`s during one push-to-talk hold —
-// the on-device sidecar finalizes on natural pauses, AssemblyAI per turn — plus
-// a stream of revised partials. The intent engine wants *one* stable utterance
+// on-device native recognition finalizes on natural pauses, AssemblyAI per turn —
+// plus a stream of revised partials. The intent engine wants *one* stable utterance
 // per capture ("one utterance becomes one final transcript"), so the scoped plan
 // is built from the whole spoken command, not a mid-sentence fragment.
 //

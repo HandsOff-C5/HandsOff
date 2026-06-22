@@ -16,8 +16,9 @@ function hasTauriBackend(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-// "Native" mode (#31, AD2): recognition runs in a native Swift sidecar driven by
-// the `stt_ondevice_*` commands — no API key, no network, no provisioning.
+// "Native" mode (#31, AD2): recognition runs in the app process via native
+// Objective-C (SFSpeechRecognizer + AVAudioEngine) driven by the `stt_ondevice_*`
+// commands — no API key, no network, no provisioning.
 function createOnDeviceStream(): SttStream {
   return createOnDeviceSttStream({
     invoke: (command) => invoke(command),

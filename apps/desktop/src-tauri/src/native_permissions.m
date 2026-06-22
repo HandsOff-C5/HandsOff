@@ -5,6 +5,9 @@
 
 typedef void (*HandsOffSttEventCallback)(const char *json);
 
+// Emit a typed native event as JSON. The Rust side parses into strongly-typed
+// structs (see stt_ondevice.rs) that validate the structure and fail loudly on
+// malformed input. Field names use snake_case to match Rust conventions.
 static void handsoff_emit_stt_event(HandsOffSttEventCallback callback, NSDictionary *object) {
   if (callback == NULL || object == nil) {
     return;
@@ -60,7 +63,7 @@ static HandsOffSttSession *activeSttSession API_AVAILABLE(macos(10.15));
 - (void)emitError:(NSString *)kind message:(NSString *)message {
   [self emit:@{
     @"kind" : @"error",
-    @"errorKind" : kind,
+    @"error_kind" : kind,
     @"message" : message,
   }];
 }
@@ -72,12 +75,24 @@ static HandsOffSttSession *activeSttSession API_AVAILABLE(macos(10.15));
   }
 
   if ([SFSpeechRecognizer authorizationStatus] != SFSpeechRecognizerAuthorizationStatusAuthorized) {
-    [self emitError:@"mic-permission" message:@"speech recognition not authorized"];
+    NSInteger status = (NSInteger)[SFSpeechRecognizer authorizationStatus];
+    [self emit:@{
+      @"kind" : @"error",
+      @"error_kind" : @"mic-permission",
+      @"message" : @"speech recognition not authorized",
+      @"permission_status" : @(status),
+    }];
     return;
   }
 
   if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] != AVAuthorizationStatusAuthorized) {
-    [self emitError:@"mic-permission" message:@"microphone access not authorized"];
+    NSInteger status = (NSInteger)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    [self emit:@{
+      @"kind" : @"error",
+      @"error_kind" : @"mic-permission",
+      @"message" : @"microphone access not authorized",
+      @"permission_status" : @(status),
+    }];
     return;
   }
 
@@ -153,7 +168,7 @@ static HandsOffSttSession *activeSttSession API_AVAILABLE(macos(10.15));
       @"kind" : @"final",
       @"text" : text,
       @"confidence" : @(confidence),
-      @"latencyMs" : @(latencyMs),
+      @"latency_ms" : @(latencyMs),
     }];
   } else {
     [self emit:@{@"kind" : @"partial", @"text" : text}];

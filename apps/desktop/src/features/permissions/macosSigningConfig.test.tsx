@@ -29,14 +29,6 @@ describe("macOS media permission signing config", () => {
     }
   });
 
-  it("keeps the STT sidecar signed for microphone capture and speech recognition", () => {
-    const entitlements = readDesktopFile("src-tauri/sidecars/stt-ondevice/entitlements.plist");
-
-    for (const key of MEDIA_ENTITLEMENTS) {
-      expect(entitlements).toContain(`<key>${key}</key>`);
-    }
-  });
-
   it("runs live on-device STT in the app process that owns the Speech permission", () => {
     const command = readDesktopFile("src-tauri/src/commands/stt_ondevice.rs");
     const bridge = readDesktopFile("src-tauri/src/native_permissions.m");

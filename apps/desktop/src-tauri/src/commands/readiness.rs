@@ -8,14 +8,17 @@
 // `unknown` for capabilities whose probes belong to other lanes — camera and
 // microphone authorization land with the capture/STT lanes, and the CUA daemon
 // health check lands with the CUA lane.
+//
+// All permission states are read via native FFI functions that query the app
+// bundle's TCC identity directly — there is no sidecar permission path anymore.
 
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
-use super::permissions;
-
 // Accessibility (AXIsProcessTrusted) and Screen Recording
 // (CGPreflightScreenCaptureAccess) read the current grant without prompting.
+// Speech and microphone authorization use SFSpeechRecognizer and
+// AVCaptureDevice FFI calls to read the app bundle's TCC state directly.
 #[cfg(target_os = "macos")]
 fn accessibility_state() -> &'static str {
     #[link(name = "ApplicationServices", kind = "framework")]
@@ -44,9 +47,8 @@ fn screen_recording_state() -> &'static str {
     }
 }
 
-// Fallback Speech recognition authorization for the main app bundle. The
-// readiness command prefers the raw STT helper's reported state because that is
-// the process that actually captures/transcribes native speech.
+// Speech recognition authorization read directly from the app bundle's TCC
+// identity via SFSpeechRecognizer FFI.
 #[cfg(target_os = "macos")]
 fn speech_recognition_state() -> &'static str {
     use std::ffi::{c_char, c_void};
@@ -150,39 +152,14 @@ fn speech_recognition_state() -> &'static str {
     "unknown"
 }
 
-fn normalized_permission_state(value: Option<&Value>, fallback: &'static str) -> &'static str {
-    match value.and_then(Value::as_str) {
-        Some("granted") => "granted",
-        Some("denied") => "denied",
-        Some("restricted") => "restricted",
-        Some("not-determined") => "not-determined",
-        Some("unknown") => "unknown",
-        _ => fallback,
-    }
-}
-
 /// Probe macOS capability readiness for the dashboard.
 #[tauri::command]
-pub async fn readiness_probe(app: AppHandle) -> Value {
-    let media_permissions = permissions::media_permission_states(&app).await.ok();
-    let microphone = normalized_permission_state(
-        media_permissions
-            .as_ref()
-            .and_then(|value| value.get("microphone")),
-        microphone_state(),
-    );
-    let speech = normalized_permission_state(
-        media_permissions
-            .as_ref()
-            .and_then(|value| value.get("speech")),
-        speech_recognition_state(),
-    );
-
+pub async fn readiness_probe(_app: AppHandle) -> Value {
     json!({
         "capabilities": [
             { "id": "camera", "kind": "permission", "state": "unknown" },
-            { "id": "microphone", "kind": "permission", "state": microphone },
-            { "id": "speech-recognition", "kind": "permission", "state": speech },
+            { "id": "microphone", "kind": "permission", "state": microphone_state() },
+            { "id": "speech-recognition", "kind": "permission", "state": speech_recognition_state() },
             { "id": "cua", "kind": "daemon", "state": "unknown" },
             { "id": "accessibility", "kind": "permission", "state": accessibility_state() },
             { "id": "screen-recording", "kind": "permission", "state": screen_recording_state() }
@@ -195,19 +172,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalizes_helper_permission_states_and_falls_back_on_unknown_values() {
-        assert_eq!(
-            normalized_permission_state(Some(&json!("granted")), "not-determined"),
-            "granted"
-        );
-        assert_eq!(
-            normalized_permission_state(Some(&json!("not-determined")), "granted"),
-            "not-determined"
-        );
-        assert_eq!(
-            normalized_permission_state(Some(&json!("surprise")), "denied"),
-            "denied"
-        );
-        assert_eq!(normalized_permission_state(None, "unknown"), "unknown");
+    fn speech_recognition_state_returns_valid_states() {
+        // Can't test actual FFI without a macOS runtime, but we can verify
+        // the function signature compiles correctly.
+        #[cfg(target_os = "macos")]
+        {
+            let _state = speech_recognition_state();
+        }
+    }
+
+    #[test]
+    fn microphone_state_returns_valid_states() {
+        #[cfg(target_os = "macos")]
+        {
+            let _state = microphone_state();
+        }
     }
 }

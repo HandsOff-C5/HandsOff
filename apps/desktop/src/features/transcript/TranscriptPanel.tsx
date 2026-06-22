@@ -29,11 +29,21 @@ const ERROR_COPY: Record<SttErrorKind, string> = {
 
 function errorMessage(error: SttError): string {
   if (error.kind === "start-failed" && error.message) return error.message;
-  if (error.kind === "mic-permission" && /speech recognition/i.test(error.message)) {
-    if (/\(0\)/.test(error.message)) {
+  if (error.kind === "mic-permission") {
+    // Use typed permission state when available, otherwise fall back to message parsing.
+    if (error.permissionState === "not-determined") {
       return "Speech recognition has not been requested yet. Choose Allow microphone & speech in Permissions, then hold to talk again.";
     }
-    return "Speech recognition is blocked. Enable it in System Settings → Privacy & Security → Speech Recognition.";
+    if (error.permissionState === "denied" || error.permissionState === "restricted") {
+      return "Speech recognition is blocked. Enable it in System Settings → Privacy & Security → Speech Recognition.";
+    }
+    // Fallback for legacy errors without permissionState.
+    if (/speech recognition/i.test(error.message)) {
+      if (/\(0\)|not.*determined/i.test(error.message)) {
+        return "Speech recognition has not been requested yet. Choose Allow microphone & speech in Permissions, then hold to talk again.";
+      }
+      return "Speech recognition is blocked. Enable it in System Settings → Privacy & Security → Speech Recognition.";
+    }
   }
   return ERROR_COPY[error.kind] ?? error.message;
 }

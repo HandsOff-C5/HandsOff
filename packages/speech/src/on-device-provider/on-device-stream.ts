@@ -6,11 +6,11 @@ import { mapOnDeviceEvent } from "./map-event";
 // macOS on-device STT provider implementing the `SttStream` contract (#31, AD2).
 //
 // This is the *default* provider: no API key, no network, no provisioning.
-// Recognition runs in a native Swift sidecar (SFSpeechRecognizer + AVAudioEngine)
-// that the Rust `stt_ondevice_start` / `stt_ondevice_stop` commands spawn and
-// stop; the sidecar's JSON events are forwarded to the webview on the
-// `stt://event` Tauri event. This adapter subscribes to that event and invokes
-// those commands.
+// Recognition runs in the app process via native Objective-C
+// (SFSpeechRecognizer + AVAudioEngine) that the Rust `stt_ondevice_start` /
+// `stt_ondevice_stop` commands drive; native JSON events are forwarded to the
+// webview on the `stt://event` Tauri event. This adapter subscribes to that event
+// and invokes those commands.
 //
 // `invoke` and `listen` are injected — the desktop app supplies the real Tauri
 // bindings, tests supply fakes — so this package keeps no hard `@tauri-apps/api`
@@ -154,8 +154,8 @@ export function createOnDeviceSttStream(options: OnDeviceSttOptions): SttStream 
         state = "stopped";
         return;
       }
-      // "starting" or "open": cancel any in-flight start, stop the sidecar, and
-      // release the subscription so no further events fire.
+      // "starting" or "open": cancel any in-flight start, stop the native
+      // recognition session, and release the subscription so no further events fire.
       stopRequested = true;
       if (state === "starting") {
         rejectPendingStart({

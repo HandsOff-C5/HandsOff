@@ -1,3 +1,5 @@
+import type { PermissionState } from "./readiness";
+
 // The streaming speech-to-text provider contract (issue #30, AD2).
 //
 // Two concepts share the "STT provider" name and must not collide:
@@ -70,6 +72,10 @@ export type SttErrorKind = (typeof STT_ERROR_KINDS)[number];
 export interface SttError {
   readonly kind: SttErrorKind;
   readonly message: string;
+  // For mic-permission errors, the specific permission state that caused the error.
+  // The UI uses this to distinguish between "not requested yet" and "blocked" without
+  // parsing error messages.
+  readonly permissionState?: PermissionState;
   // Underlying cause for diagnostics; not surfaced to the user.
   readonly cause?: unknown;
 }

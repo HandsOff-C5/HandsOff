@@ -1,9 +1,14 @@
 // On-device STT commands (#31, AD2): the default, provisioning-free provider.
 //
 // Runs Apple's on-device speech recognition (SFSpeechRecognizer + AVAudioEngine)
-// in the app process and forwards native JSON events to the webview on
-// `stt://event`. No network, no API key — audio stays on device.
+// in the app process and forwards native events to the webview on `stt://event`.
+// No network, no API key — audio stays on device.
+//
+// The Rust/native boundary is typed: native events serialize as JSON with a
+// `kind` discriminator, and the Rust side parses into strongly-typed structs
+// that fail loudly on malformed input.
 
+use serde::Deserialize;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::{Mutex, OnceLock};
@@ -11,6 +16,37 @@ use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, State};
 
 const EVENT_NAME: &str = "stt://event";
+
+// Typed native event structs matching the Objective-C emission format.
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum NativeSttEvent {
+    Partial(NativePartial),
+    Final(NativeFinal),
+    Error(NativeError),
+    Ready,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativePartial {
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativeFinal {
+    text: String,
+    confidence: f64,
+    latency_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativeError {
+    error_kind: String,
+    message: String,
+    #[serde(default)]
+    permission_status: Option<i32>,
+}
 
 #[cfg(target_os = "macos")]
 type SttEventCallback = extern "C" fn(*const c_char);
@@ -104,7 +140,39 @@ fn parse_native_event(json: *const c_char) -> Option<serde_json::Value> {
         return None;
     }
     let text = unsafe { CStr::from_ptr(json) }.to_str().ok()?;
-    serde_json::from_str::<serde_json::Value>(text.trim()).ok()
+    let text = text.trim();
+
+    // Parse into the typed enum, then convert back to JSON for emission.
+    // This validates the structure and fails loudly on malformed native events.
+    let native: NativeSttEvent = serde_json::from_str(text).ok()?;
+
+    Some(match native {
+        NativeSttEvent::Partial(p) => serde_json::json!({
+            "kind": "partial",
+            "text": p.text,
+        }),
+        NativeSttEvent::Final(f) => serde_json::json!({
+            "kind": "final",
+            "text": f.text,
+            "confidence": f.confidence,
+            "latencyMs": f.latency_ms,
+        }),
+        NativeSttEvent::Error(e) => {
+            let mut error = serde_json::json!({
+                "kind": "error",
+                "errorKind": e.error_kind,
+                "message": e.message,
+            });
+            // Include permission status if present for structured permission state handling.
+            if let Some(status) = e.permission_status {
+                error["permissionStatus"] = serde_json::json!(status);
+            }
+            error
+        }
+        NativeSttEvent::Ready => serde_json::json!({
+            "kind": "ready",
+        }),
+    })
 }
 
 /// Stop the active on-device recognition session, if any. Idempotent.
@@ -125,7 +193,7 @@ mod tests {
     use super::parse_native_event;
 
     #[test]
-    fn parses_native_json_event() {
+    fn parses_native_partial_event() {
         let json = CString::new(r#"{"kind":"partial","text":"hello"}"#).unwrap();
         let value = parse_native_event(json.as_ptr()).expect("native event should parse");
         assert_eq!(value["kind"], "partial");
@@ -133,9 +201,46 @@ mod tests {
     }
 
     #[test]
+    fn parses_native_final_event() {
+        let json = CString::new(r#"{"kind":"final","text":"hello world","confidence":0.93,"latency_ms":120}"#).unwrap();
+        let value = parse_native_event(json.as_ptr()).expect("native event should parse");
+        assert_eq!(value["kind"], "final");
+        assert_eq!(value["text"], "hello world");
+        assert_eq!(value["confidence"], 0.93);
+        assert_eq!(value["latencyMs"], 120);
+    }
+
+    #[test]
+    fn parses_native_error_event() {
+        let json = CString::new(r#"{"kind":"error","error_kind":"mic-permission","message":"not authorized"}"#).unwrap();
+        let value = parse_native_event(json.as_ptr()).expect("native event should parse");
+        assert_eq!(value["kind"], "error");
+        assert_eq!(value["errorKind"], "mic-permission");
+        assert_eq!(value["message"], "not authorized");
+    }
+
+    #[test]
+    fn parses_native_ready_event() {
+        let json = CString::new(r#"{"kind":"ready"}"#).unwrap();
+        let value = parse_native_event(json.as_ptr()).expect("native event should parse");
+        assert_eq!(value["kind"], "ready");
+    }
+
+    #[test]
     fn drops_invalid_native_event() {
         let json = CString::new("not json").unwrap();
         assert!(parse_native_event(json.as_ptr()).is_none());
         assert!(parse_native_event(ptr::null()).is_none());
+    }
+
+    #[test]
+    fn drops_malformed_native_event() {
+        // Missing required fields
+        let json = CString::new(r#"{"kind":"final"}"#).unwrap();
+        assert!(parse_native_event(json.as_ptr()).is_none());
+
+        // Unknown kind
+        let json = CString::new(r#"{"kind":"unknown"}"#).unwrap();
+        assert!(parse_native_event(json.as_ptr()).is_none());
     }
 }
