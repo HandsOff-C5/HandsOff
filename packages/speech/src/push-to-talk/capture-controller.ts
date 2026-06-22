@@ -63,6 +63,12 @@ export interface CaptureController {
   readonly status: CaptureStatus;
 }
 
+interface ActiveCapture {
+  readonly startedAt: number;
+  utterance: UtteranceState;
+  readonly events: TranscriptEvent[];
+}
+
 export function createCaptureController(
   createStream: () => SttStream,
   callbacks: CaptureControllerCallbacks,
@@ -71,9 +77,7 @@ export function createCaptureController(
 
   let status: CaptureStatus = "idle";
   let stream: SttStream | null = null;
-  let utterance: UtteranceState = EMPTY_UTTERANCE;
-  let transcriptEvents: readonly TranscriptEvent[] = [];
-  let captureStartedAt: number | null = null;
+  let capture: ActiveCapture | null = null;
   // Identifies the current capture session. Every endpoint (release, cancel,
   // error) and every fresh press bumps it, so a superseded session's late events
   // are dropped and can never bleed into the next capture.
@@ -84,17 +88,35 @@ export function createCaptureController(
     callbacks.onStatus?.(next);
   }
 
+  function startCapture(): void {
+    capture = { startedAt: now(), utterance: EMPTY_UTTERANCE, events: [] };
+  }
+
+  function clearCapture(): void {
+    capture = null;
+  }
+
+  function recordTranscriptEvent(event: TranscriptEvent): void {
+    if (capture === null) return;
+    capture.events.push(event);
+    capture.utterance = foldUtterance(capture.utterance, event);
+  }
+
+  function emitLatency(captured: ActiveCapture): void {
+    if (!callbacks.onLatency) return;
+    const latency = recordTranscriptLatency(captured.startedAt, captured.events);
+    if (latency) callbacks.onLatency(latency);
+  }
+
   function handleEvent(generationAtStart: number, event: SttStreamEvent): void {
     if (generationAtStart !== generation) return;
     switch (event.kind) {
       case "partial":
-        transcriptEvents = [...transcriptEvents, event];
-        utterance = foldUtterance(utterance, event);
+        recordTranscriptEvent(event);
         callbacks.onPartial?.(event.text);
         break;
       case "final":
-        transcriptEvents = [...transcriptEvents, event];
-        utterance = foldUtterance(utterance, event);
+        recordTranscriptEvent(event);
         break;
       case "error":
         if (status === "finalizing") return;
@@ -114,9 +136,7 @@ export function createCaptureController(
   async function fail(error: SttError): Promise<void> {
     generation += 1;
     await teardown();
-    utterance = EMPTY_UTTERANCE;
-    transcriptEvents = [];
-    captureStartedAt = null;
+    clearCapture();
     setStatus("error");
     callbacks.onError?.(error);
   }
@@ -129,9 +149,7 @@ export function createCaptureController(
     async press(): Promise<void> {
       if (status === "capturing" || status === "finalizing") return;
       const generationAtStart = (generation += 1);
-      utterance = EMPTY_UTTERANCE;
-      transcriptEvents = [];
-      captureStartedAt = now();
+      startCapture();
       setStatus("capturing");
 
       const next = createStream();
@@ -147,7 +165,7 @@ export function createCaptureController(
         // failure to surface.
         if (error.kind === "aborted") return;
         stream = null;
-        captureStartedAt = null;
+        clearCapture();
         setStatus("error");
         callbacks.onError?.(error);
       }
@@ -161,24 +179,17 @@ export function createCaptureController(
       setStatus("finalizing");
       await teardown();
       generation += 1;
-      const captured = utterance;
-      const capturedEvents = transcriptEvents;
-      const startedAt = captureStartedAt;
-      utterance = EMPTY_UTTERANCE;
-      transcriptEvents = [];
-      captureStartedAt = null;
+      const captured = capture;
+      clearCapture();
       setStatus("idle");
-      const result = endpointUtterance(captured, {
+      if (captured === null) return;
+      const result = endpointUtterance(captured.utterance, {
         receivedAt: now(),
         includeTrailingPartial: true,
       });
-      if (result) {
-        if (startedAt !== null && callbacks.onLatency) {
-          const latency = recordTranscriptLatency(startedAt, capturedEvents);
-          if (latency) callbacks.onLatency?.(latency);
-        }
-        callbacks.onUtterance(result);
-      }
+      if (!result) return;
+      emitLatency(captured);
+      callbacks.onUtterance(result);
     },
 
     async cancel(): Promise<void> {
@@ -186,9 +197,7 @@ export function createCaptureController(
       // Same fence as release, but the capture is discarded — no utterance.
       generation += 1;
       setStatus("finalizing");
-      utterance = EMPTY_UTTERANCE;
-      transcriptEvents = [];
-      captureStartedAt = null;
+      clearCapture();
       await teardown();
       setStatus("idle");
     },
