@@ -3,6 +3,7 @@ import { FakeSttStream } from "@handsoff/testkit";
 import { describe, expect, it, vi } from "vitest";
 
 import { type CaptureStatus, createCaptureController } from "./capture-controller";
+import type { TranscriptLatencyRecord } from "../latency";
 
 // A mid-stream error tears down asynchronously (emitError is synchronous, but
 // the controller's stop() runs over a few microtasks). Drain the queue so the
@@ -13,16 +14,24 @@ async function flush(): Promise<void> {
 
 // A fresh fake per press() (matching the controller's per-capture stream
 // creation), with a handle on the most recent one to drive its events.
-function harness(options?: { startError?: SttError; now?: () => number }) {
+function harness(options?: {
+  startError?: SttError;
+  now?: () => number;
+  streamClock?: () => number;
+}) {
   const fakes: FakeSttStream[] = [];
   const utterances: FinalTranscript[] = [];
   const partials: string[] = [];
   const statuses: CaptureStatus[] = [];
   const errors: SttError[] = [];
+  const latencyRecords: TranscriptLatencyRecord[] = [];
 
   const controller = createCaptureController(
     () => {
-      const fake = new FakeSttStream(options?.startError ? { startError: options.startError } : {});
+      const fake = new FakeSttStream({
+        ...(options?.startError ? { startError: options.startError } : {}),
+        ...(options?.streamClock ? { clock: options.streamClock } : {}),
+      });
       fakes.push(fake);
       return fake;
     },
@@ -31,6 +40,7 @@ function harness(options?: { startError?: SttError; now?: () => number }) {
       onPartial: (text) => partials.push(text),
       onStatus: (status) => statuses.push(status),
       onError: (error) => errors.push(error),
+      onLatency: (record) => latencyRecords.push(record),
       now: options?.now ?? (() => 1000),
     },
   );
@@ -41,7 +51,7 @@ function harness(options?: { startError?: SttError; now?: () => number }) {
     return fake;
   };
 
-  return { controller, fakes, latest, utterances, partials, statuses, errors };
+  return { controller, fakes, latest, utterances, partials, statuses, errors, latencyRecords };
 }
 
 describe("createCaptureController", () => {
@@ -65,6 +75,29 @@ describe("createCaptureController", () => {
     });
     expect(h.controller.status).toBe("idle");
     expect(h.latest().stopCallCount).toBe(1);
+  });
+
+  it("records capture-start to final transcript latency on release", async () => {
+    const now = vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1400);
+    const streamClock = vi.fn().mockReturnValueOnce(1100).mockReturnValueOnce(1275);
+    const h = harness({ now, streamClock });
+    await h.controller.press();
+    h.latest().emitPartial("approve", 0.5, 40);
+    h.latest().emitFinal("approve the plan", 0.97, 75);
+
+    await h.controller.release();
+
+    expect(h.latencyRecords).toEqual([
+      {
+        kind: "transcript-latency",
+        captureStartedAt: 1000,
+        finalReceivedAt: 1275,
+        captureToFinalMs: 275,
+        finalTranscriptLatencyMs: 75,
+        transcriptText: "approve the plan",
+        eventCount: 2,
+      },
+    ]);
   });
 
   it("includes a provider final emitted during release teardown", async () => {
