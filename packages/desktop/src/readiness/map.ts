@@ -35,9 +35,7 @@ const COLOR_BY_LEVEL: Record<ReadinessLevel, ReadinessColor> = {
 
 type LevelDetail = Pick<CapabilityReadiness, "level" | "status" | "hint">;
 
-const MEDIA_PERMISSION_IDS: readonly CapabilityId[] = ["microphone", "speech-recognition"];
-
-function mapPermission(id: CapabilityId, state: PermissionState): LevelDetail {
+function mapPermission(state: PermissionState): LevelDetail {
   switch (state) {
     case "granted":
       return { level: "ready", status: "Granted" };
@@ -57,9 +55,7 @@ function mapPermission(id: CapabilityId, state: PermissionState): LevelDetail {
       return {
         level: "attention",
         status: "Not requested yet",
-        hint: MEDIA_PERMISSION_IDS.includes(id)
-          ? "Open System Settings to grant access, then re-check."
-          : `Grant access when ${APP_NAME} prompts you.`,
+        hint: `Grant access when ${APP_NAME} prompts you.`,
       };
     case "unknown":
       return {
@@ -97,8 +93,7 @@ function mapDaemon(state: DaemonState): LevelDetail {
 
 // Map one raw probe to its rendered readiness.
 export function mapCapability(probe: CapabilityProbe): CapabilityReadiness {
-  const detail =
-    probe.kind === "permission" ? mapPermission(probe.id, probe.state) : mapDaemon(probe.state);
+  const detail = probe.kind === "permission" ? mapPermission(probe.state) : mapDaemon(probe.state);
   return { id: probe.id, label: CAPABILITIES[probe.id].label, ...detail };
 }
 

@@ -11,6 +11,7 @@ publish = false
 # storage) add commands in their own issues — placeholders stay un-wired here.
 
 [build-dependencies]
+cc = "1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]

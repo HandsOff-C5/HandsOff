@@ -30,7 +30,10 @@ const ERROR_COPY: Record<SttErrorKind, string> = {
 function errorMessage(error: SttError): string {
   if (error.kind === "start-failed" && error.message) return error.message;
   if (error.kind === "mic-permission" && /speech recognition/i.test(error.message)) {
-    return "Speech recognition not authorized. Grant it in System Settings → Privacy & Security → Speech Recognition.";
+    if (/\(0\)/.test(error.message)) {
+      return "Speech recognition has not been requested yet. Choose Allow microphone & speech in Permissions, then hold to talk again.";
+    }
+    return "Speech recognition is blocked. Enable it in System Settings → Privacy & Security → Speech Recognition.";
   }
   return ERROR_COPY[error.kind] ?? error.message;
 }

@@ -144,7 +144,7 @@ describe("TranscriptPanel", () => {
     );
   });
 
-  it("surfaces speech authorization failures distinctly from microphone denial", async () => {
+  it("points first-run speech authorization failures to the Permissions allow flow", async () => {
     render(
       <TranscriptPanel
         createStream={makeFactory({
@@ -158,7 +158,25 @@ describe("TranscriptPanel", () => {
     fireEvent.pointerDown(talkButton());
 
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(/Speech recognition not authorized/i),
+      expect(screen.getByRole("alert")).toHaveTextContent(/Allow microphone & speech/i),
+    );
+  });
+
+  it("points denied speech authorization failures to System Settings", async () => {
+    render(
+      <TranscriptPanel
+        createStream={makeFactory({
+          startError: {
+            kind: "mic-permission",
+            message: "speech recognition not authorized (1)",
+          },
+        })}
+      />,
+    );
+    fireEvent.pointerDown(talkButton());
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/System Settings.*Speech Recognition/i),
     );
   });
 

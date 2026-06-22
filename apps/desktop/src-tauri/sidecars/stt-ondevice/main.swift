@@ -68,11 +68,10 @@ final class OnDeviceSttSession {
         }
     }
 
-    // Gate on Speech authorization. When the grant already exists we must NOT
-    // call `requestAuthorization`: this helper is launched as a raw sidecar
-    // process, and macOS TCC kills that process before it can report a result.
-    // The dashboard's permissions surface owns user setup; this helper only
-    // reports the missing grant and exits cleanly.
+    // Gate on Speech authorization. The app bundle owns first-run TCC prompts;
+    // this raw helper only reads the resulting grant and fails cleanly when it is
+    // missing. Asking from here crashes because TCC does not honor the helper's
+    // embedded Speech usage string for authorization requests.
     private func ensureSpeechAuthorized(_ next: @escaping () -> Void) {
         let status = SFSpeechRecognizer.authorizationStatus()
         if status == .authorized {
@@ -83,7 +82,7 @@ final class OnDeviceSttSession {
         exit(1)
     }
 
-    // Same guard for the microphone: do not prompt from the raw helper process.
+    // Same guard for the microphone: the app bundle owns first-run prompts.
     private func ensureMicAuthorized(_ next: @escaping () -> Void) {
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         if status == .authorized {
@@ -193,10 +192,11 @@ func micAuthString(_ status: AVAuthorizationStatus) -> String {
     }
 }
 
-// `--request-permissions` mode (#31): report the raw helper's current
-// authorization states without prompting. This process shape cannot safely call
-// TCC request APIs; doing so crashes before stdout can carry a result.
-func requestPermissions() {
+// Permission-report mode (#31): report current authorization states without
+// prompting. Readiness uses this so app launch/re-check never opens a TCC dialog
+// on its own. `--request-permissions` remains a read-only legacy alias; actual
+// first-run prompts are owned by the app bundle.
+func reportPermissionState() {
     Emitter.emit([
         "kind": "permissions",
         "speech": authString(SFSpeechRecognizer.authorizationStatus()),
@@ -215,8 +215,8 @@ let arguments = CommandLine.arguments
 var activeSession: OnDeviceSttSession?
 var activeTermSource: DispatchSourceSignal?
 
-if arguments.contains("--request-permissions") {
-    requestPermissions()
+if arguments.contains("--permission-state") || arguments.contains("--request-permissions") {
+    reportPermissionState()
 } else {
     let locale = parseLocale(arguments)
     guard let session = OnDeviceSttSession(localeIdentifier: locale) else { exit(1) }

@@ -84,6 +84,7 @@ export function createCaptureController(
         utterance = foldUtterance(utterance, event);
         break;
       case "error":
+        if (status === "finalizing") return;
         void fail(event.error);
         break;
     }
@@ -136,13 +137,14 @@ export function createCaptureController(
 
     async release(): Promise<void> {
       if (status !== "capturing") return;
-      // Fence the session and snapshot what was said up to the moment of release;
-      // events that trickle in during teardown belong to no utterance.
-      generation += 1;
+      // Endpointing providers such as Apple's Speech may emit their final result
+      // during stop()/endAudio. Keep this generation open through teardown, then
+      // fence after the stream contract guarantees no more events will arrive.
       setStatus("finalizing");
+      await teardown();
+      generation += 1;
       const captured = utterance;
       utterance = EMPTY_UTTERANCE;
-      await teardown();
       setStatus("idle");
       const result = endpointUtterance(captured, {
         receivedAt: now(),

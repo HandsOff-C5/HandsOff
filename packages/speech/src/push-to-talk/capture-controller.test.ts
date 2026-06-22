@@ -1,4 +1,4 @@
-import type { FinalTranscript, SttError } from "@handsoff/contracts";
+import type { FinalTranscript, SttError, SttStream, SttStreamListener } from "@handsoff/contracts";
 import { FakeSttStream } from "@handsoff/testkit";
 import { describe, expect, it, vi } from "vitest";
 
@@ -67,6 +67,41 @@ describe("createCaptureController", () => {
     expect(h.latest().stopCallCount).toBe(1);
   });
 
+  it("includes a provider final emitted during release teardown", async () => {
+    let listener: SttStreamListener | null = null;
+    const stream: SttStream = {
+      async start(next) {
+        listener = next;
+      },
+      async stop() {
+        listener?.({
+          kind: "final",
+          text: "open the dashboard",
+          confidence: 0.84,
+          latencyMs: 240,
+          receivedAt: 900,
+        });
+        listener = null;
+      },
+    };
+    const utterances: FinalTranscript[] = [];
+    const controller = createCaptureController(() => stream, {
+      onUtterance: (utterance) => utterances.push(utterance),
+      now: () => 1000,
+    });
+
+    await controller.press();
+    await controller.release();
+
+    expect(utterances).toHaveLength(1);
+    expect(utterances[0]).toMatchObject({
+      kind: "final",
+      text: "open the dashboard",
+      confidence: 0.84,
+      latencyMs: 240,
+    });
+  });
+
   it("joins multiple provider finals into a single utterance", async () => {
     const h = harness();
     await h.controller.press();
@@ -99,6 +134,34 @@ describe("createCaptureController", () => {
     expect(h.utterances).toHaveLength(0);
     expect(h.controller.status).toBe("idle");
     expect(h.latest().stopCallCount).toBe(1);
+  });
+
+  it("cancel ignores provider finals emitted during teardown", async () => {
+    let listener: SttStreamListener | null = null;
+    const stream: SttStream = {
+      async start(next) {
+        listener = next;
+      },
+      async stop() {
+        listener?.({
+          kind: "final",
+          text: "discard me",
+          confidence: 1,
+          latencyMs: 10,
+          receivedAt: 900,
+        });
+        listener = null;
+      },
+    };
+    const utterances: FinalTranscript[] = [];
+    const controller = createCaptureController(() => stream, {
+      onUtterance: (utterance) => utterances.push(utterance),
+    });
+
+    await controller.press();
+    await controller.cancel();
+
+    expect(utterances).toHaveLength(0);
   });
 
   it("release with no speech emits nothing", async () => {

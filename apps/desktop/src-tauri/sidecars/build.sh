@@ -9,6 +9,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 src="$here/stt-ondevice/main.swift"
 plist="$here/stt-ondevice/Info.plist"
+entitlements="$here/stt-ondevice/entitlements.plist"
 triple="${1:-$(rustc -vV | sed -n 's/host: //p')}"
 out_dir="$here/../binaries"
 out="$out_dir/stt-ondevice-$triple"
@@ -16,12 +17,11 @@ out="$out_dir/stt-ondevice-$triple"
 mkdir -p "$out_dir"
 echo "Building on-device STT sidecar for $triple"
 # Embed the Info.plist into __TEXT,__info_plist for readable helper identity.
-# macOS TCC still rejects raw sidecar permission prompts, so the helper reports
-# missing grants instead of requesting them directly.
+# The app bundle owns first-run permission prompts.
 swiftc -O -o "$out" "$src" \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$plist"
 # Bind the embedded Info.plist to the code signature. A signed app bundle that
 # embeds this sidecar re-signs it with the app identity at package time.
-codesign --force --sign - --identifier com.handsoff.desktop.stt "$out"
+codesign --force --sign - --identifier com.handsoff.desktop.stt --entitlements "$entitlements" "$out"
 echo "ok → $out"
 file "$out"

@@ -54,12 +54,10 @@ describe("mapCapability — permission states", () => {
     );
   });
 
-  it("points media helper setup to System Settings instead of waiting for a prompt", () => {
-    expect(mapCapability(permission("microphone", "not-determined")).hint).toContain(
-      "Open System Settings",
-    );
+  it("points media helper setup to the OS prompt flow", () => {
+    expect(mapCapability(permission("microphone", "not-determined")).hint).toContain("prompts you");
     expect(mapCapability(permission("speech-recognition", "not-determined")).hint).toContain(
-      "Open System Settings",
+      "prompts you",
     );
   });
 });
