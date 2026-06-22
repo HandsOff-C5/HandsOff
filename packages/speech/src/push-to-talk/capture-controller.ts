@@ -63,8 +63,9 @@ export function createCaptureController(
   let status: CaptureStatus = "idle";
   let stream: SttStream | null = null;
   let utterance: UtteranceState = EMPTY_UTTERANCE;
-  // Bumped to fence off a superseded session's late events (on cancel/error) so
-  // a stale partial can never bleed into the next capture.
+  // Identifies the current capture session. Every endpoint (release, cancel,
+  // error) and every fresh press bumps it, so a superseded session's late events
+  // are dropped and can never bleed into the next capture.
   let generation = 0;
 
   function setStatus(next: CaptureStatus): void {
@@ -120,10 +121,9 @@ export function createCaptureController(
       try {
         await next.start((event) => handleEvent(generationAtStart, event));
       } catch (caught) {
-        // A release()/cancel() may have superseded this start while it was in
-        // flight (cancel bumps the generation; release nulls the stream in
-        // teardown). Either way, let that transition stand.
-        if (generationAtStart !== generation || stream !== next) return;
+        // A release()/cancel() that ran while start() was in flight bumped the
+        // generation; let that transition stand rather than reporting its abort.
+        if (generationAtStart !== generation) return;
         const error = toSttError(caught);
         // `aborted` means stop() raced this start — a user-initiated stop, not a
         // failure to surface.
@@ -136,26 +136,28 @@ export function createCaptureController(
 
     async release(): Promise<void> {
       if (status !== "capturing") return;
+      // Fence the session and snapshot what was said up to the moment of release;
+      // events that trickle in during teardown belong to no utterance.
+      generation += 1;
       setStatus("finalizing");
-      // Keep the same generation through teardown so a final that lands as the
-      // stream drains is still folded into this utterance.
+      const captured = utterance;
+      utterance = EMPTY_UTTERANCE;
       await teardown();
-      const result = endpointUtterance(utterance, {
+      setStatus("idle");
+      const result = endpointUtterance(captured, {
         receivedAt: now(),
         includeTrailingPartial: true,
       });
-      utterance = EMPTY_UTTERANCE;
-      setStatus("idle");
       if (result) callbacks.onUtterance(result);
     },
 
     async cancel(): Promise<void> {
       if (status !== "capturing") return;
-      // Fence off any in-flight events — this capture is discarded.
+      // Same fence as release, but the capture is discarded — no utterance.
       generation += 1;
       setStatus("finalizing");
-      await teardown();
       utterance = EMPTY_UTTERANCE;
+      await teardown();
       setStatus("idle");
     },
   };
