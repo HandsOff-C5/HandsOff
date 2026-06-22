@@ -143,4 +143,42 @@ describe("TranscriptPanel", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(/Microphone access denied/i),
     );
   });
+
+  it("surfaces speech authorization failures distinctly from microphone denial", async () => {
+    render(
+      <TranscriptPanel
+        createStream={makeFactory({
+          startError: {
+            kind: "mic-permission",
+            message: "speech recognition not authorized (0)",
+          },
+        })}
+      />,
+    );
+    fireEvent.pointerDown(talkButton());
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/Speech recognition not authorized/i),
+    );
+  });
+
+  it("surfaces the native start-failed reason when recognition exits before ready", async () => {
+    render(
+      <TranscriptPanel
+        createStream={makeFactory({
+          startError: {
+            kind: "start-failed",
+            message: "On-device recognition exited before the microphone was ready",
+          },
+        })}
+      />,
+    );
+    fireEvent.pointerDown(talkButton());
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /On-device recognition exited before the microphone was ready/i,
+      ),
+    );
+  });
 });

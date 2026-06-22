@@ -53,6 +53,15 @@ describe("mapCapability — permission states", () => {
       "Speech Recognition",
     );
   });
+
+  it("points media helper setup to System Settings instead of waiting for a prompt", () => {
+    expect(mapCapability(permission("microphone", "not-determined")).hint).toContain(
+      "Open System Settings",
+    );
+    expect(mapCapability(permission("speech-recognition", "not-determined")).hint).toContain(
+      "Open System Settings",
+    );
+  });
 });
 
 describe("mapCapability — daemon states (CUA)", () => {

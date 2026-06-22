@@ -87,7 +87,7 @@ describe("PermissionsPanel", () => {
   });
 });
 
-// Microphone + speech accept/revoke controls (#31).
+// Microphone + speech check/manage controls (#31).
 const MEDIA_NOT_GRANTED = report([
   { id: "microphone", kind: "permission", state: "not-determined" },
   { id: "speech-recognition", kind: "permission", state: "not-determined" },
@@ -108,7 +108,7 @@ describe("PermissionsPanel — microphone & speech", () => {
     expect(screen.getByText(/Speech Recognition · /)).toBeInTheDocument();
   });
 
-  it("requests the OS prompt when Allow is pressed", () => {
+  it("refreshes helper media states when Check is pressed", () => {
     const onRequestMedia = vi.fn();
     render(
       <PermissionsPanel
@@ -118,7 +118,7 @@ describe("PermissionsPanel — microphone & speech", () => {
         onRequestMedia={onRequestMedia}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Allow microphone & speech/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Check microphone & speech/ }));
     expect(onRequestMedia).toHaveBeenCalledTimes(1);
   });
 
@@ -137,7 +137,7 @@ describe("PermissionsPanel — microphone & speech", () => {
     expect(onOpenSettings).toHaveBeenCalledWith("microphone");
   });
 
-  it("hides Allow and offers Manage once both are granted", () => {
+  it("hides Check and offers Manage once both are granted", () => {
     render(
       <PermissionsPanel
         report={MEDIA_GRANTED}
@@ -147,7 +147,7 @@ describe("PermissionsPanel — microphone & speech", () => {
       />,
     );
     expect(
-      screen.queryByRole("button", { name: /Allow microphone & speech/ }),
+      screen.queryByRole("button", { name: /Check microphone & speech/ }),
     ).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(2);
   });

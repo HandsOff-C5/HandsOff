@@ -15,12 +15,12 @@ out="$out_dir/stt-ondevice-$triple"
 
 mkdir -p "$out_dir"
 echo "Building on-device STT sidecar for $triple"
-# Embed the Info.plist into __TEXT,__info_plist so macOS does not abort the
-# helper when it requests microphone / speech recognition access.
+# Embed the Info.plist into __TEXT,__info_plist for readable helper identity.
+# macOS TCC still rejects raw sidecar permission prompts, so the helper reports
+# missing grants instead of requesting them directly.
 swiftc -O -o "$out" "$src" \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$plist"
-# Bind the embedded Info.plist to the code signature so TCC honors the usage
-# strings (the linker's auto-adhoc signature does not). A signed app bundle that
+# Bind the embedded Info.plist to the code signature. A signed app bundle that
 # embeds this sidecar re-signs it with the app identity at package time.
 codesign --force --sign - --identifier com.handsoff.desktop.stt "$out"
 echo "ok → $out"

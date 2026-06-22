@@ -1,7 +1,7 @@
 import { APP_NAME, type CapabilityId, type CapabilityReadiness } from "@handsoff/contracts";
 import { permissionSetupState } from "@handsoff/desktop";
 
-// On-device STT permissions (#31): requested directly via the OS prompt and
+// On-device STT permissions (#31): checked through the native helper and
 // managed/revoked in System Settings, separate from the CUA-gating grants (#18).
 const MEDIA_PERMISSION_IDS: readonly CapabilityId[] = ["microphone", "speech-recognition"];
 
@@ -9,8 +9,8 @@ interface PermissionsPanelProps {
   report: CapabilityReadiness[];
   isChecking: boolean;
   onRecheck: () => void;
-  // Trigger the macOS microphone + speech prompts (accept). Optional so the
-  // panel still renders in a backend-less context.
+  // Refresh the native helper's microphone + speech states. Optional so the panel
+  // still renders in a backend-less context.
   onRequestMedia?: () => void;
   // Open a System Settings privacy pane to grant or revoke a permission.
   onOpenSettings?: (pane: CapabilityId) => void;
@@ -48,8 +48,8 @@ export function PermissionsPanel({
         </button>
       </div>
 
-      {/* Microphone + speech for on-device transcription (#31): accept via the OS
-          prompt, manage/revoke in System Settings. */}
+      {/* Microphone + speech for on-device transcription (#31): check through the
+          native helper, manage/revoke in System Settings. */}
       <div className="permissions__media">
         <h3 className="permissions__name">Microphone &amp; Speech</h3>
         <p className="permissions__reason">
@@ -77,7 +77,7 @@ export function PermissionsPanel({
             onClick={() => onRequestMedia?.()}
             disabled={!onRequestMedia}
           >
-            Allow microphone &amp; speech
+            Check microphone &amp; speech
           </button>
         )}
       </div>

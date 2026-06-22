@@ -47,9 +47,9 @@ fn build_stt_sidecar() {
         "swiftc failed for the stt-ondevice sidecar"
     );
 
-    // Bind the embedded Info.plist to the code signature so TCC honors the usage
-    // strings (the linker's auto-adhoc signature does not). A signed app bundle
-    // re-signs the embedded sidecar with the app identity at package time.
+    // Bind the embedded Info.plist to the code signature so crash reports and code
+    // identity stay readable. TCC still does not allow this raw sidecar process to
+    // request privacy grants directly; the helper reports missing grants instead.
     let signed = Command::new("codesign")
         .args([
             "--force",

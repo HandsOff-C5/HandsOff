@@ -1,4 +1,4 @@
-import type { SttStream, SttStreamListener } from "@handsoff/contracts";
+import type { SttError, SttStream, SttStreamListener } from "@handsoff/contracts";
 import { SttLifecycleError } from "@handsoff/contracts";
 
 import { mapOnDeviceEvent } from "./map-event";
@@ -32,12 +32,17 @@ export interface OnDeviceSttOptions {
 }
 
 type State = "idle" | "starting" | "open" | "stopped";
+type StartGate = {
+  readonly resolve: () => void;
+  readonly reject: (error: SttLifecycleError) => void;
+};
 
 export function createOnDeviceSttStream(options: OnDeviceSttOptions): SttStream {
   let state: State = "idle";
   let listener: SttStreamListener | null = null;
   let unlisten: (() => void) | null = null;
   let startMs = 0;
+  let pendingStart: StartGate | null = null;
   // Set when stop() races an in-flight start() so the pending start tears down
   // instead of resurrecting an abandoned session.
   let stopRequested = false;
@@ -47,6 +52,45 @@ export function createOnDeviceSttStream(options: OnDeviceSttOptions): SttStream 
       unlisten();
       unlisten = null;
     }
+  }
+
+  function rejectPendingStart(error: SttError): void {
+    const pending = pendingStart;
+    pendingStart = null;
+    teardown();
+    listener = null;
+    state = "stopped";
+    if (pending) pending.reject(new SttLifecycleError(error));
+  }
+
+  function resolvePendingStart(): void {
+    const pending = pendingStart;
+    pendingStart = null;
+    pending?.resolve();
+  }
+
+  function handlePayload(payload: unknown): void {
+    if (isOnDeviceKind(payload, "ready")) {
+      if (state === "starting") resolvePendingStart();
+      return;
+    }
+    if (isOnDeviceKind(payload, "terminated")) {
+      if (state === "starting") {
+        rejectPendingStart({
+          kind: "start-failed",
+          message: "On-device recognition exited before the microphone was ready",
+        });
+      }
+      return;
+    }
+    if (!listener) return;
+    const event = mapOnDeviceEvent(payload, { startMs, now: Date.now() });
+    if (!event) return;
+    if (event.kind === "error" && state === "starting") {
+      rejectPendingStart(event.error);
+      return;
+    }
+    listener(event);
   }
 
   // Abort an in-flight start() that stop() cancelled — release the listener and
@@ -73,13 +117,14 @@ export function createOnDeviceSttStream(options: OnDeviceSttOptions): SttStream 
       stopRequested = false;
       listener = nextListener;
       startMs = Date.now();
+      const ready = new Promise<void>((resolve, reject) => {
+        pendingStart = { resolve, reject };
+      });
+      // `stop()` may reject the readiness gate before start() reaches its await.
+      ready.catch(() => {});
 
       // Subscribe before starting recognition so no early partial is missed.
-      unlisten = await options.listen(ON_DEVICE_STT_EVENT, ({ payload }) => {
-        if (!listener) return;
-        const event = mapOnDeviceEvent(payload, { startMs, now: Date.now() });
-        if (event) listener(event);
-      });
+      unlisten = await options.listen(ON_DEVICE_STT_EVENT, ({ payload }) => handlePayload(payload));
       if (stopRequested) abortStart();
 
       try {
@@ -87,6 +132,7 @@ export function createOnDeviceSttStream(options: OnDeviceSttOptions): SttStream 
       } catch (error) {
         teardown();
         listener = null;
+        pendingStart = null;
         state = "stopped";
         throw new SttLifecycleError({
           kind: "start-failed",
@@ -94,6 +140,9 @@ export function createOnDeviceSttStream(options: OnDeviceSttOptions): SttStream 
           cause: error,
         });
       }
+      if (stopRequested) abortStart();
+
+      await ready;
       if (stopRequested) abortStart();
 
       state = "open";
@@ -108,6 +157,12 @@ export function createOnDeviceSttStream(options: OnDeviceSttOptions): SttStream 
       // "starting" or "open": cancel any in-flight start, stop the sidecar, and
       // release the subscription so no further events fire.
       stopRequested = true;
+      if (state === "starting") {
+        rejectPendingStart({
+          kind: "aborted",
+          message: "Listening was stopped before recognition started",
+        });
+      }
       state = "stopped";
       try {
         await options.invoke("stt_ondevice_stop");
@@ -118,4 +173,13 @@ export function createOnDeviceSttStream(options: OnDeviceSttOptions): SttStream 
       listener = null;
     },
   };
+}
+
+function isOnDeviceKind(payload: unknown, kind: string): boolean {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    "kind" in payload &&
+    (payload as { readonly kind?: unknown }).kind === kind
+  );
 }

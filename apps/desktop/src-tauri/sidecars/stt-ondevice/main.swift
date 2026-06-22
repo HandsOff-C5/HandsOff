@@ -69,37 +69,29 @@ final class OnDeviceSttSession {
     }
 
     // Gate on Speech authorization. When the grant already exists we must NOT
-    // call `requestAuthorization`: its completion handler never fires for a helper
-    // process spawned by the app, deadlocking the start path even though the
-    // status is already `.authorized`. Only request when undetermined.
+    // call `requestAuthorization`: this helper is launched as a raw sidecar
+    // process, and macOS TCC kills that process before it can report a result.
+    // The dashboard's permissions surface owns user setup; this helper only
+    // reports the missing grant and exits cleanly.
     private func ensureSpeechAuthorized(_ next: @escaping () -> Void) {
-        if SFSpeechRecognizer.authorizationStatus() == .authorized {
+        let status = SFSpeechRecognizer.authorizationStatus()
+        if status == .authorized {
             next()
             return
         }
-        SFSpeechRecognizer.requestAuthorization { status in
-            guard status == .authorized else {
-                Emitter.error(
-                    "mic-permission", "speech recognition not authorized (\(status.rawValue))")
-                exit(1)
-            }
-            next()
-        }
+        Emitter.error("mic-permission", "speech recognition not authorized (\(status.rawValue))")
+        exit(1)
     }
 
-    // Same guard for the microphone: skip the request when already authorized.
+    // Same guard for the microphone: do not prompt from the raw helper process.
     private func ensureMicAuthorized(_ next: @escaping () -> Void) {
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        if status == .authorized {
             next()
             return
         }
-        AVCaptureDevice.requestAccess(for: .audio) { granted in
-            guard granted else {
-                Emitter.error("mic-permission", "microphone access denied")
-                exit(1)
-            }
-            next()
-        }
+        Emitter.error("mic-permission", "microphone access not authorized (\(status.rawValue))")
+        exit(1)
     }
 
     private func beginRecognition() {
@@ -191,22 +183,26 @@ func authString(_ status: SFSpeechRecognizerAuthorizationStatus) -> String {
     }
 }
 
-// `--request-permissions` mode (#31): trigger the macOS Speech + microphone
-// authorization prompts and report the resulting grants, then exit. Requesting
-// an already-determined permission does not re-prompt — it returns the current
-// state — so this is safe to call from the dashboard's "Allow" action whatever
-// the starting state. The dashboard re-probes readiness afterward.
-func requestPermissions() {
-    SFSpeechRecognizer.requestAuthorization { speechAuth in
-        AVCaptureDevice.requestAccess(for: .audio) { micGranted in
-            Emitter.emit([
-                "kind": "permissions",
-                "speech": authString(speechAuth),
-                "microphone": micGranted ? "granted" : "denied",
-            ])
-            exit(0)
-        }
+func micAuthString(_ status: AVAuthorizationStatus) -> String {
+    switch status {
+    case .authorized: return "granted"
+    case .denied: return "denied"
+    case .restricted: return "restricted"
+    case .notDetermined: return "not-determined"
+    @unknown default: return "unknown"
     }
+}
+
+// `--request-permissions` mode (#31): report the raw helper's current
+// authorization states without prompting. This process shape cannot safely call
+// TCC request APIs; doing so crashes before stdout can carry a result.
+func requestPermissions() {
+    Emitter.emit([
+        "kind": "permissions",
+        "speech": authString(SFSpeechRecognizer.authorizationStatus()),
+        "microphone": micAuthString(AVCaptureDevice.authorizationStatus(for: .audio)),
+    ])
+    exit(0)
 }
 
 let arguments = CommandLine.arguments
