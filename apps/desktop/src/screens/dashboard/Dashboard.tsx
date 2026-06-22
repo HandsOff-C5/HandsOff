@@ -4,6 +4,7 @@ import { createAssemblyAiStream, createOnDeviceSttStream } from "@handsoff/speec
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import { CameraPanel } from "../../features/camera/CameraPanel";
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
 import { ReadinessPanel } from "../../features/readiness/ReadinessPanel";
@@ -84,6 +85,7 @@ export function Dashboard({
         <p className="dashboard__tagline">Point. Speak. Supervise your agents.</p>
       </header>
       <div className="dashboard__panels">
+        <CameraPanel />
         <ReadinessPanel report={report} />
         <PermissionsPanel
           report={report}
