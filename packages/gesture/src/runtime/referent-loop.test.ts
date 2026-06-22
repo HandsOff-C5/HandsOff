@@ -74,6 +74,24 @@ describe("createReferentLoop", () => {
     }
   });
 
+  it("does not lock while the pointed target keeps changing (waving across surfaces)", () => {
+    // Two side-by-side surfaces; alternate pointing left/right every frame.
+    const split: Surface[] = [
+      { id: "left", bounds: { x: 0, y: 0, w: 0.5, h: 1 }, displayId: "d0" },
+      { id: "right", bounds: { x: 0.5, y: 0, w: 0.5, h: 1 }, displayId: "d0" },
+    ];
+    const l = createReferentLoop({
+      transform: IDENTITY,
+      surfaces: split,
+      calibrationQuality: "good",
+      dwell,
+    });
+    for (let i = 0; i < 40; i++) {
+      const x = i % 2 === 0 ? 0.25 : 0.75; // left, right, left, right…
+      expect(l.process(frame(handAt(x, 0.5, 0.95), i * 50), 50).state.phase).not.toBe("locked");
+    }
+  });
+
   it("keeps a locked referent when the hand then disappears", () => {
     const l = loop();
     const hand = handAt(0.5, 0.5, 0.95);

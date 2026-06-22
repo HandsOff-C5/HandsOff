@@ -48,7 +48,10 @@ export interface ReferentLoop {
 
 export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop => {
   const { transform, surfaces, calibrationQuality, dwell: dwellParams, pointing } = options;
-  const dwell = createDwellDebounce(dwellParams);
+  // Hold-to-lock means holding the SAME target: the dwell is reset whenever the pointed
+  // target changes (or is lost), so sweeping across surfaces never accumulates to a lock.
+  let dwell = createDwellDebounce(dwellParams);
+  let lastTargetId: string | null = null;
   let state = initialState();
 
   const pickHand = (frame: LandmarkFrame) =>
@@ -67,6 +70,14 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
         candidate = toCandidate(screenXY, surfaces, calibrationQuality);
         // Overall referent confidence = detection score × how well it lands on a target.
         confidence = hand.score * (candidate?.confidence ?? 0);
+      }
+
+      // Reset the dwell when the target changes or is lost — a lock requires dwelling on
+      // one target continuously, not just any confident pointing.
+      const targetId = candidate?.targetId ?? null;
+      if (targetId !== lastTargetId) {
+        dwell = createDwellDebounce(dwellParams);
+        lastTargetId = targetId;
       }
 
       const { active, fired } = dwell.update(confidence, dtMs);
