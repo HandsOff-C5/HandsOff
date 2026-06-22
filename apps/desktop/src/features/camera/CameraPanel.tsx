@@ -1,4 +1,9 @@
-import type { LandmarkFrame, LockedReferent, PointingCandidate } from "@handsoff/contracts";
+import type {
+  GestureState,
+  LandmarkFrame,
+  LockedReferent,
+  PointingCandidate,
+} from "@handsoff/contracts";
 import {
   createHandLandmarker,
   createLandmarkProcessor,
@@ -28,10 +33,12 @@ interface CameraPanelProps {
 
 type Status = "idle" | "starting" | "live" | "error";
 type Mode = "live" | "calibrating";
+type Quality = "good" | "fair" | "poor";
 
 const IDENTITY: AffineTransform = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0 };
 const DWELL = { enter: 0.6, exit: 0.4, dwellMs: 600, cooldownMs: 800 };
 const FRAME_BUFFER = 150;
+const CALIB_KEY = "handsoff.calibration";
 
 const defaultGetStream = (deviceId?: string) =>
   navigator.mediaDevices.getUserMedia({
@@ -62,16 +69,23 @@ export function CameraPanel({
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
   const [mirrored, setMirrored] = useState(true);
-  const [calibration, setCalibration] = useState<"good" | "fair" | "poor" | null>(null);
+  const [calibration, setCalibration] = useState<Quality | null>(null);
   const [candidate, setCandidate] = useState<PointingCandidate | null>(null);
   const [referent, setReferent] = useState<LockedReferent | null>(null);
+  const [phase, setPhase] = useState<GestureState>("idle");
+  const [active, setActive] = useState(false);
 
   const resources = useRef<Resources>({ raf: 0, handle: null, stream: null, cancelled: false });
   // Live pointing signal this frame — read by the calibration overlay's Capture.
   const latestRaw = useRef<Point | null>(null);
   // Rolling buffer of parsed frames for the dump-to-fixture button.
   const frameBuffer = useRef<LandmarkFrame[]>([]);
-  // The stateful referent loop; rebuilt when the calibration transform changes.
+  // Current calibration, so the loop can be rebuilt (unlock / restore) without re-fitting.
+  const calib = useRef<{ transform: AffineTransform; quality: Quality }>({
+    transform: IDENTITY,
+    quality: "poor",
+  });
+  // The stateful referent loop; rebuilt when calibration changes or on unlock.
   const referentLoop = useRef<ReferentLoop>(
     createReferentLoop({
       transform: IDENTITY,
@@ -81,16 +95,35 @@ export function CameraPanel({
     }),
   );
 
-  const rebuildLoop = useCallback((t: AffineTransform, quality: "good" | "fair" | "poor") => {
+  const rebuildLoop = useCallback((transform: AffineTransform, quality: Quality) => {
+    calib.current = { transform, quality };
     referentLoop.current = createReferentLoop({
-      transform: t,
+      transform,
       surfaces: demoSurfaces,
       calibrationQuality: quality,
       dwell: DWELL,
     });
     setReferent(null);
     setCandidate(null);
+    setPhase("idle");
+    setActive(false);
   }, []);
+
+  // Restore a saved calibration so pointing works immediately after a restart.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CALIB_KEY);
+      if (!saved) return;
+      const { transform, quality } = JSON.parse(saved) as {
+        transform: AffineTransform;
+        quality: Quality;
+      };
+      rebuildLoop(transform, quality);
+      setCalibration(quality);
+    } catch {
+      // Corrupt/absent storage — fall back to uncalibrated.
+    }
+  }, [rebuildLoop]);
 
   const stop = useCallback(() => {
     const r = resources.current;
@@ -148,6 +181,8 @@ export function CameraPanel({
             const dtMs = f2 > 0 ? 1000 / f2 : 16;
             const out = referentLoop.current.process(f, dtMs);
             setCandidate(out.candidate);
+            setActive(out.active);
+            setPhase(out.state.phase);
             if (out.emit && "targetId" in out.emit) setReferent(out.emit);
           },
           onError: (e) => setError(e instanceof Error ? e.message : String(e)),
@@ -176,6 +211,8 @@ export function CameraPanel({
     void start(id);
   };
 
+  const unlock = () => rebuildLoop(calib.current.transform, calib.current.quality);
+
   const dumpFrames = () => {
     const json = JSON.stringify(frameBuffer.current, null, 2);
     if (typeof URL.createObjectURL !== "function") return;
@@ -192,6 +229,7 @@ export function CameraPanel({
 
   const canStart = status === "idle" || status === "error";
   const isLive = status === "live";
+  const locked = phase === "locked" && referent;
 
   return (
     <section className="panel camera-panel">
@@ -201,8 +239,8 @@ export function CameraPanel({
         {status === "starting" && <span>Starting camera…</span>}
         {status === "live" && (
           <span>
-            Live{calibration ? ` · calibrated (${calibration})` : " · uncalibrated"}
-            {referent ? ` · referent: ${referent.targetId}` : ""}
+            Live
+            {calibration ? ` · calibrated (${calibration})` : " · uncalibrated — press Calibrate"}
           </span>
         )}
         {status === "error" && <span className="camera-panel__error">Camera error: {error}</span>}
@@ -257,9 +295,23 @@ export function CameraPanel({
           aria-label="webcam"
         />
         <LandmarkOverlay frame={frame} fps={fps} mirrored={mirrored} />
-        {candidate && mode === "live" && (
-          <p className="camera-panel__candidate">Aiming at: {candidate.targetId}</p>
+
+        {mode === "live" && locked && (
+          <div className="camera-panel__candidate camera-panel__candidate--locked">
+            🔒 Locked: {referent.targetId}
+            <button type="button" onClick={unlock}>
+              Unlock
+            </button>
+          </div>
         )}
+        {mode === "live" && !locked && candidate && (
+          <p className="camera-panel__candidate">
+            {active
+              ? `Holding ${candidate.targetId}… keep still`
+              : `Aiming at: ${candidate.targetId}`}
+          </p>
+        )}
+
         {isLive && mode === "calibrating" && (
           <CalibrationOverlay
             bounds={DEMO_SCREEN_BOUNDS}
@@ -267,6 +319,14 @@ export function CameraPanel({
             onComplete={(result) => {
               rebuildLoop(result.transform, result.quality);
               setCalibration(result.quality);
+              try {
+                localStorage.setItem(
+                  CALIB_KEY,
+                  JSON.stringify({ transform: result.transform, quality: result.quality }),
+                );
+              } catch {
+                // Persistence is best-effort.
+              }
               setMode("live");
             }}
           />
