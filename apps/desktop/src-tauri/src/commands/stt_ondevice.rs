@@ -187,17 +187,104 @@ pub fn stt_ondevice_stop(state: State<'_, OnDeviceSttState>) -> Result<(), Strin
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::CString;
+    use std::ffi::{CStr, CString};
+    #[cfg(target_os = "macos")]
+    use std::os::raw::c_char;
     use std::ptr;
+    #[cfg(target_os = "macos")]
+    use std::sync::{Mutex, OnceLock};
 
     use super::parse_native_event;
+    #[cfg(target_os = "macos")]
+    use super::SttEventCallback;
 
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
+        fn handsoff_emit_stt_error(
+            callback: SttEventCallback,
+            kind: *const c_char,
+            message: *const c_char,
+        );
+        fn handsoff_emit_stt_final(
+            callback: SttEventCallback,
+            text: *const c_char,
+            confidence: f64,
+            latency_ms: i64,
+        );
+        fn handsoff_emit_stt_partial(callback: SttEventCallback, text: *const c_char);
+        fn handsoff_emit_stt_ready(callback: SttEventCallback);
         fn handsoff_stt_engine_for_macos_major(
             major_version: i32,
             speech_analyzer_compiled: i32,
         ) -> i32;
+    }
+
+    #[cfg(target_os = "macos")]
+    static CAPTURED_NATIVE_EVENTS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+    #[cfg(target_os = "macos")]
+    fn captured_native_events() -> &'static Mutex<Vec<String>> {
+        CAPTURED_NATIVE_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    #[cfg(target_os = "macos")]
+    extern "C" fn capture_native_event(json: *const c_char) {
+        if json.is_null() {
+            return;
+        }
+        let text = unsafe { CStr::from_ptr(json) }
+            .to_string_lossy()
+            .into_owned();
+        captured_native_events()
+            .lock()
+            .expect("native event capture lock poisoned")
+            .push(text);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn take_captured_event() -> serde_json::Value {
+        let json = captured_native_events()
+            .lock()
+            .expect("native event capture lock poisoned")
+            .pop()
+            .expect("native helper should emit one event");
+        let c_json = CString::new(json).expect("native event should not contain nul bytes");
+        parse_native_event(c_json.as_ptr()).expect("native helper event should parse")
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_emit_helpers_preserve_rust_event_contract() {
+        captured_native_events()
+            .lock()
+            .expect("native event capture lock poisoned")
+            .clear();
+
+        let text = CString::new("hello").unwrap();
+        unsafe { handsoff_emit_stt_partial(capture_native_event, text.as_ptr()) };
+        let partial = take_captured_event();
+        assert_eq!(partial["kind"], "partial");
+        assert_eq!(partial["text"], "hello");
+
+        let text = CString::new("done").unwrap();
+        unsafe { handsoff_emit_stt_final(capture_native_event, text.as_ptr(), 0.75, 42) };
+        let final_event = take_captured_event();
+        assert_eq!(final_event["kind"], "final");
+        assert_eq!(final_event["text"], "done");
+        assert_eq!(final_event["confidence"], 0.75);
+        assert_eq!(final_event["latencyMs"], 42);
+
+        let kind = CString::new("start-failed").unwrap();
+        let message = CString::new("failed").unwrap();
+        unsafe { handsoff_emit_stt_error(capture_native_event, kind.as_ptr(), message.as_ptr()) };
+        let error = take_captured_event();
+        assert_eq!(error["kind"], "error");
+        assert_eq!(error["errorKind"], "start-failed");
+        assert_eq!(error["message"], "failed");
+
+        unsafe { handsoff_emit_stt_ready(capture_native_event) };
+        let ready = take_captured_event();
+        assert_eq!(ready["kind"], "ready");
     }
 
     #[cfg(target_os = "macos")]

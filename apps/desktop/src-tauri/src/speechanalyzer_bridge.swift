@@ -4,6 +4,27 @@ import Speech
 
 public typealias HandsOffSttEventCallback = @convention(c) (UnsafePointer<CChar>?) -> Void
 
+@_silgen_name("handsoff_emit_stt_ready")
+private func handsoffEmitSttReady(_ callback: HandsOffSttEventCallback)
+
+@_silgen_name("handsoff_emit_stt_partial")
+private func handsoffEmitSttPartial(_ callback: HandsOffSttEventCallback, _ text: UnsafePointer<CChar>)
+
+@_silgen_name("handsoff_emit_stt_final")
+private func handsoffEmitSttFinal(
+    _ callback: HandsOffSttEventCallback,
+    _ text: UnsafePointer<CChar>,
+    _ confidence: Double,
+    _ latencyMs: Int64
+)
+
+@_silgen_name("handsoff_emit_stt_error")
+private func handsoffEmitSttError(
+    _ callback: HandsOffSttEventCallback,
+    _ kind: UnsafePointer<CChar>,
+    _ message: UnsafePointer<CChar>
+)
+
 @available(macOS 26.0, *)
 private enum HandsOffSpeechAnalyzerError: LocalizedError {
     case noInputChannels
@@ -86,7 +107,7 @@ private final class HandsOffSpeechAnalyzerSession: @unchecked Sendable {
             startResultTask(for: transcriber)
             try await analyzer.start(inputSequence: inputSequence)
             try startAudioEngine(analyzerFormat: analyzerFormat)
-            emit(["kind": "ready"])
+            handsoffEmitSttReady(callback)
         } catch {
             if !stopping {
                 emitError(kind: "start-failed", message: error.localizedDescription)
@@ -116,14 +137,9 @@ private final class HandsOffSpeechAnalyzerSession: @unchecked Sendable {
                     let text = String(result.text.characters)
                     if result.isFinal {
                         let latencyMs = Int(Date().timeIntervalSince(self.startedAt) * 1000)
-                        self.emit([
-                            "kind": "final",
-                            "text": text,
-                            "confidence": 0,
-                            "latency_ms": latencyMs,
-                        ])
+                        self.emitFinal(text: text, confidence: 0, latencyMs: latencyMs)
                     } else {
-                        self.emit(["kind": "partial", "text": text])
+                        self.emitPartial(text)
                     }
                 }
             } catch {
@@ -199,22 +215,22 @@ private final class HandsOffSpeechAnalyzerSession: @unchecked Sendable {
     }
 
     private func emitError(kind: String, message: String) {
-        emit([
-            "kind": "error",
-            "error_kind": kind,
-            "message": message,
-        ])
+        kind.withCString { kindPointer in
+            message.withCString { messagePointer in
+                handsoffEmitSttError(callback, kindPointer, messagePointer)
+            }
+        }
     }
 
-    private func emit(_ object: [String: Any]) {
-        guard JSONSerialization.isValidJSONObject(object),
-            let data = try? JSONSerialization.data(withJSONObject: object),
-            let json = String(data: data, encoding: .utf8)
-        else {
-            return
+    private func emitPartial(_ text: String) {
+        text.withCString { textPointer in
+            handsoffEmitSttPartial(callback, textPointer)
         }
-        json.withCString { pointer in
-            callback(pointer)
+    }
+
+    private func emitFinal(text: String, confidence: Double, latencyMs: Int) {
+        text.withCString { textPointer in
+            handsoffEmitSttFinal(callback, textPointer, confidence, Int64(latencyMs))
         }
     }
 }

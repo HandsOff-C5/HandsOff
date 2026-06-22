@@ -17,47 +17,73 @@ fn build_native_permissions_bridge() {
     let src = format!("{manifest}/src/native_permissions.m");
     println!("cargo:rerun-if-changed={src}");
 
-    cc::Build::new()
-        .file(&src)
-        .flag("-fobjc-arc")
-        .compile("handsoff_native_permissions");
-    build_speech_analyzer_bridge_if_available(manifest);
+    let speech_analyzer = speech_analyzer_bridge_if_available(manifest);
+    let mut build = cc::Build::new();
+    build.file(&src).flag("-fobjc-arc");
+    if speech_analyzer.is_some() {
+        build.define("HANDSOFF_HAS_SPEECHANALYZER", "1");
+    }
+    build.compile("handsoff_native_permissions");
+    if let Some(speech_analyzer) = speech_analyzer {
+        build_speech_analyzer_bridge(speech_analyzer);
+    }
+
     println!("cargo:rustc-link-lib=framework=AVFoundation");
     println!("cargo:rustc-link-lib=framework=Foundation");
     println!("cargo:rustc-link-lib=framework=Speech");
 }
 
 #[cfg(target_os = "macos")]
-fn build_speech_analyzer_bridge_if_available(manifest: &str) {
+struct SpeechAnalyzerBridge {
+    src: String,
+    sdk_path: String,
+    target: String,
+    out_dir: String,
+    lib_path: String,
+}
+
+#[cfg(target_os = "macos")]
+fn speech_analyzer_bridge_if_available(manifest: &str) -> Option<SpeechAnalyzerBridge> {
     let src = format!("{manifest}/src/speechanalyzer_bridge.swift");
     println!("cargo:rerun-if-changed={src}");
 
-    let Some(sdk_major) = macos_sdk_major_version() else {
-        return;
-    };
+    let sdk_major = macos_sdk_major_version()?;
     if sdk_major < 26 {
-        return;
+        return None;
     }
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by cargo");
     let lib_path = format!("{out_dir}/libhandsoff_speechanalyzer.a");
-    let sdk_path =
-        macos_sdk_path().expect("macOS SDK path should exist when SDK version was found");
+    let sdk_path = macos_sdk_path().or_else(|| {
+        println!("cargo:warning=macOS 26 SDK version found but SDK path was unavailable; using SFSpeechRecognizer fallback");
+        None
+    })?;
     let target = swift_target();
 
+    Some(SpeechAnalyzerBridge {
+        src,
+        sdk_path,
+        target,
+        out_dir,
+        lib_path,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn build_speech_analyzer_bridge(bridge: SpeechAnalyzerBridge) {
     let status = Command::new("xcrun")
         .args([
             "swiftc",
             "-sdk",
-            &sdk_path,
+            &bridge.sdk_path,
             "-target",
-            &target,
+            &bridge.target,
             "-parse-as-library",
             "-emit-library",
             "-static",
             "-o",
-            &lib_path,
-            &src,
+            &bridge.lib_path,
+            &bridge.src,
         ])
         .status()
         .expect("failed to invoke swiftc for SpeechAnalyzer bridge");
@@ -66,7 +92,7 @@ fn build_speech_analyzer_bridge_if_available(manifest: &str) {
         panic!("swiftc failed to compile SpeechAnalyzer bridge");
     }
 
-    println!("cargo:rustc-link-search=native={out_dir}");
+    println!("cargo:rustc-link-search=native={}", bridge.out_dir);
     println!("cargo:rustc-link-lib=static=handsoff_speechanalyzer");
     if let Some(swift_lib_path) = swift_runtime_library_path() {
         println!("cargo:rustc-link-search=native={swift_lib_path}");
