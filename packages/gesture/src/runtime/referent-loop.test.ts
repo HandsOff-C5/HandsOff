@@ -39,29 +39,39 @@ describe("createReferentLoop", () => {
     expect(out.active).toBe(false);
   });
 
-  it("a confident pointing hand produces a candidate (not yet locked)", () => {
+  it("smooths confidence across frames — a single high frame does not jump to full confidence (#28)", () => {
     const out = loop().process(frame(handAt(0.5, 0.5, 0.95)), 50);
-    expect(out.state.phase).toBe("candidate");
-    expect(out.candidate?.targetId).toBe("win-1");
-    expect(out.emit).toBeUndefined();
+    // EMA: the first frame is attenuated well below the raw 0.95, so one frame can't engage.
+    expect(out.confidence).toBeGreaterThan(0);
+    expect(out.confidence).toBeLessThan(0.95);
+    expect(out.active).toBe(false);
   });
 
-  it("locks to a referent once the hand dwells past dwellMs, emitting once", () => {
+  it("engages and produces a candidate after a few frames of steady pointing", () => {
     const l = loop();
     const hand = handAt(0.5, 0.5, 0.95);
-    // 50ms ticks: dwell reaches 200ms on the 4th tick.
-    expect(l.process(frame(hand, 50), 50).state.phase).toBe("candidate");
-    expect(l.process(frame(hand, 100), 50).state.phase).toBe("candidate");
-    expect(l.process(frame(hand, 150), 50).state.phase).toBe("candidate");
-    const locked = l.process(frame(hand, 200), 50);
-    expect(locked.state.phase).toBe("locked");
-    expect(locked.emit).toEqual({
-      targetId: "win-1",
-      confidence: expect.any(Number),
-      lockedAtMs: 200,
-    });
-    // Holding longer must not re-emit.
-    expect(l.process(frame(hand, 250), 50).emit).toBeUndefined();
+    let out = l.process(frame(hand, 50), 50);
+    for (let i = 1; i < 4; i++) out = l.process(frame(hand, 50 + i * 50), 50);
+    expect(out.candidate?.targetId).toBe("win-1");
+    expect(out.active).toBe(true);
+    expect(out.state.phase).not.toBe("idle");
+  });
+
+  it("locks to a referent once the hand dwells on one target, emitting exactly once", () => {
+    const l = loop();
+    const hand = handAt(0.5, 0.5, 0.95);
+    expect(l.process(frame(hand, 0), 50).state.phase).not.toBe("locked"); // ramps up, not instant
+    let emits = 0;
+    let lockedAt = -1;
+    for (let i = 1; i <= 30; i++) {
+      const out = l.process(frame(hand, i * 50), 50);
+      if (out.emit && "targetId" in out.emit) {
+        emits++;
+        if (lockedAt < 0) lockedAt = i;
+      }
+    }
+    expect(lockedAt).toBeGreaterThan(0); // it did lock
+    expect(emits).toBe(1); // and emitted the referent exactly once
   });
 
   it("never locks while detection confidence stays below the enter threshold", () => {
@@ -95,8 +105,9 @@ describe("createReferentLoop", () => {
   it("keeps a locked referent when the hand then disappears", () => {
     const l = loop();
     const hand = handAt(0.5, 0.5, 0.95);
-    for (let t = 50; t <= 200; t += 50) l.process(frame(hand, t), 50);
-    expect(l.process(frame(null, 250), 50).state.phase).toBe("locked");
+    // Hold long enough to clear the confidence ramp + dwell, then drop the hand.
+    for (let i = 1; i <= 30; i++) l.process(frame(hand, i * 50), 50);
+    expect(l.process(frame(null, 1600), 50).state.phase).toBe("locked");
   });
 });
 

@@ -9,6 +9,7 @@ import type {
 
 import { applyTransform, toCandidate, type AffineTransform } from "../calibration/calibrate";
 import { createDwellDebounce, type DwellDebounceParams } from "../confidence/dwell";
+import { alphaFromCutoff, ema } from "../confidence/smoothing";
 import { pointingSignal, type PointingSignalOptions } from "../perception/pointing";
 import { initialState, reduce, type GestureMachineState } from "../state-machine/machine";
 
@@ -30,12 +31,17 @@ export interface ReferentLoopOptions {
   dwell: DwellDebounceParams;
   // Which hand / ray anchor to read.
   pointing?: PointingSignalOptions;
+  // Low-pass cutoff (Hz) for smoothing the referent confidence across frames (#28).
+  // Lower = steadier but laggier. Default 2.
+  confidenceCutoffHz?: number;
 }
 
 export interface ReferentLoopResult {
   state: GestureMachineState;
   // The candidate this frame (for the overlay highlight), or null when no hand / no surface.
   candidate: PointingCandidate | null;
+  // The smoothed referent confidence this frame (the value the dwell gates on).
+  confidence: number;
   // Dwell engaged — surface for the low-confidence / clarification UI.
   active: boolean;
   // FSM side-effect this frame (a referent locked, or an interrupt raised).
@@ -47,11 +53,21 @@ export interface ReferentLoop {
 }
 
 export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop => {
-  const { transform, surfaces, calibrationQuality, dwell: dwellParams, pointing } = options;
+  const {
+    transform,
+    surfaces,
+    calibrationQuality,
+    dwell: dwellParams,
+    pointing,
+    confidenceCutoffHz = 2,
+  } = options;
   // Hold-to-lock means holding the SAME target: the dwell is reset whenever the pointed
   // target changes (or is lost), so sweeping across surfaces never accumulates to a lock.
   let dwell = createDwellDebounce(dwellParams);
   let lastTargetId: string | null = null;
+  // Confidence is EMA-smoothed across frames (#28) before the dwell sees it, so a single
+  // spurious frame can't swing engagement.
+  let smoothedConfidence = 0;
   let state = initialState();
 
   const pickHand = (frame: LandmarkFrame) =>
@@ -72,6 +88,13 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
         confidence = hand.score * (candidate?.confidence ?? 0);
       }
 
+      // Smooth confidence across frames (#28) before it gates anything.
+      smoothedConfidence = ema(
+        confidence,
+        smoothedConfidence,
+        alphaFromCutoff(confidenceCutoffHz, dtMs / 1000),
+      );
+
       // Reset the dwell when the target changes or is lost — a lock requires dwelling on
       // one target continuously, not just any confident pointing.
       const targetId = candidate?.targetId ?? null;
@@ -80,7 +103,7 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
         lastTargetId = targetId;
       }
 
-      const { active, fired } = dwell.update(confidence, dtMs);
+      const { active, fired } = dwell.update(smoothedConfidence, dtMs);
 
       let emit: LockedReferent | InterruptIntent | undefined;
       if (hand && active && candidate) {
@@ -100,7 +123,7 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
         state = reduce(state, { type: "lost" }).state;
       }
 
-      return { state, candidate, active, emit };
+      return { state, candidate, confidence: smoothedConfidence, active, emit };
     },
   };
 };
