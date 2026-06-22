@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { safeParseCuaActionResult } from "./cua";
+import { safeParseCuaActionResult, safeParseCuaWindowState } from "./cua";
 import type { CuaActionResult, CuaWindowState } from "./cua";
 
 function state(): CuaWindowState {
@@ -15,6 +15,7 @@ function state(): CuaWindowState {
       accessStatus: "accessible",
     },
     capturedAt: "2026-06-22T12:00:00.000Z",
+    elementCount: 1,
     elements: [{ id: "element-1", index: 0, role: "button", label: "Save" }],
   };
 }
@@ -47,5 +48,18 @@ describe("CUA contract", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("keeps driver element count separate from parsed elements", () => {
+    const result = safeParseCuaWindowState({
+      surface: state().surface,
+      capturedAt: "2026-06-22T12:00:00.000Z",
+      elementCount: 3,
+    });
+
+    expect(result.success && result.data).toMatchObject({
+      elementCount: 3,
+      elements: [],
+    });
   });
 });

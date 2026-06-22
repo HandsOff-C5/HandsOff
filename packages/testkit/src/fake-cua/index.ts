@@ -14,6 +14,7 @@ export function fakeCuaWindowState(overrides: Partial<CuaWindowState> = {}): Cua
   return {
     surface: fakeSurfaceSnapshot(),
     capturedAt: "2026-06-22T12:00:00.000Z",
+    elementCount: 1,
     elements: [{ id: "element-1", index: 0, role: "button", label: "Save" }],
     ...overrides,
   };

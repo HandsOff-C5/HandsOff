@@ -98,6 +98,7 @@ describe("Dashboard", () => {
         createStream={makeFactory()}
         cuaDriver={driver}
         now={() => "2026-06-22T12:00:00.000Z"}
+        targetResolveDelayMs={0}
       />,
     );
 
@@ -107,7 +108,8 @@ describe("Dashboard", () => {
     fireEvent.pointerUp(talkButton());
     await flush();
 
-    expect(await screen.findByText("Click selected target")).toBeInTheDocument();
+    expect(screen.getByText("Click selected target")).toBeInTheDocument();
+    expect(screen.getByText("Session: session-1")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     await waitFor(() => expect(screen.getByText(/Last run:/)).toHaveTextContent("succeeded"));
@@ -119,8 +121,40 @@ describe("Dashboard", () => {
     ]);
   });
 
+  it("waits before resolving the CUA target after speech release", async () => {
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState() });
+    render(
+      <Dashboard
+        createStream={makeFactory()}
+        cuaDriver={driver}
+        now={() => "2026-06-22T12:00:00.000Z"}
+        targetResolveDelayMs={10}
+      />,
+    );
+
+    fireEvent.pointerDown(talkButton());
+    await flush();
+    act(() => latest().emitFinal("click there", 0.95, 100));
+    fireEvent.pointerUp(talkButton());
+    await flush();
+
+    expect(driver.calls()).toHaveLength(0);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(screen.getByText("Click selected target")).toBeInTheDocument();
+    expect(driver.calls().map((call) => call.kind)).toEqual(["get_window_state"]);
+  });
+
   it("shows a blocked preview when no CUA driver is available", async () => {
-    render(<Dashboard createStream={makeFactory()} now={() => "2026-06-22T12:00:00.000Z"} />);
+    render(
+      <Dashboard
+        createStream={makeFactory()}
+        now={() => "2026-06-22T12:00:00.000Z"}
+        targetResolveDelayMs={0}
+      />,
+    );
 
     fireEvent.pointerDown(talkButton());
     await flush();

@@ -48,6 +48,7 @@ pub struct CuaWindow {
 #[serde(rename_all = "camelCase")]
 pub struct CuaWindowState {
     pub surface: CuaWindow,
+    pub element_count: u64,
     pub elements: Vec<Value>,
 }
 
@@ -63,17 +64,40 @@ fn run_cua(args: &[&str]) -> Result<Value, String> {
         .output()
         .map_err(|error| format!("cua-driver failed to start: {error}"))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("cua-driver failed: {stderr}"));
-    }
+    ensure_success(output.status.success(), &output.stderr)?;
+    parse_json_stdout(&output.stdout)
+}
 
-    serde_json::from_slice(&output.stdout)
+fn run_cua_action(args: &[&str]) -> Result<(), String> {
+    let output = Command::new("cua-driver")
+        .args(args)
+        .output()
+        .map_err(|error| format!("cua-driver failed to start: {error}"))?;
+
+    ensure_success(output.status.success(), &output.stderr)
+}
+
+fn ensure_success(success: bool, stderr: &[u8]) -> Result<(), String> {
+    if success {
+        return Ok(());
+    }
+    Err(format!(
+        "cua-driver failed: {}",
+        String::from_utf8_lossy(stderr)
+    ))
+}
+
+fn parse_json_stdout(stdout: &[u8]) -> Result<Value, String> {
+    serde_json::from_slice(stdout)
         .map_err(|error| format!("cua-driver returned invalid JSON: {error}"))
 }
 
 fn call_tool(tool: &str, input: Value) -> Result<Value, String> {
     run_cua(&["call", tool, &input.to_string()])
+}
+
+fn call_action_tool(tool: &str, input: Value) -> Result<(), String> {
+    run_cua_action(&["call", tool, &input.to_string()])
 }
 
 fn map_window(window: DriverWindow, focused: bool) -> CuaWindow {
@@ -113,17 +137,14 @@ fn map_permissions(report: DriverPermissionReport) -> CuaPermissionReport {
     }
 }
 
-fn map_elements(raw: &Value) -> Vec<Value> {
-    if raw
-        .get("element_count")
+fn element_count(raw: &Value) -> u64 {
+    raw.get("element_count")
         .and_then(Value::as_u64)
         .unwrap_or(0)
-        == 0
-    {
-        return vec![];
-    }
+}
 
-    vec![json!({ "id": "element-0", "index": 0 })]
+fn map_elements(_raw: &Value) -> Vec<Value> {
+    vec![]
 }
 
 #[tauri::command]
@@ -173,13 +194,14 @@ pub fn cua_get_window_state(pid: u32, window_id: u32) -> Result<CuaWindowState, 
 
     Ok(CuaWindowState {
         surface: window,
+        element_count: element_count(&raw),
         elements,
     })
 }
 
 #[tauri::command]
 pub fn cua_click(pid: u32, window_id: u32, element_index: u32) -> Result<CuaActionResult, String> {
-    let _ = call_tool(
+    call_action_tool(
         "click",
         json!({ "pid": pid, "window_id": window_id, "element_index": element_index }),
     )?;
@@ -196,7 +218,7 @@ pub fn cua_type_text(
     element_index: u32,
     text: String,
 ) -> Result<CuaActionResult, String> {
-    let _ = call_tool(
+    call_action_tool(
         "type_text",
         json!({ "pid": pid, "window_id": window_id, "element_index": element_index, "text": text }),
     )?;
@@ -213,7 +235,7 @@ pub fn cua_set_value(
     element_index: u32,
     value: String,
 ) -> Result<CuaActionResult, String> {
-    let _ = call_tool(
+    call_action_tool(
         "set_value",
         json!({ "pid": pid, "window_id": window_id, "element_index": element_index, "value": value }),
     )?;
@@ -262,10 +284,22 @@ mod tests {
     }
 
     #[test]
-    fn exposes_first_actionable_element_when_driver_reports_elements() {
+    fn preserves_driver_element_count_without_fabricating_elements() {
         let elements = map_elements(&json!({ "element_count": 3 }));
 
-        assert_eq!(elements, vec![json!({ "id": "element-0", "index": 0 })]);
+        assert_eq!(element_count(&json!({ "element_count": 3 })), 3);
+        assert!(elements.is_empty());
         assert!(map_elements(&json!({ "element_count": 0 })).is_empty());
+    }
+
+    #[test]
+    fn action_success_does_not_require_json_stdout() {
+        assert!(ensure_success(true, b"Inserted text").is_ok());
+    }
+
+    #[test]
+    fn json_output_still_requires_valid_json() {
+        assert!(parse_json_stdout(br#"{"ok":true}"#).is_ok());
+        assert!(parse_json_stdout(b"Inserted text").is_err());
     }
 }

@@ -72,7 +72,10 @@ describe("Tauri CUA driver", () => {
     const invoke: CuaInvoke = async <T>(command: string) => {
       if (command === "cua_list_windows") return [workWindow] as T;
       if (command === "cua_get_window_state") {
-        return { surface: workWindow, elements: [] } as Omit<CuaWindowState, "capturedAt"> as T;
+        return { surface: workWindow, elementCount: 3, elements: [] } as Omit<
+          CuaWindowState,
+          "capturedAt"
+        > as T;
       }
       throw new Error(`Unexpected command: ${command}`);
     };
@@ -81,8 +84,20 @@ describe("Tauri CUA driver", () => {
 
     expect(result).toMatchObject({
       status: "succeeded",
-      state: { surface: workWindow, elements: [] },
+      state: { surface: workWindow, elementCount: 3, elements: [] },
     });
+  });
+
+  it("fails invalid native window state instead of trusting it", async () => {
+    const invoke: CuaInvoke = async <T>(command: string) => {
+      if (command === "cua_list_windows") return [workWindow] as T;
+      if (command === "cua_get_window_state") return { surface: workWindow, elements: "bad" } as T;
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const result = await createTauriCuaDriver(invoke).getWindowState(unresolvedTarget);
+
+    expect(result).toMatchObject({ status: "failed" });
   });
 
   it("prefers the focused usable window when the driver reports one", async () => {

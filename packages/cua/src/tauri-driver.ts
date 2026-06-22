@@ -1,11 +1,14 @@
-import type {
-  ActionTarget,
-  CuaActionResult,
-  CuaApp,
-  CuaPermissionReport,
-  CuaWindow,
-  CuaWindowState,
+import {
+  cuaPermissionReportSchema,
+  cuaWindowSchema,
+  safeParseCuaWindowState,
+  type ActionTarget,
+  type CuaActionResult,
+  type CuaApp,
+  type CuaPermissionReport,
+  type CuaWindow,
 } from "@handsoff/contracts";
+import type { CuaWindowState } from "@handsoff/contracts";
 
 import type { CuaDriver } from "./driver";
 import { normalizeCuaActionResult } from "./driver";
@@ -25,9 +28,30 @@ function isUsableWindow(window: CuaWindow): boolean {
   );
 }
 
+function isResolvedTarget(target: ActionTarget | null): target is ResolvedActionTarget {
+  return target?.surface.pid !== undefined && target.surface.windowId !== undefined;
+}
+
+function parsePermissions(input: unknown): CuaPermissionReport {
+  const parsed = cuaPermissionReportSchema.safeParse(input);
+  return parsed.success
+    ? parsed.data
+    : { accessibility: "unknown", screenRecording: "unknown", driver: "unknown" };
+}
+
+function parseWindows(input: unknown): readonly CuaWindow[] {
+  const parsed = cuaWindowSchema.array().safeParse(input);
+  return parsed.success ? parsed.data : [];
+}
+
+function withCapturedAt(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  return { ...input, capturedAt: new Date().toISOString() };
+}
+
 export function createTauriCuaDriver(invoke: CuaInvoke): CuaDriver {
   async function listWindows(): Promise<readonly CuaWindow[]> {
-    return invoke<CuaWindow[]>("cua_list_windows");
+    return parseWindows(await invoke("cua_list_windows"));
   }
 
   async function resolve(target: ActionTarget): Promise<ActionTarget | null> {
@@ -46,15 +70,11 @@ export function createTauriCuaDriver(invoke: CuaInvoke): CuaDriver {
     run: (target: ResolvedActionTarget) => Promise<CuaActionResult>,
   ): Promise<CuaActionResult> {
     const resolved = await resolve(target);
-    if (
-      !resolved ||
-      resolved.surface.pid === undefined ||
-      resolved.surface.windowId === undefined
-    ) {
+    if (!isResolvedTarget(resolved)) {
       return { status: "blocked", reason: "No accessible CUA window was found" };
     }
     try {
-      return await run(resolved as ResolvedActionTarget);
+      return await run(resolved);
     } catch (caught) {
       return { status: "failed", error: caught instanceof Error ? caught.message : String(caught) };
     }
@@ -62,21 +82,28 @@ export function createTauriCuaDriver(invoke: CuaInvoke): CuaDriver {
 
   async function getWindowState(target: ActionTarget) {
     return withResolvedTarget(target, async (resolved) => {
-      const state = await invoke<HostWindowState>("cua_get_window_state", {
-        pid: resolved.surface.pid,
-        windowId: resolved.surface.windowId,
-      });
+      const parsed = safeParseCuaWindowState(
+        withCapturedAt(
+          await invoke<HostWindowState>("cua_get_window_state", {
+            pid: resolved.surface.pid,
+            windowId: resolved.surface.windowId,
+          }),
+        ),
+      );
+      if (!parsed.success) {
+        return { status: "failed", error: `Invalid CUA window state: ${parsed.error.message}` };
+      }
       return {
         status: "succeeded",
         summary: "Window state captured",
-        state: { ...state, capturedAt: new Date().toISOString() },
+        state: parsed.data,
       };
     });
   }
 
   return {
     async checkPermissions(): Promise<CuaPermissionReport> {
-      return invoke<CuaPermissionReport>("cua_permissions");
+      return parsePermissions(await invoke("cua_permissions"));
     },
     async listApps(): Promise<readonly CuaApp[]> {
       return [];

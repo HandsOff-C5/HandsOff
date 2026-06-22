@@ -35,6 +35,7 @@ export type CuaElement = z.infer<typeof cuaElementSchema>;
 export const cuaWindowStateSchema = z.object({
   surface: surfaceSnapshotSchema,
   capturedAt: z.string().datetime(),
+  elementCount: z.number().int().nonnegative().default(0),
   elements: z.array(cuaElementSchema).default([]),
 });
 export type CuaWindowState = z.infer<typeof cuaWindowStateSchema>;
@@ -88,4 +89,10 @@ export function safeParseCuaActionResult(
   input: unknown,
 ): z.SafeParseReturnType<unknown, CuaActionResult> {
   return cuaActionResultSchema.safeParse(input);
+}
+
+export function safeParseCuaWindowState(
+  input: unknown,
+): z.SafeParseReturnType<unknown, CuaWindowState> {
+  return cuaWindowStateSchema.safeParse(input);
 }

@@ -3,6 +3,7 @@ import type {
   ApprovalDecision,
   CuaActionRequest,
   CuaActionResult,
+  CuaWindowState,
   ExecutionStatus,
   SupervisionAuditEvent,
 } from "@handsoff/contracts";
@@ -62,7 +63,20 @@ export async function runApprovedPlan(args: {
 
   for (const step of args.plan.action_plan) {
     const pre = await args.cua.getWindowState({ kind: "get_window_state", target: step.target });
-    recordState(args.audit, args.sessionId, args.plan.id, step.id, "pre", recordedAt, pre);
+    const preCapture = stateCapture(pre, "Pre-action");
+    if ("failure" in preCapture) {
+      finish(args.audit, args.sessionId, args.plan.id, recordedAt, preCapture.failure);
+      return { status: preCapture.failure.status, result: preCapture.failure };
+    }
+    recordState(
+      args.audit,
+      args.sessionId,
+      args.plan.id,
+      step.id,
+      "pre",
+      recordedAt,
+      preCapture.state,
+    );
 
     const request = translateStep(step);
     const result = await callCua(args.cua, request);
@@ -76,18 +90,36 @@ export async function runApprovedPlan(args: {
       result,
     });
 
-    const post = await args.cua.getWindowState({ kind: "get_window_state", target: step.target });
-    recordState(args.audit, args.sessionId, args.plan.id, step.id, "post", recordedAt, post);
-
-    if (result.status !== "succeeded") {
+    const postRequest: Extract<CuaActionRequest, { kind: "get_window_state" }> = {
+      kind: "get_window_state",
+      target: step.target,
+    };
+    const post = await args.cua.getWindowState(postRequest);
+    const postCapture = stateCapture(post, "Post-action");
+    if ("failure" in postCapture) {
       args.audit.record({
-        kind: "execution_finished",
+        kind: "cua_call",
         sessionId: args.sessionId,
         actionId: args.plan.id,
+        stepId: step.id,
         recordedAt,
-        status: result.status,
-        result,
+        request: postRequest,
+        result: postCapture.failure,
       });
+    } else {
+      recordState(
+        args.audit,
+        args.sessionId,
+        args.plan.id,
+        step.id,
+        "post",
+        recordedAt,
+        postCapture.state,
+      );
+    }
+
+    if (result.status !== "succeeded") {
+      finish(args.audit, args.sessionId, args.plan.id, recordedAt, result);
       return { status: result.status, result };
     }
   }
@@ -118,6 +150,34 @@ async function callCua(port: CuaActionPort, request: CuaActionRequest): Promise<
   return port.screenshot(request);
 }
 
+function stateCapture(
+  result: CuaActionResult,
+  phase: string,
+): { state: CuaWindowState } | { failure: CuaActionResult } {
+  if (result.status !== "succeeded") return { failure: result };
+  if (result.state) return { state: result.state };
+  return {
+    failure: { status: "failed", error: `${phase} CUA state capture did not return state` },
+  };
+}
+
+function finish(
+  audit: ActionAuditSink,
+  sessionId: string,
+  actionId: string,
+  recordedAt: string,
+  result: CuaActionResult,
+): void {
+  audit.record({
+    kind: "execution_finished",
+    sessionId,
+    actionId,
+    recordedAt,
+    status: result.status,
+    result,
+  });
+}
+
 function recordState(
   audit: ActionAuditSink,
   sessionId: string,
@@ -125,11 +185,8 @@ function recordState(
   stepId: string,
   phase: "pre" | "post",
   recordedAt: string,
-  result: CuaActionResult,
+  state: CuaWindowState,
 ) {
-  if (!result.state) {
-    return;
-  }
   audit.record({
     kind: "cua_state_captured",
     sessionId,
@@ -137,6 +194,6 @@ function recordState(
     stepId,
     phase,
     recordedAt,
-    state: result.state,
+    state,
   });
 }
