@@ -10,5 +10,6 @@ export {
   type PointingSignalOptions,
 } from "./perception/pointing";
 export * from "./calibration";
+export * from "./mediapipe";
 export * from "./confidence";
 export * from "./state-machine";
