@@ -37,6 +37,10 @@ type Quality = "good" | "fair" | "poor";
 
 const IDENTITY: AffineTransform = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0 };
 const DWELL = { enter: 0.6, exit: 0.4, dwellMs: 600, cooldownMs: 800 };
+// Aim-based pointing: the wrist→fingertip ray, extrapolated, so the direction the finger
+// aims drives the cursor (not just the hand's position). The live loop and the
+// calibration capture MUST use the same signal or the fitted mapping is meaningless.
+const POINTING = { anchor: "wrist", extend: 1.5 } as const;
 const FRAME_BUFFER = 150;
 const CALIB_KEY = "handsoff.calibration";
 
@@ -92,6 +96,7 @@ export function CameraPanel({
       surfaces: demoSurfaces,
       calibrationQuality: "poor",
       dwell: DWELL,
+      pointing: POINTING,
     }),
   );
 
@@ -102,6 +107,7 @@ export function CameraPanel({
       surfaces: demoSurfaces,
       calibrationQuality: quality,
       dwell: DWELL,
+      pointing: POINTING,
     });
     setReferent(null);
     setCandidate(null);
@@ -173,7 +179,7 @@ export function CameraPanel({
           onResult: ({ frame: f, fps: f2 }) => {
             setFrame(f);
             setFps(f2);
-            latestRaw.current = pointingSignalFromFrame(f);
+            latestRaw.current = pointingSignalFromFrame(f, POINTING);
             const buf = frameBuffer.current;
             buf.push(f);
             if (buf.length > FRAME_BUFFER) buf.shift();
