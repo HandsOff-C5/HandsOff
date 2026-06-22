@@ -5,6 +5,31 @@
 
 typedef void (*HandsOffSttEventCallback)(const char *json);
 
+#ifndef HANDSOFF_HAS_SPEECHANALYZER
+#define HANDSOFF_HAS_SPEECHANALYZER 0
+#endif
+
+typedef NS_ENUM(NSInteger, HandsOffSttEngine) {
+  HandsOffSttEngineSFSpeechRecognizer = 1,
+  HandsOffSttEngineSpeechAnalyzer = 2,
+};
+
+int handsoff_stt_engine_for_macos_major(int major_version, int speech_analyzer_compiled) {
+  return (major_version >= 26 && speech_analyzer_compiled != 0) ? HandsOffSttEngineSpeechAnalyzer
+                                                               : HandsOffSttEngineSFSpeechRecognizer;
+}
+
+#if HANDSOFF_HAS_SPEECHANALYZER
+static HandsOffSttEngine handsoff_selected_stt_engine(void) {
+  NSOperatingSystemVersion version = [[NSProcessInfo processInfo] operatingSystemVersion];
+  return (HandsOffSttEngine)handsoff_stt_engine_for_macos_major((int)version.majorVersion,
+                                                               HANDSOFF_HAS_SPEECHANALYZER);
+}
+
+extern int handsoff_speechanalyzer_start(HandsOffSttEventCallback callback);
+extern void handsoff_speechanalyzer_stop(void);
+#endif
+
 // Emit a typed native event as JSON. The Rust side parses into strongly-typed
 // structs (see stt_ondevice.rs) that validate the structure and fail loudly on
 // malformed input. Field names use snake_case to match Rust conventions.
@@ -25,6 +50,73 @@ static void handsoff_emit_stt_event(HandsOffSttEventCallback callback, NSDiction
   }
 
   callback([json UTF8String]);
+}
+
+static NSString *handsoff_string_from_c(const char *value) {
+  if (value == NULL) {
+    return @"";
+  }
+  NSString *string = [NSString stringWithUTF8String:value];
+  return string ?: @"";
+}
+
+void handsoff_emit_stt_ready(HandsOffSttEventCallback callback) {
+  handsoff_emit_stt_event(callback, @{@"kind" : @"ready"});
+}
+
+void handsoff_emit_stt_partial(HandsOffSttEventCallback callback, const char *text) {
+  handsoff_emit_stt_event(callback, @{
+    @"kind" : @"partial",
+    @"text" : handsoff_string_from_c(text),
+  });
+}
+
+void handsoff_emit_stt_final(HandsOffSttEventCallback callback,
+                             const char *text,
+                             double confidence,
+                             long long latency_ms) {
+  handsoff_emit_stt_event(callback, @{
+    @"kind" : @"final",
+    @"text" : handsoff_string_from_c(text),
+    @"confidence" : @(confidence),
+    @"latency_ms" : @(latency_ms),
+  });
+}
+
+void handsoff_emit_stt_error(HandsOffSttEventCallback callback, const char *kind, const char *message) {
+  handsoff_emit_stt_event(callback, @{
+    @"kind" : @"error",
+    @"error_kind" : handsoff_string_from_c(kind),
+    @"message" : handsoff_string_from_c(message),
+  });
+}
+
+static void handsoff_emit_stt_permission_error(HandsOffSttEventCallback callback,
+                                               const char *message,
+                                               NSInteger status) {
+  handsoff_emit_stt_event(callback, @{
+    @"kind" : @"error",
+    @"error_kind" : @"mic-permission",
+    @"message" : handsoff_string_from_c(message),
+    @"permission_status" : @(status),
+  });
+}
+
+API_AVAILABLE(macos(10.15))
+static BOOL handsoff_stt_permissions_are_authorized(HandsOffSttEventCallback callback) {
+  if ([SFSpeechRecognizer authorizationStatus] != SFSpeechRecognizerAuthorizationStatusAuthorized) {
+    NSInteger status = (NSInteger)[SFSpeechRecognizer authorizationStatus];
+    handsoff_emit_stt_permission_error(callback, "speech recognition not authorized", status);
+    return NO;
+  }
+
+  if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] != AVAuthorizationStatusAuthorized) {
+    NSInteger status = (NSInteger)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    handsoff_emit_stt_permission_error(callback, "microphone access not authorized", status);
+    return NO;
+  }
+
+  return YES;
 }
 
 API_AVAILABLE(macos(10.15))
@@ -56,43 +148,13 @@ static HandsOffSttSession *activeSttSession API_AVAILABLE(macos(10.15));
   return self;
 }
 
-- (void)emit:(NSDictionary *)object {
-  handsoff_emit_stt_event(self.callback, object);
-}
-
 - (void)emitError:(NSString *)kind message:(NSString *)message {
-  [self emit:@{
-    @"kind" : @"error",
-    @"error_kind" : kind,
-    @"message" : message,
-  }];
+  handsoff_emit_stt_error(self.callback, kind.UTF8String, message.UTF8String);
 }
 
 - (void)start {
   if (self.recognizer == nil) {
     [self emitError:@"provider-unavailable" message:@"no recognizer for current locale"];
-    return;
-  }
-
-  if ([SFSpeechRecognizer authorizationStatus] != SFSpeechRecognizerAuthorizationStatusAuthorized) {
-    NSInteger status = (NSInteger)[SFSpeechRecognizer authorizationStatus];
-    [self emit:@{
-      @"kind" : @"error",
-      @"error_kind" : @"mic-permission",
-      @"message" : @"speech recognition not authorized",
-      @"permission_status" : @(status),
-    }];
-    return;
-  }
-
-  if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] != AVAuthorizationStatusAuthorized) {
-    NSInteger status = (NSInteger)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
-    [self emit:@{
-      @"kind" : @"error",
-      @"error_kind" : @"mic-permission",
-      @"message" : @"microphone access not authorized",
-      @"permission_status" : @(status),
-    }];
     return;
   }
 
@@ -149,7 +211,7 @@ static HandsOffSttSession *activeSttSession API_AVAILABLE(macos(10.15));
                                               }
                                             }];
 
-  [self emit:@{@"kind" : @"ready"}];
+  handsoff_emit_stt_ready(self.callback);
 }
 
 - (void)emitResult:(SFSpeechRecognitionResult *)result {
@@ -164,14 +226,9 @@ static HandsOffSttSession *activeSttSession API_AVAILABLE(macos(10.15));
       confidence = confidence / segments.count;
     }
     NSInteger latencyMs = (NSInteger)([[NSDate date] timeIntervalSinceDate:self.startedAt] * 1000);
-    [self emit:@{
-      @"kind" : @"final",
-      @"text" : text,
-      @"confidence" : @(confidence),
-      @"latency_ms" : @(latencyMs),
-    }];
+    handsoff_emit_stt_final(self.callback, text.UTF8String, confidence, latencyMs);
   } else {
-    [self emit:@{@"kind" : @"partial", @"text" : text}];
+    handsoff_emit_stt_partial(self.callback, text.UTF8String);
   }
 }
 
@@ -259,16 +316,31 @@ int handsoff_stt_start(HandsOffSttEventCallback callback) {
 
     dispatch_async(dispatch_get_main_queue(), ^{
       [activeSttSession stop];
+      activeSttSession = nil;
+#if HANDSOFF_HAS_SPEECHANALYZER
+      handsoff_speechanalyzer_stop();
+#endif
+      if (!handsoff_stt_permissions_are_authorized(callback)) {
+        return;
+      }
+#if HANDSOFF_HAS_SPEECHANALYZER
+      if (handsoff_selected_stt_engine() == HandsOffSttEngineSpeechAnalyzer) {
+        if (@available(macOS 26.0, *)) {
+          if (handsoff_speechanalyzer_start(callback) == 0) {
+            handsoff_emit_stt_error(callback, "start-failed", "SpeechAnalyzer failed to start");
+          }
+          return;
+        }
+      }
+#endif
       activeSttSession = [[HandsOffSttSession alloc] initWithCallback:callback];
       [activeSttSession start];
     });
     return 1;
   }
-  handsoff_emit_stt_event(callback, @{
-    @"kind" : @"error",
-    @"errorKind" : @"provider-unavailable",
-    @"message" : @"on-device speech recognition requires macOS 10.15 or newer",
-  });
+  handsoff_emit_stt_error(callback,
+                          "provider-unavailable",
+                          "on-device speech recognition requires macOS 10.15 or newer");
   return 0;
 }
 
@@ -277,6 +349,9 @@ void handsoff_stt_stop(void) {
     dispatch_block_t stop = ^{
       [activeSttSession stop];
       activeSttSession = nil;
+#if HANDSOFF_HAS_SPEECHANALYZER
+      handsoff_speechanalyzer_stop();
+#endif
     };
 
     if ([NSThread isMainThread]) {
