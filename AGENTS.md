@@ -64,6 +64,19 @@ just check-full  # + opt-in analyzers (knip, cargo audit/deny, semgrep); see `ju
 
 Pinned toolchain is committed: `.node-version`, `rust-toolchain.toml`, `knip.json`, `deny.toml`. The Rust gate is opt-in/advisory until pre-existing `cargo fmt` drift in the desktop crate is cleaned up (child task of #78). Install `just` with `brew install just`. Shared agent MCP servers live in `.mcp.json` (Claude Code), `.cursor/mcp.json` (Cursor), and `.codex/config.toml` (Codex).
 
+## Testing macOS permissions & Realtime STT
+
+`tauri dev` crashes when the app requests microphone/speech or Realtime STT (the dev binary lacks a bundle identity macOS TCC requires). Use `tauri dev` only for UI/logic work. To test microphone/speech permissions or the AssemblyAI Realtime path, build and launch the bundled `.app`:
+
+```bash
+corepack pnpm --filter @handsoff/desktop-app exec tauri build --debug --bundles app
+open -n apps/desktop/src-tauri/target/debug/bundle/macos/HandsOff.app \
+  --env "HANDSOFF_STT_TOKEN_WORKER_URL=https://<worker-host>/v1/realtime-token" \
+  --env "HANDSOFF_STT_APP_AUTH_TOKEN=<launch-cohort app token>"
+```
+
+Worker deploy + a curl smoke test live in `workers/assemblyai-token/README.md`.
+
 ## Performance
 
 **Context management:** Avoid last 20% of context window for large refactoring and multi-file features. Lower-sensitivity tasks (single edits, docs, simple fixes) tolerate higher utilization.
