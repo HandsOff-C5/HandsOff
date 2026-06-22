@@ -34,3 +34,33 @@ export const surfaceSnapshotSchema = z.object({
   accessStatus: surfaceAccessStatusSchema,
 });
 export type SurfaceSnapshot = z.infer<typeof surfaceSnapshotSchema>;
+
+// ---------------------------------------------------------------------------
+// PROVISIONAL surface geometry for the pointing pipeline (#26 calibration →
+// candidate). A `Surface` here is one pointable target (a display or window)
+// with screen bounds — distinct from the audit `surfaceSnapshotSchema` above.
+// Produced by the desktop host (area:desktop); defined here so #26 calibration
+// is not blocked on it. Shape + coordinate space are PROVISIONAL (Naama sign-off).
+//
+// COORDINATE SPACE — global multi-monitor virtual-desktop pixels.
+//   Both `bounds` and the `screenXY` produced by calibration (`applyTransform`) live
+//   in the SAME space: origin at the top-left of the primary display, x grows right,
+//   y grows down; secondary displays sit at their OS-reported offset (which may be
+//   negative — a monitor to the left of primary has x < 0). This mirrors the OS
+//   virtual-screen geometry (Tauri monitor `position`/`size`). Hit-testing
+//   `toCandidate(screenXY, surfaces)` is only meaningful while both share this space.
+export const SurfaceBounds = z.object({
+  x: z.number(),
+  y: z.number(),
+  w: z.number().positive(),
+  h: z.number().positive(),
+});
+export type SurfaceBounds = z.infer<typeof SurfaceBounds>;
+
+export const Surface = z.object({
+  id: z.string(),
+  bounds: SurfaceBounds,
+  displayId: z.string(),
+  title: z.string().optional(),
+});
+export type Surface = z.infer<typeof Surface>;
