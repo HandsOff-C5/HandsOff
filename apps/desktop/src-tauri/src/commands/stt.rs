@@ -27,6 +27,7 @@
 // its shape (URL, header) is unit-tested without app secrets or the network.
 
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 const TOKEN_WORKER_URL_ENV: &str = "HANDSOFF_STT_TOKEN_WORKER_URL";
 const APP_AUTH_TOKEN_ENV: &str = "HANDSOFF_STT_APP_AUTH_TOKEN";
@@ -64,9 +65,17 @@ fn build_worker_token_request(
     app_token: &str,
     expires_in_seconds: u32,
 ) -> Result<(String, String), String> {
-    let base = worker_url.trim();
-    if !base.starts_with("https://") {
+    let mut url = Url::parse(worker_url.trim()).map_err(|_| {
+        "invalid-configuration: STT token Worker URL must be a valid URL".to_string()
+    })?;
+    if url.scheme() != "https" {
         return Err("invalid-configuration: STT token Worker URL must use https".to_string());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(
+            "invalid-configuration: STT token Worker URL must not include query or fragment"
+                .to_string(),
+        );
     }
     let token = app_token.trim();
     if token.is_empty() {
@@ -74,11 +83,22 @@ fn build_worker_token_request(
             "missing-credentials: {APP_AUTH_TOKEN_ENV} is empty"
         ));
     }
-    let separator = if base.contains('?') { "&" } else { "?" };
-    Ok((
-        format!("{base}{separator}expires_in_seconds={expires_in_seconds}"),
-        format!("Bearer {token}"),
-    ))
+    url.query_pairs_mut()
+        .append_pair("expires_in_seconds", &expires_in_seconds.to_string());
+    Ok((url.to_string(), format!("Bearer {token}")))
+}
+
+fn validate_worker_token_response(body: TokenApiResponse) -> Result<StreamingToken, String> {
+    if body.token.trim().is_empty() {
+        return Err("provider-unavailable: Worker returned an empty token".to_string());
+    }
+    if !(MIN_EXPIRES_SECONDS..=MAX_EXPIRES_SECONDS).contains(&body.expires_in_seconds) {
+        return Err("provider-unavailable: Worker returned an invalid token expiry".to_string());
+    }
+    Ok(StreamingToken {
+        token: body.token,
+        expires_in_seconds: body.expires_in_seconds,
+    })
 }
 
 fn mint_token(
@@ -94,10 +114,7 @@ fn mint_token(
     let body: TokenApiResponse = response.into_json().map_err(|error| {
         format!("provider-unavailable: could not parse Worker token response: {error}")
     })?;
-    Ok(StreamingToken {
-        token: body.token,
-        expires_in_seconds: body.expires_in_seconds,
-    })
+    validate_worker_token_response(body)
 }
 
 /// Mint a single-use AssemblyAI streaming token for the webview.
@@ -138,6 +155,34 @@ mod tests {
             60,
         );
         assert!(matches!(result, Err(message) if message.contains("https")));
+    }
+
+    #[test]
+    fn rejects_worker_urls_with_query_or_fragment() {
+        let result = build_worker_token_request(
+            "https://token.handsoff.test/v1/realtime-token?debug=true",
+            "app-secret",
+            60,
+        );
+        assert!(matches!(result, Err(message) if message.contains("query or fragment")));
+    }
+
+    #[test]
+    fn rejects_empty_worker_tokens() {
+        let result = validate_worker_token_response(TokenApiResponse {
+            token: " ".to_string(),
+            expires_in_seconds: 60,
+        });
+        assert!(matches!(result, Err(message) if message.contains("empty token")));
+    }
+
+    #[test]
+    fn rejects_invalid_worker_token_expiry() {
+        let result = validate_worker_token_response(TokenApiResponse {
+            token: "stream-token".to_string(),
+            expires_in_seconds: 0,
+        });
+        assert!(matches!(result, Err(message) if message.contains("invalid token expiry")));
     }
 
     #[test]

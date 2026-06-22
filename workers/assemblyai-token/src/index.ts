@@ -2,6 +2,7 @@ const DEFAULT_ASSEMBLYAI_TOKEN_ENDPOINT = "https://streaming.assemblyai.com/v3/t
 const DEFAULT_EXPIRES_SECONDS = 60;
 const MIN_EXPIRES_SECONDS = 1;
 const MAX_EXPIRES_SECONDS = 600;
+const encoder = new TextEncoder();
 
 export interface Env {
   readonly ASSEMBLYAI_API_KEY: string;
@@ -36,10 +37,12 @@ function bearerToken(request: Request): string | null {
 }
 
 function tokenEquals(left: string, right: string): boolean {
-  if (left.length !== right.length) return false;
-  let diff = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  const leftBytes = encoder.encode(left);
+  const rightBytes = encoder.encode(right);
+  let diff = leftBytes.length ^ rightBytes.length;
+  const byteLength = Math.max(leftBytes.length, rightBytes.length);
+  for (let index = 0; index < byteLength; index += 1) {
+    diff |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
   }
   return diff === 0;
 }
@@ -55,11 +58,37 @@ function parseExpires(requestUrl: URL): number | Response {
   return parsed;
 }
 
-function tokenEndpoint(env: Env, expiresInSeconds: number): string {
-  const base = env.ASSEMBLYAI_TOKEN_ENDPOINT ?? DEFAULT_ASSEMBLYAI_TOKEN_ENDPOINT;
-  const url = new URL(base);
+function tokenEndpoint(env: Env, expiresInSeconds: number): string | Response {
+  let url: URL;
+  try {
+    url = new URL(env.ASSEMBLYAI_TOKEN_ENDPOINT ?? DEFAULT_ASSEMBLYAI_TOKEN_ENDPOINT);
+  } catch {
+    return json({ error: "assemblyai_token_endpoint_invalid" }, 500);
+  }
+  if (url.protocol !== "https:") {
+    return json({ error: "assemblyai_token_endpoint_invalid" }, 500);
+  }
   url.searchParams.set("expires_in_seconds", String(expiresInSeconds));
   return url.toString();
+}
+
+function parseTokenResponse(
+  body: AssemblyAiTokenResponse,
+): { token: string; expiresInSeconds: number } | Response {
+  if (
+    typeof body.token !== "string" ||
+    body.token.trim() === "" ||
+    typeof body.expires_in_seconds !== "number" ||
+    !Number.isInteger(body.expires_in_seconds) ||
+    body.expires_in_seconds < MIN_EXPIRES_SECONDS ||
+    body.expires_in_seconds > MAX_EXPIRES_SECONDS
+  ) {
+    return json({ error: "invalid_assemblyai_token_response" }, 502);
+  }
+  return {
+    token: body.token,
+    expiresInSeconds: body.expires_in_seconds,
+  };
 }
 
 async function handleTokenRequest(request: Request, env: Env): Promise<Response> {
@@ -87,7 +116,9 @@ async function handleTokenRequest(request: Request, env: Env): Promise<Response>
 
   let upstream: Response;
   try {
-    upstream = await fetch(tokenEndpoint(env, expiresInSeconds), {
+    const endpoint = tokenEndpoint(env, expiresInSeconds);
+    if (endpoint instanceof Response) return endpoint;
+    upstream = await fetch(endpoint, {
       headers: { Authorization: assemblyAiApiKey },
     });
   } catch {
@@ -103,14 +134,9 @@ async function handleTokenRequest(request: Request, env: Env): Promise<Response>
     return json({ error: "invalid_assemblyai_token_response" }, 502);
   }
 
-  if (typeof body.token !== "string" || typeof body.expires_in_seconds !== "number") {
-    return json({ error: "invalid_assemblyai_token_response" }, 502);
-  }
-
-  return json({
-    token: body.token,
-    expiresInSeconds: body.expires_in_seconds,
-  });
+  const token = parseTokenResponse(body);
+  if (token instanceof Response) return token;
+  return json(token);
 }
 
 export default {

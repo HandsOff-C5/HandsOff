@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "./index";
 
@@ -15,6 +15,10 @@ function request(headers: HeadersInit = {}) {
 }
 
 describe("assemblyai token Worker", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("rejects a missing app credential", async () => {
     const response = await worker.fetch(request(), env);
 
@@ -49,6 +53,46 @@ describe("assemblyai token Worker", () => {
         headers: { Authorization: "assemblyai-key" },
       }),
     );
-    upstreamFetch.mockRestore();
+  });
+
+  it("rejects invalid token lifetimes without calling AssemblyAI", async () => {
+    const upstreamFetch = vi.spyOn(globalThis, "fetch");
+
+    const response = await worker.fetch(
+      new Request("https://token.handsoff.test/v1/realtime-token?expires_in_seconds=0", {
+        headers: { Authorization: "Bearer app-token" },
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_expires_in_seconds" });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unsafe AssemblyAI token endpoint before sending the provider key", async () => {
+    const upstreamFetch = vi.spyOn(globalThis, "fetch");
+
+    const response = await worker.fetch(request({ Authorization: "Bearer app-token" }), {
+      ...env,
+      ASSEMBLYAI_TOKEN_ENDPOINT: "http://streaming.assemblyai.test/v3/token",
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "assemblyai_token_endpoint_invalid" });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid AssemblyAI token response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ token: "", expires_in_seconds: 60 }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await worker.fetch(request({ Authorization: "Bearer app-token" }), env);
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_assemblyai_token_response" });
   });
 });
