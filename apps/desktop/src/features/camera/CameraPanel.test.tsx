@@ -1,5 +1,5 @@
 import type { RawHandLandmarkerResult } from "@handsoff/gesture";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { CameraPanel } from "./CameraPanel";
@@ -62,5 +62,41 @@ describe("CameraPanel", () => {
     );
     startCamera();
     expect(await screen.findByText(/^live$/i)).toBeInTheDocument();
+  });
+
+  it("lists available cameras once live and switches stream on selection", async () => {
+    const devices = [
+      { deviceId: "cam-1", label: "FaceTime HD", kind: "videoinput" },
+      { deviceId: "cam-2", label: "External USB", kind: "videoinput" },
+    ] as MediaDeviceInfo[];
+    const getStream = vi.fn(() => Promise.resolve(fakeStream()));
+
+    render(
+      <CameraPanel
+        getStream={getStream}
+        createDetector={() => Promise.resolve(fakeDetector())}
+        listDevices={() => Promise.resolve(devices)}
+      />,
+    );
+    startCamera();
+
+    const picker = await screen.findByRole("combobox", { name: /camera/i });
+    expect(within(picker).getByRole("option", { name: /facetime hd/i })).toBeInTheDocument();
+    expect(within(picker).getByRole("option", { name: /external usb/i })).toBeInTheDocument();
+
+    fireEvent.change(picker, { target: { value: "cam-2" } });
+    await screen.findByText(/^live$/i);
+    expect(getStream).toHaveBeenLastCalledWith("cam-2");
+  });
+
+  it("offers a mirror (selfie-view) toggle once live", async () => {
+    render(
+      <CameraPanel
+        getStream={() => Promise.resolve(fakeStream())}
+        createDetector={() => Promise.resolve(fakeDetector())}
+      />,
+    );
+    startCamera();
+    expect(await screen.findByRole("checkbox", { name: /mirror/i })).toBeInTheDocument();
   });
 });

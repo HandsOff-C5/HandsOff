@@ -10,9 +10,11 @@ interface LandmarkOverlayProps {
   frame: LandmarkFrame | null;
   // Frames per second from the detection loop.
   fps: number;
+  // Flip x to align with a mirrored (selfie-view) camera feed.
+  mirrored?: boolean;
 }
 
-export function LandmarkOverlay({ frame, fps }: LandmarkOverlayProps) {
+export function LandmarkOverlay({ frame, fps, mirrored = false }: LandmarkOverlayProps) {
   const hands = frame?.hands ?? [];
 
   return (
@@ -35,7 +37,13 @@ export function LandmarkOverlay({ frame, fps }: LandmarkOverlayProps) {
           >
             {hands.flatMap((hand, h) =>
               hand.landmarks.map((l, i) => (
-                <circle key={`${h}-${i}`} data-testid="landmark" cx={l.x} cy={l.y} r={0.01} />
+                <circle
+                  key={`${h}-${i}`}
+                  data-testid="landmark"
+                  cx={mirrored ? 1 - l.x : l.x}
+                  cy={l.y}
+                  r={0.01}
+                />
               )),
             )}
           </svg>

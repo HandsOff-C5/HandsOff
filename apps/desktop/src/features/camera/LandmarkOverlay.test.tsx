@@ -49,4 +49,18 @@ describe("LandmarkOverlay", () => {
     render(<LandmarkOverlay frame={frame(hand("Right", 0.9))} fps={12.4} />);
     expect(screen.getByText(/12 fps/i)).toBeInTheDocument();
   });
+
+  it("mirrors landmark x for a selfie-view feed", () => {
+    // Landmark 0 has x = 0/21 = 0 → mirrored cx = 1. Use landmark 5 (x = 5/21) for a
+    // clearer flip: mirrored cx = 1 - 5/21.
+    render(<LandmarkOverlay frame={frame(hand("Right", 0.9))} fps={30} mirrored />);
+    const markers = screen.getAllByTestId("landmark");
+    expect(markers[5]?.getAttribute("cx")).toBe(String(1 - 5 / 21));
+  });
+
+  it("does not mirror by default", () => {
+    render(<LandmarkOverlay frame={frame(hand("Right", 0.9))} fps={30} />);
+    const markers = screen.getAllByTestId("landmark");
+    expect(markers[5]?.getAttribute("cx")).toBe(String(5 / 21));
+  });
 });
