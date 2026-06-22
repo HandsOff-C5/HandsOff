@@ -110,6 +110,10 @@ importers:
       '@handsoff/contracts':
         specifier: workspace:*
         version: link:../contracts
+    devDependencies:
+      '@handsoff/testkit':
+        specifier: workspace:*
+        version: link:../testkit
 
   packages/supervision:
     dependencies:

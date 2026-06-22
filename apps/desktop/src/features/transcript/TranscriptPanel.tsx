@@ -1,26 +1,29 @@
 import type { SttError, SttErrorKind, SttStream } from "@handsoff/contracts";
 
-import { useSttStream } from "./useSttStream";
+import { usePushToTalk } from "./usePushToTalk";
 
-// Live transcript surface (#31): shows the interim partial while speaking, the
-// finalized transcripts with confidence + latency, and a visible, recoverable
-// error state. The stream is injected via `createStream` so this panel runs
-// against the real AssemblyAI provider in the app and `FakeSttStream` in tests.
+// Live transcript surface (#31, #32): push-to-talk capture that shows the
+// interim partial while the user holds to speak, then renders the one stable
+// final utterance the capture produced (endpointing). The stream is injected via
+// `createStream` so this panel runs against the real on-device / AssemblyAI
+// provider in the app and `FakeSttStream` in tests.
 //
-// When `createStream` is absent (no Tauri backend), the panel shows an
-// unavailable state — the dashboard never blanks. Issue #32 replaces the manual
-// Start/Stop control with push-to-talk.
+// Capture is deliberate (the issue's scope boundary: no wake word, no
+// always-listening): hold the button to capture, release to send, slide off or
+// hit Escape to cancel before it finalizes. When `createStream` is absent (no
+// Tauri backend) the panel shows an unavailable state — the dashboard never
+// blanks.
 
 interface TranscriptPanelProps {
-  // Builds a fresh stream per start. Omitted when no native backend is present.
+  // Builds a fresh stream per capture. Omitted when no native backend is present.
   createStream?: () => SttStream;
 }
 
 const ERROR_COPY: Record<SttErrorKind, string> = {
   "mic-permission": "Microphone access denied. Grant it in System Settings → Privacy & Security.",
   "start-failed": "Could not start the microphone.",
-  network: "The connection dropped. Retry to continue.",
-  "provider-unavailable": "The speech service is unavailable. Retry to continue.",
+  network: "The connection dropped. Hold to talk again to retry.",
+  "provider-unavailable": "The speech service is unavailable. Hold to talk again to retry.",
   aborted: "Listening was cancelled.",
 };
 
@@ -41,24 +44,40 @@ export function TranscriptPanel({ createStream }: TranscriptPanelProps) {
 }
 
 function LiveTranscriptPanel({ createStream }: { createStream: () => SttStream }) {
-  const { status, partial, finals, error, start, stop } = useSttStream(createStream);
-  const listening = status === "listening";
+  const { status, partial, utterances, error, press, release, cancel } =
+    usePushToTalk(createStream);
+  const capturing = status === "capturing" || status === "finalizing";
 
   return (
     <section className="panel transcript">
       <div className="transcript__header">
         <h2 className="panel__title">Transcript</h2>
-        <button className="transcript__toggle" type="button" onClick={listening ? stop : start}>
-          {listening ? "Stop" : "Speak"}
+        <button
+          className="transcript__talk"
+          type="button"
+          aria-pressed={capturing}
+          onPointerDown={press}
+          onPointerUp={release}
+          // Sliding the pointer off a held button aborts before finalizing.
+          onPointerLeave={capturing ? cancel : undefined}
+          onPointerCancel={cancel}
+          onKeyDown={(event) => {
+            if (capturing && event.key === "Escape") cancel();
+          }}
+        >
+          {capturing ? "Release to send" : "Hold to talk"}
         </button>
       </div>
 
+      {capturing ? (
+        <button className="transcript__cancel" type="button" onClick={cancel}>
+          Cancel
+        </button>
+      ) : null}
+
       {error ? (
         <div className="transcript__error" role="alert">
-          <span>{errorMessage(error)}</span>
-          <button className="transcript__retry" type="button" onClick={start}>
-            Retry
-          </button>
+          {errorMessage(error)}
         </div>
       ) : null}
 
@@ -67,7 +86,7 @@ function LiveTranscriptPanel({ createStream }: { createStream: () => SttStream }
       </p>
 
       <ul className="transcript__finals">
-        {finals.map((entry, index) => (
+        {utterances.map((entry, index) => (
           <li key={index} className="transcript__final">
             <span className="transcript__final-text">{entry.text}</span>
             <span className="transcript__final-meta">
