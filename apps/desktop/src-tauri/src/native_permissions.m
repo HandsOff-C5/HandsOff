@@ -5,6 +5,27 @@
 
 typedef void (*HandsOffSttEventCallback)(const char *json);
 
+typedef NS_ENUM(NSInteger, HandsOffSttEngine) {
+  HandsOffSttEngineSFSpeechRecognizer = 1,
+  HandsOffSttEngineSpeechAnalyzer = 2,
+};
+
+int handsoff_stt_engine_for_macos_major(int major_version, int speech_analyzer_compiled) {
+  return (major_version >= 26 && speech_analyzer_compiled != 0) ? HandsOffSttEngineSpeechAnalyzer
+                                                               : HandsOffSttEngineSFSpeechRecognizer;
+}
+
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+static HandsOffSttEngine handsoff_selected_stt_engine(void) {
+  NSOperatingSystemVersion version = [[NSProcessInfo processInfo] operatingSystemVersion];
+  return (HandsOffSttEngine)handsoff_stt_engine_for_macos_major((int)version.majorVersion,
+                                                               1);
+}
+
+extern int handsoff_speechanalyzer_start(HandsOffSttEventCallback callback);
+extern void handsoff_speechanalyzer_stop(void);
+#endif
+
 // Emit a typed native event as JSON. The Rust side parses into strongly-typed
 // structs (see stt_ondevice.rs) that validate the structure and fail loudly on
 // malformed input. Field names use snake_case to match Rust conventions.
@@ -25,6 +46,33 @@ static void handsoff_emit_stt_event(HandsOffSttEventCallback callback, NSDiction
   }
 
   callback([json UTF8String]);
+}
+
+API_AVAILABLE(macos(10.15))
+static BOOL handsoff_stt_permissions_are_authorized(HandsOffSttEventCallback callback) {
+  if ([SFSpeechRecognizer authorizationStatus] != SFSpeechRecognizerAuthorizationStatusAuthorized) {
+    NSInteger status = (NSInteger)[SFSpeechRecognizer authorizationStatus];
+    handsoff_emit_stt_event(callback, @{
+      @"kind" : @"error",
+      @"error_kind" : @"mic-permission",
+      @"message" : @"speech recognition not authorized",
+      @"permission_status" : @(status),
+    });
+    return NO;
+  }
+
+  if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] != AVAuthorizationStatusAuthorized) {
+    NSInteger status = (NSInteger)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    handsoff_emit_stt_event(callback, @{
+      @"kind" : @"error",
+      @"error_kind" : @"mic-permission",
+      @"message" : @"microphone access not authorized",
+      @"permission_status" : @(status),
+    });
+    return NO;
+  }
+
+  return YES;
 }
 
 API_AVAILABLE(macos(10.15))
@@ -71,28 +119,6 @@ static HandsOffSttSession *activeSttSession API_AVAILABLE(macos(10.15));
 - (void)start {
   if (self.recognizer == nil) {
     [self emitError:@"provider-unavailable" message:@"no recognizer for current locale"];
-    return;
-  }
-
-  if ([SFSpeechRecognizer authorizationStatus] != SFSpeechRecognizerAuthorizationStatusAuthorized) {
-    NSInteger status = (NSInteger)[SFSpeechRecognizer authorizationStatus];
-    [self emit:@{
-      @"kind" : @"error",
-      @"error_kind" : @"mic-permission",
-      @"message" : @"speech recognition not authorized",
-      @"permission_status" : @(status),
-    }];
-    return;
-  }
-
-  if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] != AVAuthorizationStatusAuthorized) {
-    NSInteger status = (NSInteger)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
-    [self emit:@{
-      @"kind" : @"error",
-      @"error_kind" : @"mic-permission",
-      @"message" : @"microphone access not authorized",
-      @"permission_status" : @(status),
-    }];
     return;
   }
 
@@ -259,6 +285,27 @@ int handsoff_stt_start(HandsOffSttEventCallback callback) {
 
     dispatch_async(dispatch_get_main_queue(), ^{
       [activeSttSession stop];
+      activeSttSession = nil;
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+      handsoff_speechanalyzer_stop();
+#endif
+      if (!handsoff_stt_permissions_are_authorized(callback)) {
+        return;
+      }
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+      if (handsoff_selected_stt_engine() == HandsOffSttEngineSpeechAnalyzer) {
+        if (@available(macOS 26.0, *)) {
+          if (handsoff_speechanalyzer_start(callback) == 0) {
+            handsoff_emit_stt_event(callback, @{
+              @"kind" : @"error",
+              @"error_kind" : @"start-failed",
+              @"message" : @"SpeechAnalyzer failed to start",
+            });
+          }
+          return;
+        }
+      }
+#endif
       activeSttSession = [[HandsOffSttSession alloc] initWithCallback:callback];
       [activeSttSession start];
     });
@@ -277,6 +324,9 @@ void handsoff_stt_stop(void) {
     dispatch_block_t stop = ^{
       [activeSttSession stop];
       activeSttSession = nil;
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+      handsoff_speechanalyzer_stop();
+#endif
     };
 
     if ([NSThread isMainThread]) {

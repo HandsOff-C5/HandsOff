@@ -192,6 +192,26 @@ mod tests {
 
     use super::parse_native_event;
 
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        fn handsoff_stt_engine_for_macos_major(
+            major_version: i32,
+            speech_analyzer_compiled: i32,
+        ) -> i32;
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn selects_speech_analyzer_only_when_runtime_and_sdk_support_it() {
+        let fallback = unsafe { handsoff_stt_engine_for_macos_major(25, 1) };
+        let analyzer = unsafe { handsoff_stt_engine_for_macos_major(26, 1) };
+        let sdk_fallback = unsafe { handsoff_stt_engine_for_macos_major(26, 0) };
+
+        assert_eq!(fallback, 1);
+        assert_eq!(analyzer, 2);
+        assert_eq!(sdk_fallback, 1);
+    }
+
     #[test]
     fn parses_native_partial_event() {
         let json = CString::new(r#"{"kind":"partial","text":"hello"}"#).unwrap();
