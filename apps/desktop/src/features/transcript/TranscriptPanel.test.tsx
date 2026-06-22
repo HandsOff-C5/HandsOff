@@ -144,6 +144,25 @@ describe("TranscriptPanel", () => {
     );
   });
 
+  it("surfaces a hosted token failure as a retryable provider error", async () => {
+    render(
+      <TranscriptPanel
+        createStream={makeFactory({
+          startError: {
+            kind: "provider-unavailable",
+            message: "Could not obtain a streaming token",
+          },
+        })}
+      />,
+    );
+    fireEvent.pointerDown(talkButton());
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/speech service is unavailable.*retry/i),
+    );
+    expect(talkButton()).toHaveTextContent("Hold to talk");
+  });
+
   it("points first-run speech authorization failures to the Permissions allow flow", async () => {
     render(
       <TranscriptPanel

@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "handsoff-assemblyai-token",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-22",
+  "secrets": {
+    "required": ["ASSEMBLYAI_API_KEY", "HANDSOFF_APP_TOKEN"],
+  },
+  "vars": {
+    "ASSEMBLYAI_TOKEN_ENDPOINT": "https://streaming.assemblyai.com/v3/token",
+  },
+}
