@@ -3,6 +3,7 @@
   "name": "handsoff-assemblyai-token",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-22",
+  "workers_dev": true,
   "secrets": {
     "required": ["ASSEMBLYAI_API_KEY", "HANDSOFF_APP_TOKEN"],
   },
