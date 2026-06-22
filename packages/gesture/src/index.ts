@@ -11,5 +11,6 @@ export {
 } from "./perception/pointing";
 export * from "./calibration";
 export * from "./mediapipe";
+export * from "./runtime";
 export * from "./confidence";
 export * from "./state-machine";
