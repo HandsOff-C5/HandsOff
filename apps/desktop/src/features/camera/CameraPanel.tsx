@@ -1,18 +1,24 @@
-import type { LandmarkFrame } from "@handsoff/contracts";
+import type { LandmarkFrame, LockedReferent, PointingCandidate } from "@handsoff/contracts";
 import {
   createHandLandmarker,
   createLandmarkProcessor,
+  createReferentLoop,
+  pointingSignalFromFrame,
+  type AffineTransform,
   type HandLandmarkerHandle,
+  type Point,
+  type ReferentLoop,
 } from "@handsoff/gesture";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { CalibrationOverlay } from "./CalibrationOverlay";
+import { DEMO_SCREEN_BOUNDS, demoSurfaces } from "./demo-surfaces";
 import { LandmarkOverlay } from "./LandmarkOverlay";
 
-// #25/#24 camera shell — owns the webcam + the rAF detection loop and renders the debug
-// overlay, a camera picker, and a mirror toggle. The detector/stream/device factories
-// are injectable so the panel is testable without a real camera; the defaults wire the
-// live webcam + MediaPipe. The live detection path is proven by the demo (Demo
-// Verified), not unit tests.
+// #25/#24 camera shell — owns the webcam + the rAF detection loop, runs the live
+// perception→referent loop, and renders the debug overlay + a camera picker, mirror
+// toggle, 9-point calibration, and frame dump. Factories are injectable so the panel is
+// testable without a real camera; the live aim/lock path is Demo Verified, not unit tested.
 
 interface CameraPanelProps {
   getStream?: (deviceId?: string) => Promise<MediaStream>;
@@ -21,6 +27,11 @@ interface CameraPanelProps {
 }
 
 type Status = "idle" | "starting" | "live" | "error";
+type Mode = "live" | "calibrating";
+
+const IDENTITY: AffineTransform = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0 };
+const DWELL = { enter: 0.6, exit: 0.4, dwellMs: 600, cooldownMs: 800 };
+const FRAME_BUFFER = 150;
 
 const defaultGetStream = (deviceId?: string) =>
   navigator.mediaDevices.getUserMedia({
@@ -43,16 +54,43 @@ export function CameraPanel({
   listDevices = defaultListDevices,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  // Idle until the user explicitly starts the camera — don't grab the webcam on mount.
   const [status, setStatus] = useState<Status>("idle");
+  const [mode, setMode] = useState<Mode>("live");
   const [error, setError] = useState<string | null>(null);
   const [frame, setFrame] = useState<LandmarkFrame | null>(null);
   const [fps, setFps] = useState(0);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
   const [mirrored, setMirrored] = useState(true);
+  const [calibration, setCalibration] = useState<"good" | "fair" | "poor" | null>(null);
+  const [candidate, setCandidate] = useState<PointingCandidate | null>(null);
+  const [referent, setReferent] = useState<LockedReferent | null>(null);
 
   const resources = useRef<Resources>({ raf: 0, handle: null, stream: null, cancelled: false });
+  // Live pointing signal this frame — read by the calibration overlay's Capture.
+  const latestRaw = useRef<Point | null>(null);
+  // Rolling buffer of parsed frames for the dump-to-fixture button.
+  const frameBuffer = useRef<LandmarkFrame[]>([]);
+  // The stateful referent loop; rebuilt when the calibration transform changes.
+  const referentLoop = useRef<ReferentLoop>(
+    createReferentLoop({
+      transform: IDENTITY,
+      surfaces: demoSurfaces,
+      calibrationQuality: "poor",
+      dwell: DWELL,
+    }),
+  );
+
+  const rebuildLoop = useCallback((t: AffineTransform, quality: "good" | "fair" | "poor") => {
+    referentLoop.current = createReferentLoop({
+      transform: t,
+      surfaces: demoSurfaces,
+      calibrationQuality: quality,
+      dwell: DWELL,
+    });
+    setReferent(null);
+    setCandidate(null);
+  }, []);
 
   const stop = useCallback(() => {
     const r = resources.current;
@@ -91,8 +129,6 @@ export function CameraPanel({
           }
         }
 
-        // Device labels are only populated after permission is granted, so enumerate
-        // now that we have a stream.
         try {
           setDevices(await listDevices());
         } catch {
@@ -104,6 +140,15 @@ export function CameraPanel({
           onResult: ({ frame: f, fps: f2 }) => {
             setFrame(f);
             setFps(f2);
+            latestRaw.current = pointingSignalFromFrame(f);
+            const buf = frameBuffer.current;
+            buf.push(f);
+            if (buf.length > FRAME_BUFFER) buf.shift();
+            // Advance the referent loop on real elapsed time (derived from fps).
+            const dtMs = f2 > 0 ? 1000 / f2 : 16;
+            const out = referentLoop.current.process(f, dtMs);
+            setCandidate(out.candidate);
+            if (out.emit && "targetId" in out.emit) setReferent(out.emit);
           },
           onError: (e) => setError(e instanceof Error ? e.message : String(e)),
         });
@@ -131,6 +176,17 @@ export function CameraPanel({
     void start(id);
   };
 
+  const dumpFrames = () => {
+    const json = JSON.stringify(frameBuffer.current, null, 2);
+    if (typeof URL.createObjectURL !== "function") return;
+    const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "captured.golden.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Tear down the camera + detector on unmount.
   useEffect(() => stop, [stop]);
 
@@ -143,7 +199,12 @@ export function CameraPanel({
       <div className="camera-panel__status" role="status">
         {status === "idle" && <span>Camera off.</span>}
         {status === "starting" && <span>Starting camera…</span>}
-        {status === "live" && <span>Live</span>}
+        {status === "live" && (
+          <span>
+            Live{calibration ? ` · calibrated (${calibration})` : " · uncalibrated"}
+            {referent ? ` · referent: ${referent.targetId}` : ""}
+          </span>
+        )}
         {status === "error" && <span className="camera-panel__error">Camera error: {error}</span>}
       </div>
 
@@ -178,6 +239,12 @@ export function CameraPanel({
             />
             Mirror
           </label>
+          <button type="button" onClick={() => setMode("calibrating")}>
+            Calibrate
+          </button>
+          <button type="button" onClick={dumpFrames}>
+            Dump frames
+          </button>
         </div>
       )}
 
@@ -190,6 +257,20 @@ export function CameraPanel({
           aria-label="webcam"
         />
         <LandmarkOverlay frame={frame} fps={fps} mirrored={mirrored} />
+        {candidate && mode === "live" && (
+          <p className="camera-panel__candidate">Aiming at: {candidate.targetId}</p>
+        )}
+        {isLive && mode === "calibrating" && (
+          <CalibrationOverlay
+            bounds={DEMO_SCREEN_BOUNDS}
+            sampleRaw={() => latestRaw.current}
+            onComplete={(result) => {
+              rebuildLoop(result.transform, result.quality);
+              setCalibration(result.quality);
+              setMode("live");
+            }}
+          />
+        )}
       </div>
     </section>
   );

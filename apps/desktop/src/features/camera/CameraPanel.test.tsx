@@ -61,7 +61,7 @@ describe("CameraPanel", () => {
       />,
     );
     startCamera();
-    expect(await screen.findByText(/^live$/i)).toBeInTheDocument();
+    expect(await screen.findByText(/^Live\b/)).toBeInTheDocument();
   });
 
   it("lists available cameras once live and switches stream on selection", async () => {
@@ -85,7 +85,7 @@ describe("CameraPanel", () => {
     expect(within(picker).getByRole("option", { name: /external usb/i })).toBeInTheDocument();
 
     fireEvent.change(picker, { target: { value: "cam-2" } });
-    await screen.findByText(/^live$/i);
+    await screen.findByText(/^Live\b/);
     expect(getStream).toHaveBeenLastCalledWith("cam-2");
   });
 
@@ -98,5 +98,30 @@ describe("CameraPanel", () => {
     );
     startCamera();
     expect(await screen.findByRole("checkbox", { name: /mirror/i })).toBeInTheDocument();
+  });
+
+  it("offers Calibrate and Dump-frames controls once live", async () => {
+    render(
+      <CameraPanel
+        getStream={() => Promise.resolve(fakeStream())}
+        createDetector={() => Promise.resolve(fakeDetector())}
+      />,
+    );
+    startCamera();
+    expect(await screen.findByRole("button", { name: /calibrate/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /dump frames/i })).toBeInTheDocument();
+  });
+
+  it("enters 9-point calibration when Calibrate is pressed", async () => {
+    render(
+      <CameraPanel
+        getStream={() => Promise.resolve(fakeStream())}
+        createDetector={() => Promise.resolve(fakeDetector())}
+      />,
+    );
+    startCamera();
+    fireEvent.click(await screen.findByRole("button", { name: /calibrate/i }));
+    expect(screen.getByTestId("calibration-target")).toBeInTheDocument();
+    expect(screen.getByText(/0\s*\/\s*9/)).toBeInTheDocument();
   });
 });
