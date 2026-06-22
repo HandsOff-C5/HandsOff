@@ -53,6 +53,13 @@ describe("mapCapability — permission states", () => {
       "Speech Recognition",
     );
   });
+
+  it("points media helper setup to the OS prompt flow", () => {
+    expect(mapCapability(permission("microphone", "not-determined")).hint).toContain("prompts you");
+    expect(mapCapability(permission("speech-recognition", "not-determined")).hint).toContain(
+      "prompts you",
+    );
+  });
 });
 
 describe("mapCapability — daemon states (CUA)", () => {

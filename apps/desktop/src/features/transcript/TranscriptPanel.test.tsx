@@ -3,10 +3,8 @@ import { FakeSttStream } from "@handsoff/testkit";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { TranscriptPanel } from "./TranscriptPanel";
-
-// A fresh fake per start() (matching the hook's per-start stream creation), with
-// a handle on the most recent one so the test can drive its events.
+// A fresh fake per capture (matching the controller's per-press stream
+// creation), with a handle on the most recent one so the test can drive events.
 let fakes: FakeSttStream[];
 function makeFactory(options?: { startError?: SttError }) {
   fakes = [];
@@ -22,10 +20,17 @@ function latest(): FakeSttStream {
   return fake;
 }
 
+import { TranscriptPanel } from "./TranscriptPanel";
+
 async function flush() {
   await act(async () => {
     await Promise.resolve();
+    await Promise.resolve();
   });
+}
+
+function talkButton() {
+  return screen.getByRole("button", { name: /Hold to talk|Release to send/ });
 }
 
 beforeEach(() => {
@@ -39,59 +44,88 @@ describe("TranscriptPanel", () => {
     expect(screen.getByText(/Mac app required/i)).toBeInTheDocument();
   });
 
-  it("shows a live partial while speaking and replaces it as it revises", async () => {
+  it("captures on hold and shows the live partial while speaking", async () => {
     render(<TranscriptPanel createStream={makeFactory()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Speak" }));
+    fireEvent.pointerDown(talkButton());
     await flush();
+    expect(talkButton()).toHaveTextContent("Release to send");
 
     act(() => latest().emitPartial("hello"));
     expect(screen.getByTestId("transcript-partial")).toHaveTextContent("hello");
-
     act(() => latest().emitPartial("hello world"));
     expect(screen.getByTestId("transcript-partial")).toHaveTextContent("hello world");
   });
 
-  it("renders a final transcript with confidence and latency, clearing the partial", async () => {
+  it("delivers one stable final utterance on release and clears the partial", async () => {
     render(<TranscriptPanel createStream={makeFactory()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Speak" }));
+    const button = talkButton();
+    fireEvent.pointerDown(button);
     await flush();
 
-    act(() => latest().emitPartial("hello"));
-    act(() => latest().emitFinal("hello world", 0.92, 180));
+    act(() => latest().emitFinal("open the issue", 0.9, 120));
+    act(() => latest().emitPartial("and brief the agent"));
 
-    expect(screen.getByText("hello world")).toBeInTheDocument();
-    expect(screen.getByText(/92% · 180 ms/)).toBeInTheDocument();
+    fireEvent.pointerUp(talkButton());
+    await flush();
+
+    // One capture → one final transcript: both segments fused into a single item.
+    const items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toHaveTextContent("open the issue and brief the agent");
+    expect(screen.getByText(/90% · 120 ms/)).toBeInTheDocument();
     expect(screen.getByTestId("transcript-partial")).toHaveTextContent("");
+    expect(talkButton()).toHaveTextContent("Hold to talk");
   });
 
-  it("accumulates multiple finals in order", async () => {
+  it("cancel discards the in-flight capture without delivering a final", async () => {
     render(<TranscriptPanel createStream={makeFactory()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Speak" }));
+    fireEvent.pointerDown(talkButton());
+    await flush();
+    act(() => latest().emitFinal("open the issue", 1, 100));
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await flush();
 
-    act(() => latest().emitFinal("first", 1, 100));
-    act(() => latest().emitFinal("second", 1, 110));
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    expect(screen.getByTestId("transcript-partial")).toHaveTextContent("");
+    expect(latest().stopCallCount).toBe(1);
+    expect(talkButton()).toHaveTextContent("Hold to talk");
+  });
+
+  it("accumulates one final per capture across multiple holds", async () => {
+    render(<TranscriptPanel createStream={makeFactory()} />);
+    fireEvent.pointerDown(talkButton());
+    await flush();
+    act(() => latest().emitFinal("first command", 1, 100));
+    fireEvent.pointerUp(talkButton());
+    await flush();
+
+    fireEvent.pointerDown(talkButton());
+    await flush();
+    act(() => latest().emitFinal("second command", 1, 110));
+    fireEvent.pointerUp(talkButton());
+    await flush();
 
     const items = screen.getAllByRole("listitem");
     expect(items).toHaveLength(2);
-    expect(items[0]).toHaveTextContent("first");
-    expect(items[1]).toHaveTextContent("second");
+    expect(items[0]).toHaveTextContent("first command");
+    expect(items[1]).toHaveTextContent("second command");
   });
 
-  it("shows a visible, recoverable error and resumes on retry", async () => {
+  it("shows a visible, recoverable error and resumes on a fresh hold", async () => {
     render(<TranscriptPanel createStream={makeFactory()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Speak" }));
+    fireEvent.pointerDown(talkButton());
     await flush();
 
     act(() => latest().emitError({ kind: "network", message: "dropped" }));
-    expect(screen.getByRole("alert")).toHaveTextContent(/connection dropped/i);
-
-    const erroredStream = latest();
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await flush();
-    // The abandoned stream is released (mic + socket), not left feeding events.
+    expect(screen.getByRole("alert")).toHaveTextContent(/connection dropped/i);
+    const erroredStream = latest();
+
+    fireEvent.pointerDown(talkButton());
+    await flush();
+    // The abandoned stream was released (mic + socket), not left feeding events.
     expect(erroredStream.stopCallCount).toBe(1);
-    // A new session starts; the error clears and new partials render.
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     act(() => latest().emitPartial("recovered"));
     expect(screen.getByTestId("transcript-partial")).toHaveTextContent("recovered");
@@ -100,28 +134,69 @@ describe("TranscriptPanel", () => {
   it("surfaces a mic-permission failure from start() rejection", async () => {
     render(
       <TranscriptPanel
-        createStream={makeFactory({
-          startError: { kind: "mic-permission", message: "denied" },
-        })}
+        createStream={makeFactory({ startError: { kind: "mic-permission", message: "denied" } })}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Speak" }));
+    fireEvent.pointerDown(talkButton());
 
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(/Microphone access denied/i),
     );
   });
 
-  it("returns to idle after stop and stops mutating", async () => {
-    render(<TranscriptPanel createStream={makeFactory()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Speak" }));
-    await flush();
-    act(() => latest().emitPartial("hello"));
+  it("points first-run speech authorization failures to the Permissions allow flow", async () => {
+    render(
+      <TranscriptPanel
+        createStream={makeFactory({
+          startError: {
+            kind: "mic-permission",
+            message: "speech recognition not authorized (0)",
+          },
+        })}
+      />,
+    );
+    fireEvent.pointerDown(talkButton());
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await flush();
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/Allow microphone & speech/i),
+    );
+  });
 
-    expect(screen.getByRole("button", { name: "Speak" })).toBeInTheDocument();
-    expect(screen.getByTestId("transcript-partial")).toHaveTextContent("");
+  it("points denied speech authorization failures to System Settings", async () => {
+    render(
+      <TranscriptPanel
+        createStream={makeFactory({
+          startError: {
+            kind: "mic-permission",
+            message: "speech recognition not authorized (1)",
+          },
+        })}
+      />,
+    );
+    fireEvent.pointerDown(talkButton());
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/System Settings.*Speech Recognition/i),
+    );
+  });
+
+  it("surfaces the native start-failed reason when recognition exits before ready", async () => {
+    render(
+      <TranscriptPanel
+        createStream={makeFactory({
+          startError: {
+            kind: "start-failed",
+            message: "On-device recognition exited before the microphone was ready",
+          },
+        })}
+      />,
+    );
+    fireEvent.pointerDown(talkButton());
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /On-device recognition exited before the microphone was ready/i,
+      ),
+    );
   });
 });

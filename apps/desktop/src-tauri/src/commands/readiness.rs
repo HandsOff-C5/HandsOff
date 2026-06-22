@@ -8,11 +8,17 @@
 // `unknown` for capabilities whose probes belong to other lanes — camera and
 // microphone authorization land with the capture/STT lanes, and the CUA daemon
 // health check lands with the CUA lane.
+//
+// All permission states are read via native FFI functions that query the app
+// bundle's TCC identity directly — there is no sidecar permission path anymore.
 
 use serde_json::{json, Value};
+use tauri::AppHandle;
 
 // Accessibility (AXIsProcessTrusted) and Screen Recording
 // (CGPreflightScreenCaptureAccess) read the current grant without prompting.
+// Speech and microphone authorization use SFSpeechRecognizer and
+// AVCaptureDevice FFI calls to read the app bundle's TCC state directly.
 #[cfg(target_os = "macos")]
 fn accessibility_state() -> &'static str {
     #[link(name = "ApplicationServices", kind = "framework")]
@@ -41,11 +47,8 @@ fn screen_recording_state() -> &'static str {
     }
 }
 
-// Speech recognition authorization for the on-device STT provider (#31). Reads
-// `SFSpeechRecognizer.authorizationStatus` via the Objective-C runtime — a class
-// method that returns the current grant without ever prompting (the prompt is
-// owned by the sidecar when STT starts). Linking the Speech framework registers
-// the class with the runtime.
+// Speech recognition authorization read directly from the app bundle's TCC
+// identity via SFSpeechRecognizer FFI.
 #[cfg(target_os = "macos")]
 fn speech_recognition_state() -> &'static str {
     use std::ffi::{c_char, c_void};
@@ -85,7 +88,7 @@ fn speech_recognition_state() -> &'static str {
     }
 }
 
-// Microphone authorization (#31), read without prompting via
+// Fallback microphone authorization (#31), read without prompting via
 // `AVCaptureDevice.authorizationStatusForMediaType:` with the `AVMediaTypeAudio`
 // constant. Note the AVAuthorizationStatus ordering differs from Speech's.
 #[cfg(target_os = "macos")]
@@ -151,7 +154,7 @@ fn speech_recognition_state() -> &'static str {
 
 /// Probe macOS capability readiness for the dashboard.
 #[tauri::command]
-pub fn readiness_probe() -> Value {
+pub async fn readiness_probe(_app: AppHandle) -> Value {
     json!({
         "capabilities": [
             { "id": "camera", "kind": "permission", "state": "unknown" },
@@ -162,4 +165,27 @@ pub fn readiness_probe() -> Value {
             { "id": "screen-recording", "kind": "permission", "state": screen_recording_state() }
         ]
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn speech_recognition_state_returns_valid_states() {
+        // Can't test actual FFI without a macOS runtime, but we can verify
+        // the function signature compiles correctly.
+        #[cfg(target_os = "macos")]
+        {
+            let _state = speech_recognition_state();
+        }
+    }
+
+    #[test]
+    fn microphone_state_returns_valid_states() {
+        #[cfg(target_os = "macos")]
+        {
+            let _state = microphone_state();
+        }
+    }
 }

@@ -4,53 +4,104 @@
 // Settings toggle — an app can't grant or revoke them itself. So "accept" =
 // trigger the OS prompt, "revoke/manage" = deep-link into System Settings.
 //
-// `request_media_permissions` reuses the Swift sidecar (`--request-permissions`)
-// to fire the microphone + speech prompts, since the Speech/AVFoundation request
-// APIs take Objective-C completion blocks that are awkward to call from Rust.
+// `request_media_permissions` asks through the app bundle so TCC sees the
+// privacy usage strings in HandsOff.app/Contents/Info.plist. All permission
+// state is read via native FFI functions that query the app bundle's TCC
+// identity directly — there is no sidecar permission path anymore.
 
+use serde_json::{json, Value};
 use tauri::AppHandle;
-use tauri_plugin_shell::process::CommandEvent;
-use tauri_plugin_shell::ShellExt;
 
-const SIDECAR_NAME: &str = "stt-ondevice";
-
-/// Trigger the macOS microphone + speech-recognition prompts and return the
-/// resulting grants `{ "speech": "...", "microphone": "..." }`. Requesting an
-/// already-decided permission does not re-prompt — it reports the current state
-/// — so this is safe to call from an "Allow" button in any state. Resolves once
-/// the user responds.
+/// Trigger the macOS microphone + speech-recognition prompts for any
+/// undetermined grant and return the resulting states
+/// `{ "speech": "...", "microphone": "..." }`. Already-decided permissions are
+/// read without re-prompting, so this is safe to call from an "Allow" button in
+/// any state. Resolves once the user responds to any visible prompt.
 #[tauri::command]
-pub async fn request_media_permissions(app: AppHandle) -> Result<serde_json::Value, String> {
-    let (mut rx, _child) = app
-        .shell()
-        .sidecar(SIDECAR_NAME)
-        .map_err(|error| format!("sidecar unavailable: {error}"))?
-        .args(["--request-permissions"])
-        .spawn()
-        .map_err(|error| format!("could not spawn sidecar: {error}"))?;
-
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(bytes) => {
-                if let Some(result) = parse_permissions(&bytes) {
-                    return Ok(result);
-                }
-            }
-            CommandEvent::Terminated(_) => break,
-            _ => {}
-        }
-    }
-    Err("the permission request did not report a result".to_string())
+pub async fn request_media_permissions(_app: AppHandle) -> Result<serde_json::Value, String> {
+    Ok(request_app_media_permissions())
 }
 
-// Pull the `permissions` frame out of the sidecar's stdout lines, if present.
-fn parse_permissions(bytes: &[u8]) -> Option<serde_json::Value> {
-    let text = std::str::from_utf8(bytes).ok()?;
-    text.split('\n')
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|value| value.get("kind").and_then(|kind| kind.as_str()) == Some("permissions"))
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn handsoff_request_speech_authorization() -> i32;
+    fn handsoff_request_microphone_authorization() -> i32;
+}
+
+#[cfg(target_os = "macos")]
+fn request_app_media_permissions() -> Value {
+    // Safety: these functions are compiled into the app from native_permissions.m
+    // and synchronously return Apple's documented authorization enum values.
+    let speech = unsafe { handsoff_request_speech_authorization() };
+    let microphone = unsafe { handsoff_request_microphone_authorization() };
+    permissions_value(
+        speech_authorization_state(speech),
+        microphone_authorization_state(microphone),
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn request_app_media_permissions() -> Value {
+    permissions_value("unknown", "unknown")
+}
+
+fn permissions_value(speech: &'static str, microphone: &'static str) -> Value {
+    json!({
+        "kind": "permissions",
+        "speech": speech,
+        "microphone": microphone,
+    })
+}
+
+fn speech_authorization_state(status: i32) -> &'static str {
+    match status {
+        0 => "not-determined",
+        1 => "denied",
+        2 => "restricted",
+        3 => "granted",
+        _ => "unknown",
+    }
+}
+
+fn microphone_authorization_state(status: i32) -> &'static str {
+    match status {
+        0 => "not-determined",
+        1 => "restricted",
+        2 => "denied",
+        3 => "granted",
+        _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_native_speech_authorization_statuses() {
+        assert_eq!(speech_authorization_state(0), "not-determined");
+        assert_eq!(speech_authorization_state(1), "denied");
+        assert_eq!(speech_authorization_state(2), "restricted");
+        assert_eq!(speech_authorization_state(3), "granted");
+        assert_eq!(speech_authorization_state(99), "unknown");
+    }
+
+    #[test]
+    fn maps_native_microphone_authorization_statuses() {
+        assert_eq!(microphone_authorization_state(0), "not-determined");
+        assert_eq!(microphone_authorization_state(1), "restricted");
+        assert_eq!(microphone_authorization_state(2), "denied");
+        assert_eq!(microphone_authorization_state(3), "granted");
+        assert_eq!(microphone_authorization_state(99), "unknown");
+    }
+
+    #[test]
+    fn permissions_value_returns_expected_structure() {
+        let value = permissions_value("granted", "denied");
+        assert_eq!(value["kind"], "permissions");
+        assert_eq!(value["speech"], "granted");
+        assert_eq!(value["microphone"], "denied");
+    }
 }
 
 /// Open the System Settings privacy pane for a capability so the user can grant

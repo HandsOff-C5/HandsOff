@@ -1,108 +1,252 @@
 // On-device STT commands (#31, AD2): the default, provisioning-free provider.
 //
-// Spawns the native Swift sidecar that runs Apple's on-device speech
-// recognition (SFSpeechRecognizer + AVAudioEngine) and forwards its events to
-// the webview on `stt://event`. No network, no API key — audio stays on device.
+// Runs Apple's on-device speech recognition (SFSpeechRecognizer + AVAudioEngine)
+// in the app process and forwards native events to the webview on `stt://event`.
+// No network, no API key — audio stays on device.
 //
-// The sidecar emits newline-delimited JSON (ready/partial/final/error). The
-// shell plugin line-buffers stdout, so each `Stdout` event is normally one line;
-// `forward_lines` splits defensively in case of batching. `stt_ondevice_stop`
-// (or a restart) terminates the running child.
+// The Rust/native boundary is typed: native events serialize as JSON with a
+// `kind` discriminator, and the Rust side parses into strongly-typed structs
+// that fail loudly on malformed input.
 
-use std::sync::Mutex;
+use serde::Deserialize;
+use std::ffi::CStr;
+use std::os::raw::c_char;
+use std::sync::{Mutex, OnceLock};
 
 use tauri::{AppHandle, Emitter, State};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 
-const SIDECAR_NAME: &str = "stt-ondevice";
 const EVENT_NAME: &str = "stt://event";
 
-// Holds the running sidecar child so a stop or restart can terminate it. `None`
-// when no session is active.
+// Typed native event structs matching the Objective-C emission format.
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum NativeSttEvent {
+    Partial(NativePartial),
+    Final(NativeFinal),
+    Error(NativeError),
+    Ready,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativePartial {
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativeFinal {
+    text: String,
+    confidence: f64,
+    latency_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativeError {
+    error_kind: String,
+    message: String,
+    #[serde(default)]
+    permission_status: Option<i32>,
+}
+
+#[cfg(target_os = "macos")]
+type SttEventCallback = extern "C" fn(*const c_char);
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn handsoff_stt_start(callback: SttEventCallback) -> i32;
+    fn handsoff_stt_stop();
+}
+
+static APP_HANDLE: OnceLock<Mutex<Option<AppHandle>>> = OnceLock::new();
+
+fn app_handle_slot() -> &'static Mutex<Option<AppHandle>> {
+    APP_HANDLE.get_or_init(|| Mutex::new(None))
+}
+
+// Holds whether the native app-process recognizer is active so stop/restart stay
+// idempotent. The actual AVAudioEngine/SFSpeechRecognitionTask are retained by
+// the Objective-C bridge.
 #[derive(Default)]
 pub struct OnDeviceSttState {
-    child: Mutex<Option<CommandChild>>,
+    active: Mutex<bool>,
 }
 
-fn take_child(state: &OnDeviceSttState) -> Option<CommandChild> {
-    state.child.lock().expect("stt child lock poisoned").take()
+fn set_active(state: &OnDeviceSttState, active: bool) {
+    *state.active.lock().expect("stt active lock poisoned") = active;
 }
 
-/// Start an on-device recognition session: spawn the sidecar and stream its
-/// events to the webview. A restart terminates any prior session first.
+fn is_active(state: &OnDeviceSttState) -> bool {
+    *state.active.lock().expect("stt active lock poisoned")
+}
+
+/// Start an on-device recognition session in the HandsOff app process. A
+/// restart terminates any prior session first.
 #[tauri::command]
 pub async fn stt_ondevice_start(
     app: AppHandle,
     state: State<'_, OnDeviceSttState>,
 ) -> Result<(), String> {
-    if let Some(previous) = take_child(&state) {
-        let _ = previous.kill();
+    if is_active(&state) {
+        stop_native_recognition();
+        set_active(&state, false);
     }
 
-    let sidecar = app
-        .shell()
-        .sidecar(SIDECAR_NAME)
-        .map_err(|error| format!("start-failed: sidecar unavailable: {error}"))?;
-    let (mut rx, child) = sidecar
-        .spawn()
-        .map_err(|error| format!("start-failed: could not spawn sidecar: {error}"))?;
+    *app_handle_slot()
+        .lock()
+        .expect("stt app handle lock poisoned") = Some(app);
 
-    *state.child.lock().expect("stt child lock poisoned") = Some(child);
-
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stdout(bytes) => forward_lines(&app_handle, &bytes),
-                CommandEvent::Error(message) => {
-                    let _ = app_handle.emit(
-                        EVENT_NAME,
-                        serde_json::json!({
-                            "kind": "error",
-                            "errorKind": "provider-unavailable",
-                            "message": message,
-                        }),
-                    );
-                }
-                CommandEvent::Terminated(_) => {
-                    let _ =
-                        app_handle.emit(EVENT_NAME, serde_json::json!({ "kind": "terminated" }));
-                    break;
-                }
-                _ => {}
-            }
-        }
-    });
-
+    start_native_recognition()?;
+    set_active(&state, true);
     Ok(())
 }
 
-// Re-emit each JSON line the sidecar produced verbatim to the webview; the
-// `mapOnDeviceEvent` mapper on the TS side validates the shape. Non-JSON lines
-// are ignored.
-fn forward_lines(app: &AppHandle, bytes: &[u8]) {
-    let Ok(text) = std::str::from_utf8(bytes) else {
+#[cfg(target_os = "macos")]
+fn start_native_recognition() -> Result<(), String> {
+    let started = unsafe { handsoff_stt_start(native_stt_event) };
+    if started == 0 {
+        return Err("start-failed: native on-device recognition unavailable".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn start_native_recognition() -> Result<(), String> {
+    Err("start-failed: native on-device recognition is only available on macOS".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn stop_native_recognition() {
+    unsafe { handsoff_stt_stop() };
+}
+
+#[cfg(not(target_os = "macos"))]
+fn stop_native_recognition() {}
+
+extern "C" fn native_stt_event(json: *const c_char) {
+    let Some(value) = parse_native_event(json) else {
         return;
     };
-    for line in text
-        .split('\n')
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-            let _ = app.emit(EVENT_NAME, value);
-        }
+    let app = app_handle_slot()
+        .lock()
+        .expect("stt app handle lock poisoned")
+        .clone();
+    if let Some(app) = app {
+        let _ = app.emit(EVENT_NAME, value);
     }
+}
+
+fn parse_native_event(json: *const c_char) -> Option<serde_json::Value> {
+    if json.is_null() {
+        return None;
+    }
+    let text = unsafe { CStr::from_ptr(json) }.to_str().ok()?;
+    let text = text.trim();
+
+    // Parse into the typed enum, then convert back to JSON for emission.
+    // This validates the structure and fails loudly on malformed native events.
+    let native: NativeSttEvent = serde_json::from_str(text).ok()?;
+
+    Some(match native {
+        NativeSttEvent::Partial(p) => serde_json::json!({
+            "kind": "partial",
+            "text": p.text,
+        }),
+        NativeSttEvent::Final(f) => serde_json::json!({
+            "kind": "final",
+            "text": f.text,
+            "confidence": f.confidence,
+            "latencyMs": f.latency_ms,
+        }),
+        NativeSttEvent::Error(e) => {
+            let mut error = serde_json::json!({
+                "kind": "error",
+                "errorKind": e.error_kind,
+                "message": e.message,
+            });
+            // Include permission status if present for structured permission state handling.
+            if let Some(status) = e.permission_status {
+                error["permissionStatus"] = serde_json::json!(status);
+            }
+            error
+        }
+        NativeSttEvent::Ready => serde_json::json!({
+            "kind": "ready",
+        }),
+    })
 }
 
 /// Stop the active on-device recognition session, if any. Idempotent.
 #[tauri::command]
 pub fn stt_ondevice_stop(state: State<'_, OnDeviceSttState>) -> Result<(), String> {
-    if let Some(child) = take_child(&state) {
-        child
-            .kill()
-            .map_err(|error| format!("stop failed: {error}"))?;
+    if is_active(&state) {
+        stop_native_recognition();
+        set_active(&state, false);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::CString;
+    use std::ptr;
+
+    use super::parse_native_event;
+
+    #[test]
+    fn parses_native_partial_event() {
+        let json = CString::new(r#"{"kind":"partial","text":"hello"}"#).unwrap();
+        let value = parse_native_event(json.as_ptr()).expect("native event should parse");
+        assert_eq!(value["kind"], "partial");
+        assert_eq!(value["text"], "hello");
+    }
+
+    #[test]
+    fn parses_native_final_event() {
+        let json = CString::new(
+            r#"{"kind":"final","text":"hello world","confidence":0.93,"latency_ms":120}"#,
+        )
+        .unwrap();
+        let value = parse_native_event(json.as_ptr()).expect("native event should parse");
+        assert_eq!(value["kind"], "final");
+        assert_eq!(value["text"], "hello world");
+        assert_eq!(value["confidence"], 0.93);
+        assert_eq!(value["latencyMs"], 120);
+    }
+
+    #[test]
+    fn parses_native_error_event() {
+        let json = CString::new(
+            r#"{"kind":"error","error_kind":"mic-permission","message":"not authorized"}"#,
+        )
+        .unwrap();
+        let value = parse_native_event(json.as_ptr()).expect("native event should parse");
+        assert_eq!(value["kind"], "error");
+        assert_eq!(value["errorKind"], "mic-permission");
+        assert_eq!(value["message"], "not authorized");
+    }
+
+    #[test]
+    fn parses_native_ready_event() {
+        let json = CString::new(r#"{"kind":"ready"}"#).unwrap();
+        let value = parse_native_event(json.as_ptr()).expect("native event should parse");
+        assert_eq!(value["kind"], "ready");
+    }
+
+    #[test]
+    fn drops_invalid_native_event() {
+        let json = CString::new("not json").unwrap();
+        assert!(parse_native_event(json.as_ptr()).is_none());
+        assert!(parse_native_event(ptr::null()).is_none());
+    }
+
+    #[test]
+    fn drops_malformed_native_event() {
+        // Missing required fields
+        let json = CString::new(r#"{"kind":"final"}"#).unwrap();
+        assert!(parse_native_event(json.as_ptr()).is_none());
+
+        // Unknown kind
+        let json = CString::new(r#"{"kind":"unknown"}"#).unwrap();
+        assert!(parse_native_event(json.as_ptr()).is_none());
+    }
 }

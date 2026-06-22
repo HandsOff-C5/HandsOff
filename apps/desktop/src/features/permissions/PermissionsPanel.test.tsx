@@ -87,7 +87,7 @@ describe("PermissionsPanel", () => {
   });
 });
 
-// Microphone + speech accept/revoke controls (#31).
+// Microphone + speech accept/manage controls (#31).
 const MEDIA_NOT_GRANTED = report([
   { id: "microphone", kind: "permission", state: "not-determined" },
   { id: "speech-recognition", kind: "permission", state: "not-determined" },
