@@ -467,3 +467,178 @@ body {
   background: transparent;
   color: var(--text);
 }
+/* ---- Camera panel (#24/#25) ---- */
+.camera-panel {
+  /* Span the full dashboard width so the debug stage is large enough to point at. */
+  grid-column: 1 / -1;
+}
+
+.camera-panel__status {
+  color: var(--muted);
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.camera-panel__error {
+  color: #f87171;
+}
+
+.camera-panel__start {
+  appearance: none;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+.camera-panel__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.camera-panel__controls button,
+.calibration-overlay__capture {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #232734;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.camera-panel__controls select {
+  background: #232734;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin-left: 6px;
+}
+
+/* The stage: video with the landmark + calibration overlays stacked on top. */
+.camera-panel__stage {
+  position: relative;
+  width: 100%;
+  max-width: 720px;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.camera-panel__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Selfie-view flip — landmarks are flipped in JS to stay aligned. */
+.camera-panel__video--mirrored {
+  transform: scaleX(-1);
+}
+
+.camera-panel__candidate {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 13px;
+}
+
+/* Landmark debug overlay */
+.landmark-overlay,
+.calibration-overlay {
+  position: absolute;
+  inset: 0;
+}
+
+.landmark-overlay__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.landmark-overlay__canvas circle {
+  fill: #38bdf8;
+}
+
+.landmark-overlay__hud {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px #000;
+}
+
+.landmark-overlay__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.landmark-overlay__readouts {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  text-align: right;
+  text-shadow: 0 1px 2px #000;
+}
+
+/* Calibration: a big bright target dot the user points at. */
+.calibration-overlay__progress {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  text-shadow: 0 1px 2px #000;
+}
+
+.calibration-overlay__target {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #f59e0b;
+  border: 3px solid #fff;
+  box-shadow: 0 0 14px 2px #f59e0b;
+}
+
+.calibration-overlay__capture {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-weight: 600;
+}
