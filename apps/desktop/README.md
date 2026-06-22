@@ -36,25 +36,24 @@ builds with the current SDK), with `SpeechAnalyzer` added as a macOS-26 fast-pat
 The OS prompts once for Speech Recognition + microphone permission, surfaced
 through the readiness/permissions panels.
 
-### Deferred: AssemblyAI hosted provider (optional)
+### AssemblyAI hosted provider (optional)
 
 AssemblyAI realtime stays behind the same `SttStream` seam as a deferred,
 optional provider and is **off by default**. In production it will be
-provisioned by a **fast-follow Cloudflare Worker** that holds the key
-server-side; the app ships no credentials. For local dev against the hosted
-provider, `stt_mint_token` reads the key from the **Rust process environment**
-(not a Vite `.env` var — Vite only exposes `VITE_`-prefixed vars to the webview,
-and this secret must never reach the webview):
+provisioned by a Cloudflare Worker that holds the provider key server-side; the
+app ships no provider credentials. For local/dev cohorts against the hosted
+provider, `stt_mint_token` reads the token Worker endpoint and app-auth
+credential from the **Rust process environment** (not a Vite var, and not
+`local-config.json`):
 
 ```bash
-# export into the shell that launches Tauri (the Rust binary inherits it)
-set -a; source apps/desktop/.env.local; set +a   # .env.local is gitignored
+export HANDSOFF_STT_TOKEN_WORKER_URL="https://<worker-host>/v1/realtime-token"
+export HANDSOFF_STT_APP_AUTH_TOKEN="<launch-cohort app token>"
 corepack pnpm --filter @handsoff/desktop-app tauri dev
 ```
 
-`apps/desktop/.env.local` holds `ASSEMBLYAI_API_KEY=<dev key>` and is gitignored.
-Without it, `stt_mint_token` returns `missing-credentials` — expected when using
-the on-device default.
+Without both values, `stt_mint_token` returns a recoverable provider setup error
+when Realtime is selected — expected when using the on-device default.
 
 ## Layout
 

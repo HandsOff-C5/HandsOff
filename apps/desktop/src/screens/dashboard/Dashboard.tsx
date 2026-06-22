@@ -26,9 +26,9 @@ function createOnDeviceStream(): SttStream {
   });
 }
 
-// "Realtime" mode: hosted streaming whose token is minted host-side so the key
-// never reaches the webview. Needs a provisioned key (dev: env; prod: the
-// fast-follow Cloudflare Worker); without one it surfaces a recoverable error.
+// "Realtime" mode: hosted streaming whose token is minted by the Rust host via
+// the HandsOff token Worker, so provider credentials never reach the webview.
+// Without Worker app-auth config it surfaces a recoverable transcript error.
 function createRealtimeStream(): SttStream {
   return createAssemblyAiStream({
     tokenProvider: async () => {

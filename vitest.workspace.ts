@@ -6,7 +6,7 @@ export default defineWorkspace([
   {
     test: {
       name: "unit",
-      include: ["packages/**/*.test.ts"],
+      include: ["packages/**/*.test.ts", "workers/**/*.test.ts"],
       exclude: ["**/node_modules/**", "**/dist/**"],
       passWithNoTests: true,
     },

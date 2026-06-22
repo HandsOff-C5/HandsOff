@@ -33,6 +33,7 @@ export interface AssemblyAiStreamOptions {
   // Override the WebSocket constructor (testing / non-browser hosts). Defaults
   // to the global `WebSocket`.
   readonly webSocketFactory?: (url: string) => WebSocket;
+  readonly micFactory?: typeof startMicCapture;
 }
 
 type State = "idle" | "starting" | "open" | "stopped";
@@ -50,6 +51,7 @@ function buildConnectUrl(token: string): string {
 
 export function createAssemblyAiStream(options: AssemblyAiStreamOptions): SttStream {
   const makeSocket = options.webSocketFactory ?? ((url: string) => new WebSocket(url));
+  const openMic = options.micFactory ?? startMicCapture;
 
   let state: State = "idle";
   let socket: WebSocket | null = null;
@@ -190,7 +192,7 @@ export function createAssemblyAiStream(options: AssemblyAiStreamOptions): SttStr
       });
 
       try {
-        mic = await startMicCapture({
+        mic = await openMic({
           onFrame: (frame) => {
             if (ws.readyState === WebSocket.OPEN) ws.send(frame.buffer as ArrayBuffer);
           },
