@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Merged into the bundle's Info.plist on macOS (#31, AD2). Both keys are required
-  for the on-device STT sidecar: macOS shows these strings in the one-time TCC
-  prompts for microphone and speech recognition. Recognition runs on-device;
+  Merged into the bundle's Info.plist on macOS. The mic + speech keys back the
+  on-device STT sidecar (#31, AD2); the camera key is required or
+  getUserMedia({ video: true }) is denied without a prompt (#25). macOS shows
+  these strings in the one-time TCC prompts. STT recognition runs on-device;
   audio is not sent to a server.
 -->
 <plist version="1.0">
@@ -12,5 +13,7 @@
     <string>HandsOff uses your microphone while you push to talk, turning spoken commands into on-device transcripts.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>HandsOff transcribes your speech on this device to turn spoken commands into agent tasks. Audio is processed on-device and is not sent to a server.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>HandsOff uses the camera to read hand gestures for pointing at on-screen surfaces.</string>
   </dict>
 </plist>

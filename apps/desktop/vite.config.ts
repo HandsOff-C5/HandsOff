@@ -11,6 +11,12 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // MediaPipe's wasm runtime wants cross-origin isolation (SharedArrayBuffer).
+    // Tauri sets these for the bundled app via tauri.conf.json; mirror them in dev.
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+    },
   },
   build: {
     outDir: "dist",
