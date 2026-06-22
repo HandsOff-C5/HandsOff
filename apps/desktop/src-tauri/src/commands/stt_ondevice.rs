@@ -202,7 +202,10 @@ mod tests {
 
     #[test]
     fn parses_native_final_event() {
-        let json = CString::new(r#"{"kind":"final","text":"hello world","confidence":0.93,"latency_ms":120}"#).unwrap();
+        let json = CString::new(
+            r#"{"kind":"final","text":"hello world","confidence":0.93,"latency_ms":120}"#,
+        )
+        .unwrap();
         let value = parse_native_event(json.as_ptr()).expect("native event should parse");
         assert_eq!(value["kind"], "final");
         assert_eq!(value["text"], "hello world");
@@ -212,7 +215,10 @@ mod tests {
 
     #[test]
     fn parses_native_error_event() {
-        let json = CString::new(r#"{"kind":"error","error_kind":"mic-permission","message":"not authorized"}"#).unwrap();
+        let json = CString::new(
+            r#"{"kind":"error","error_kind":"mic-permission","message":"not authorized"}"#,
+        )
+        .unwrap();
         let value = parse_native_event(json.as_ptr()).expect("native event should parse");
         assert_eq!(value["kind"], "error");
         assert_eq!(value["errorKind"], "mic-permission");

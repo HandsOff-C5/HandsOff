@@ -22,7 +22,6 @@ pub async fn request_media_permissions(_app: AppHandle) -> Result<serde_json::Va
     Ok(request_app_media_permissions())
 }
 
-
 #[cfg(target_os = "macos")]
 extern "C" {
     fn handsoff_request_speech_authorization() -> i32;
