@@ -9,19 +9,39 @@ const report = (capabilities: CapabilityProbe[]) => buildReadinessReport({ capab
 
 // Both TCC grants present → HandsOff can see and act.
 const ALL_GRANTED = report([
+  { id: "camera", kind: "permission", state: "granted" },
   { id: "accessibility", kind: "permission", state: "granted" },
   { id: "screen-recording", kind: "permission", state: "granted" },
+  { id: "input-monitoring", kind: "permission", state: "granted" },
 ]);
 
 // Accessibility denied, Screen Recording still not granted.
 const ACCESSIBILITY_DENIED = report([
+  { id: "camera", kind: "permission", state: "granted" },
   { id: "accessibility", kind: "permission", state: "denied" },
   { id: "screen-recording", kind: "permission", state: "granted" },
+  { id: "input-monitoring", kind: "permission", state: "granted" },
 ]);
 
 const SCREEN_RECORDING_DENIED = report([
+  { id: "camera", kind: "permission", state: "granted" },
   { id: "accessibility", kind: "permission", state: "granted" },
   { id: "screen-recording", kind: "permission", state: "denied" },
+  { id: "input-monitoring", kind: "permission", state: "granted" },
+]);
+
+const CAMERA_DENIED = report([
+  { id: "camera", kind: "permission", state: "denied" },
+  { id: "accessibility", kind: "permission", state: "granted" },
+  { id: "screen-recording", kind: "permission", state: "granted" },
+  { id: "input-monitoring", kind: "permission", state: "granted" },
+]);
+
+const INPUT_MONITORING_DENIED = report([
+  { id: "camera", kind: "permission", state: "granted" },
+  { id: "accessibility", kind: "permission", state: "granted" },
+  { id: "screen-recording", kind: "permission", state: "granted" },
+  { id: "input-monitoring", kind: "permission", state: "denied" },
 ]);
 
 const noop = () => {};
@@ -45,6 +65,13 @@ describe("PermissionsPanel", () => {
     expect(screen.queryByText(/Screen Recording to see the windows/i)).not.toBeInTheDocument();
   });
 
+  it("shows targeted Camera guidance when it is missing", () => {
+    render(<PermissionsPanel report={CAMERA_DENIED} isChecking={false} onRecheck={noop} />);
+    expect(screen.getByRole("heading", { level: 3, name: /Camera/ })).toBeInTheDocument();
+    expect(screen.getByText("System Settings → Privacy & Security → Camera")).toBeInTheDocument();
+    expect(screen.getByText(/Head pointing needs Camera/i)).toBeInTheDocument();
+  });
+
   it("shows targeted Screen Recording guidance when it is missing", () => {
     render(
       <PermissionsPanel report={SCREEN_RECORDING_DENIED} isChecking={false} onRecheck={noop} />,
@@ -52,6 +79,16 @@ describe("PermissionsPanel", () => {
     expect(screen.getByRole("heading", { level: 3, name: /Screen Recording/ })).toBeInTheDocument();
     expect(
       screen.getByText("System Settings → Privacy & Security → Screen Recording"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows targeted Input Monitoring guidance when it is missing", () => {
+    render(
+      <PermissionsPanel report={INPUT_MONITORING_DENIED} isChecking={false} onRecheck={noop} />,
+    );
+    expect(screen.getByRole("heading", { level: 3, name: /Input Monitoring/ })).toBeInTheDocument();
+    expect(
+      screen.getByText("System Settings → Privacy & Security → Input Monitoring"),
     ).toBeInTheDocument();
   });
 
@@ -65,7 +102,7 @@ describe("PermissionsPanel", () => {
   it("confirms readiness when both grants are present", () => {
     render(<PermissionsPanel report={ALL_GRANTED} isChecking={false} onRecheck={noop} />);
     expect(
-      screen.getByText(new RegExp(`${APP_NAME} can see the windows you point at and act`, "i")),
+      screen.getByText(new RegExp(`${APP_NAME} can\\s+track your head point`, "i")),
     ).toBeInTheDocument();
     // No setup steps when nothing is blocked.
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument();

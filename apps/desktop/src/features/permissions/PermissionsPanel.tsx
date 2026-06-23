@@ -85,8 +85,8 @@ export function PermissionsPanel({
       {/* CUA-gating grants (#18): guidance + ordered setup steps. */}
       {allReady ? (
         <p className="permissions__ok">
-          Accessibility and Screen Recording are granted. {APP_NAME} can see the windows you point
-          at and act on your behalf.
+          Camera, Accessibility, Screen Recording, and Input Monitoring are granted. {APP_NAME} can
+          track your head point, see the windows you point at, and act on your behalf.
         </p>
       ) : (
         <ul className="permissions__list">

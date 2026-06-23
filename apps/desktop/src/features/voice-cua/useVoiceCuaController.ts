@@ -2,10 +2,11 @@ import { runApprovedPlan, type CuaActionPort, type PlanRunResult } from "@handso
 import {
   type CuaActionRequest,
   type FinalTranscript,
-  type SurfaceSnapshot,
+  type IntentInput,
+  type ResolvedIntent,
 } from "@handsoff/contracts";
 import type { CuaDriver } from "@handsoff/cua";
-import { fuseIntent } from "@handsoff/intent";
+import { resolveIntent, type ResolveIntentOptions } from "@handsoff/intent";
 import {
   createActionAuditStore,
   createSupervisionSessionStore,
@@ -15,14 +16,7 @@ import {
 import { useRef, useState } from "react";
 
 import { makeApprovalDecision } from "../plan-preview/usePlanApproval";
-
-const ACTIVE_WINDOW_SURFACE: SurfaceSnapshot = {
-  id: "active-window",
-  title: "Active window",
-  app: "Current app",
-  availability: "available",
-  accessStatus: "accessible",
-};
+import type { HeadPointingSnapshot } from "../head-pointing/useHeadPointing";
 
 // ponytail: fixed retarget grace; make it configurable if manual testing proves one size wrong.
 const DEFAULT_TARGET_RESOLVE_DELAY_MS = 1500;
@@ -54,45 +48,51 @@ function terminal(status: PlanRunResult["status"]): TerminalSessionStatus {
 
 export function useVoiceCuaController(args: {
   driver: CuaDriver;
+  headPointing?: HeadPointingSnapshot;
   now?: () => string;
+  resolveIntent?: (input: IntentInput, options: ResolveIntentOptions) => Promise<ResolvedIntent>;
   targetResolveDelayMs?: number;
 }) {
-  const [intent, setIntent] = useState<ReturnType<typeof fuseIntent> | null>(null);
+  const [intent, setIntent] = useState<ResolvedIntent | null>(null);
   const [runResult, setRunResult] = useState<PlanRunResult | null>(null);
   const [session, setSession] = useState<SupervisionSession | null>(null);
   const audit = useRef(createActionAuditStore());
   const sessions = useRef(createSupervisionSessionStore());
+  const headPointingRef = useRef(args.headPointing);
+  const resolveIntentRef = useRef(args.resolveIntent ?? resolveIntent);
+  headPointingRef.current = args.headPointing;
+  resolveIntentRef.current = args.resolveIntent ?? resolveIntent;
   const timestamp = () => args.now?.() ?? new Date().toISOString();
 
   async function createIntent(finalTranscript: FinalTranscript) {
     await wait(args.targetResolveDelayMs ?? DEFAULT_TARGET_RESOLVE_DELAY_MS);
     const createdAt = timestamp();
     const started = sessions.current.start(createdAt);
-    const resolved = await args.driver.getWindowState({ surface: ACTIVE_WINDOW_SURFACE });
-    const surface =
-      resolved.status === "succeeded" && resolved.state
-        ? resolved.state.surface
-        : {
-            ...ACTIVE_WINDOW_SURFACE,
-            availability: "unknown" as const,
-            accessStatus: "unknown" as const,
-          };
-    const next = fuseIntent(
-      {
-        sessionId: started.id,
-        speech: { finalTranscript },
-        pointingEvidence: [
-          {
-            source: "cursor",
-            confidence: 1,
-            strategy: "active-window-current-cursor",
-            surface,
-          },
-        ],
-        surfaceCandidates: [surface],
-      },
-      { createdAt },
-    );
+    const headPointing = headPointingRef.current;
+    const headCandidates = headPointing?.candidates ?? [];
+    const input: IntentInput = {
+      sessionId: started.id,
+      speech: { finalTranscript },
+      pointingEvidence:
+        headCandidates.length > 0
+          ? headCandidates.map((candidate) => ({
+              source: "head" as const,
+              confidence: candidate.score,
+              strategy: "head-neighborhood",
+              surface: candidate.surface,
+              ...(headPointing?.point && { cursor: headPointing.point }),
+            }))
+          : [
+              {
+                source: "head",
+                confidence: 0,
+                strategy: "head-neighborhood-empty",
+                ...(headPointing?.point && { cursor: headPointing.point }),
+              },
+            ],
+      surfaceCandidates: headCandidates.map((candidate) => candidate.surface),
+    };
+    const next = await resolveIntentRef.current(input, { resolver: "llm", createdAt });
     const nextSession =
       next.status === "ready" ? started : sessions.current.finish(started.id, "blocked", createdAt);
     setSession(nextSession);

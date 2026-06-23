@@ -1,0 +1,65 @@
+[
+  {
+    "name": "click the looked-at Codex surface",
+    "transcript": "click that button",
+    "candidateSurfaces": [
+      {
+        "id": "surface-1",
+        "title": "Codex",
+        "app": "Codex",
+        "pid": 42,
+        "windowId": 7,
+        "availability": "available",
+        "accessStatus": "accessible"
+      }
+    ],
+    "completion": {
+      "status": "ready",
+      "id": "intent-llm",
+      "intent_type": "click",
+      "referent": { "id": "surface-1", "source": "head", "confidence": 0.9 },
+      "constraints": [],
+      "risk_level": "mutating",
+      "requires_approval": true,
+      "target_agent": "cua-driver",
+      "action_plan": {
+        "id": "plan-llm",
+        "summary": "Click the selected target",
+        "risk_level": "mutating",
+        "requires_approval": true,
+        "target_agent": "cua-driver",
+        "action_plan": [
+          {
+            "id": "step-1",
+            "kind": "click_element",
+            "label": "Click selected target",
+            "target": {
+              "surface": {
+                "id": "surface-1",
+                "title": "Codex",
+                "app": "Codex",
+                "pid": 42,
+                "windowId": 7,
+                "availability": "available",
+                "accessStatus": "accessible"
+              },
+              "elementId": null,
+              "elementIndex": 0
+            },
+            "text": null,
+            "value": null
+          }
+        ]
+      },
+      "reason": null
+    },
+    "expected": {
+      "status": "ready",
+      "intent_type": "click",
+      "referentId": "surface-1",
+      "target_agent": "cua-driver",
+      "requires_approval": true,
+      "actionKinds": ["click_element"]
+    }
+  }
+]

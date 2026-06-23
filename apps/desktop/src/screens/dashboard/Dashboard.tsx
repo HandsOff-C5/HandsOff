@@ -10,9 +10,16 @@ import { ReadinessPanel } from "../../features/readiness/ReadinessPanel";
 import { useReadinessProbe } from "../../features/readiness/useReadinessProbe";
 import { SessionsPanel } from "../../features/sessions/SessionsPanel";
 import { SettingsPanel } from "../../features/settings/SettingsPanel";
+import {
+  useHeadPointing,
+  type HeadPointingSnapshot,
+  type HeadPointingListen,
+} from "../../features/head-pointing/useHeadPointing";
 import { useLocalConfig } from "../../features/settings/useLocalConfig";
 import { TranscriptPanel } from "../../features/transcript/TranscriptPanel";
 import { useVoiceCuaController } from "../../features/voice-cua/useVoiceCuaController";
+import type { ResolveIntentOptions } from "@handsoff/intent";
+import type { IntentInput, ResolvedIntent } from "@handsoff/contracts";
 
 function hasTauriBackend(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -40,6 +47,12 @@ function createRealtimeStream(): SttStream {
   });
 }
 
+const HEAD_POINTING_TAURI = {
+  invoke: (command: string) => invoke(command),
+  listen: ((event, handler) =>
+    listen(event, ({ payload }) => handler({ payload }))) satisfies HeadPointingListen,
+};
+
 // The transcription mode the user picked in Settings decides which provider the
 // transcript panel speaks to. Both satisfy the same `SttStream` seam, so the
 // panel and intent engine are unchanged.
@@ -50,6 +63,8 @@ function streamFactoryFor(provider: SttProvider): () => SttStream {
 interface DashboardProps {
   createStream?: () => SttStream;
   cuaDriver?: CuaDriver;
+  headPointing?: HeadPointingSnapshot;
+  resolveIntent?: (input: IntentInput, options: ResolveIntentOptions) => Promise<ResolvedIntent>;
   now?: () => string;
   targetResolveDelayMs?: number;
 }
@@ -62,6 +77,8 @@ interface DashboardProps {
 export function Dashboard({
   createStream: injectedStream,
   cuaDriver,
+  headPointing: injectedHeadPointing,
+  resolveIntent,
   now,
   targetResolveDelayMs,
 }: DashboardProps = {}) {
@@ -74,8 +91,10 @@ export function Dashboard({
     (hasTauriBackend()
       ? createTauriCuaDriver((command, args) => invoke(command, args))
       : createUnavailableCuaDriver());
+  const liveHeadPointing = useHeadPointing(hasTauriBackend() ? HEAD_POINTING_TAURI : undefined);
+  const headPointing = injectedHeadPointing ?? liveHeadPointing;
   const { intent, runResult, session, approve, reject, handleFinalTranscript } =
-    useVoiceCuaController({ driver, now, targetResolveDelayMs });
+    useVoiceCuaController({ driver, headPointing, now, resolveIntent, targetResolveDelayMs });
 
   return (
     <main className="dashboard">

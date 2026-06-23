@@ -24,7 +24,7 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
   const surface = evidence?.surface ?? input.surfaceCandidates[0];
 
   if (!evidence || evidence.confidence < (options.minConfidence ?? 0.5)) {
-    return blocked(
+    return blockedIntent(
       "clarification_required",
       input,
       id,
@@ -33,7 +33,7 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
     );
   }
   if (!surface || surface.availability !== "available" || surface.accessStatus !== "accessible") {
-    return blocked(
+    return blockedIntent(
       "clarification_required",
       input,
       id,
@@ -44,7 +44,7 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
 
   const parsed = parseVoiceCommand(input.speech.finalTranscript.text);
   if (parsed.status === "unsupported") {
-    return blocked("blocked", input, id, createdAt, parsed.reason);
+    return blockedIntent("blocked", input, id, createdAt, parsed.reason);
   }
 
   const risk_level = riskForIntent(parsed.intent_type);
@@ -79,7 +79,7 @@ function bestEvidence(evidence: readonly PointingEvidence[]): PointingEvidence |
   return [...evidence].sort((a, b) => b.confidence - a.confidence)[0];
 }
 
-function blocked(
+export function blockedIntent(
   status: "blocked" | "clarification_required",
   input: IntentInput,
   id: string,

@@ -5,9 +5,9 @@
 // The frontend validates it (zod) and maps it to green/yellow/red, so this side
 // stays a thin, honest reporter: it returns real macOS permission state where a
 // dependency-free system call exists (Accessibility, Screen Recording) and
-// `unknown` for capabilities whose probes belong to other lanes — camera and
-// microphone authorization land with the capture/STT lanes, and the CUA daemon
-// health check lands with the CUA lane.
+// `unknown` for capabilities whose probes belong to other lanes — camera
+// authorization lands with the head-tracking sidecar, Input Monitoring with the
+// hotkey sidecar, and the CUA daemon health check lands with the CUA lane.
 //
 // All permission states are read via native FFI functions that query the app
 // bundle's TCC identity directly — there is no sidecar permission path anymore.
@@ -162,7 +162,8 @@ pub async fn readiness_probe(_app: AppHandle) -> Value {
             { "id": "speech-recognition", "kind": "permission", "state": speech_recognition_state() },
             { "id": "cua", "kind": "daemon", "state": "unknown" },
             { "id": "accessibility", "kind": "permission", "state": accessibility_state() },
-            { "id": "screen-recording", "kind": "permission", "state": screen_recording_state() }
+            { "id": "screen-recording", "kind": "permission", "state": screen_recording_state() },
+            { "id": "input-monitoring", "kind": "permission", "state": "unknown" }
         ]
     })
 }

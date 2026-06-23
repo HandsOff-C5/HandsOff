@@ -11,6 +11,7 @@ mod commands;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .manage(commands::head_track::HeadTrackState::default())
         .manage(commands::stt_ondevice::OnDeviceSttState::default())
         .invoke_handler(tauri::generate_handler![
             commands::readiness::readiness_probe,
@@ -18,6 +19,8 @@ fn main() {
             commands::storage::update_local_config,
             commands::storage::reset_local_config,
             commands::stt::stt_mint_token,
+            commands::head_track::head_track_start,
+            commands::head_track::head_track_stop,
             commands::stt_ondevice::stt_ondevice_start,
             commands::stt_ondevice::stt_ondevice_stop,
             commands::cua::cua_permissions,

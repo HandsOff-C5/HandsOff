@@ -77,6 +77,8 @@ open -n apps/desktop/src-tauri/target/debug/bundle/macos/HandsOff.app \
 
 Worker deploy + a curl smoke test live in `workers/assemblyai-token/README.md`.
 
+Head tracking follows the same TCC rule: test Camera/Input Monitoring from the bundled `.app`, not `tauri dev`.
+
 ## Performance
 
 **Context management:** Avoid last 20% of context window for large refactoring and multi-file features. Lower-sensitivity tasks (single edits, docs, simple fixes) tolerate higher utilization.

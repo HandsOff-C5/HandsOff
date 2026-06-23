@@ -25,6 +25,7 @@ const CAPABILITIES: Record<CapabilityId, { label: string; kind: CapabilityProbe[
   cua: { label: "Computer-use agent", kind: "daemon" },
   accessibility: { label: "Accessibility", kind: "permission" },
   "screen-recording": { label: "Screen Recording", kind: "permission" },
+  "input-monitoring": { label: "Input Monitoring", kind: "permission" },
 };
 
 const COLOR_BY_LEVEL: Record<ReadinessLevel, ReadinessColor> = {
