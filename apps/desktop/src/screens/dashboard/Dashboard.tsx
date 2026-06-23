@@ -1,4 +1,5 @@
 import { APP_NAME, type SttProvider, type SttStream } from "@handsoff/contracts";
+import { createTauriCuaDriver, createUnavailableCuaDriver, type CuaDriver } from "@handsoff/cua";
 import { createAssemblyAiStream, createOnDeviceSttStream } from "@handsoff/speech";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -11,6 +12,7 @@ import { SessionsPanel } from "../../features/sessions/SessionsPanel";
 import { SettingsPanel } from "../../features/settings/SettingsPanel";
 import { useLocalConfig } from "../../features/settings/useLocalConfig";
 import { TranscriptPanel } from "../../features/transcript/TranscriptPanel";
+import { useVoiceCuaController } from "../../features/voice-cua/useVoiceCuaController";
 
 function hasTauriBackend(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -45,15 +47,36 @@ function streamFactoryFor(provider: SttProvider): () => SttStream {
   return provider === "assemblyai" ? createRealtimeStream : createOnDeviceStream;
 }
 
+interface DashboardProps {
+  createStream?: () => SttStream;
+  cuaDriver?: CuaDriver;
+  now?: () => string;
+  targetResolveDelayMs?: number;
+}
+
 // Mission-control dashboard shell (issue #15). Branded header plus one panel per
 // core-loop concern. Readiness (#17) and permission education (#18) share one
 // host probe: the readiness panel shows status at a glance, the permissions panel
 // turns missing macOS grants into targeted setup steps and a re-check. The
 // transcript panel (#31) turns speech into visible partial/final transcripts.
-export function Dashboard() {
+export function Dashboard({
+  createStream: injectedStream,
+  cuaDriver,
+  now,
+  targetResolveDelayMs,
+}: DashboardProps = {}) {
   const { report, isChecking, recheck } = useReadinessProbe();
   const { config, status, updateConfig, resetConfig } = useLocalConfig();
-  const createStream = hasTauriBackend() ? streamFactoryFor(config.sttProvider) : undefined;
+  const createStream =
+    injectedStream ?? (hasTauriBackend() ? streamFactoryFor(config.sttProvider) : undefined);
+  const driver =
+    cuaDriver ??
+    (hasTauriBackend()
+      ? createTauriCuaDriver((command, args) => invoke(command, args))
+      : createUnavailableCuaDriver());
+  const { intent, runResult, session, approve, reject, handleFinalTranscript } =
+    useVoiceCuaController({ driver, now, targetResolveDelayMs });
+
   return (
     <main className="dashboard">
       <header className="dashboard__header">
@@ -79,9 +102,14 @@ export function Dashboard() {
           updateConfig={updateConfig}
           resetConfig={resetConfig}
         />
-        <TranscriptPanel createStream={createStream} />
-        <SessionsPanel />
-        <PlanPreviewPanel />
+        <TranscriptPanel createStream={createStream} onFinalTranscript={handleFinalTranscript} />
+        <SessionsPanel session={session} />
+        <PlanPreviewPanel
+          intent={intent}
+          runResult={runResult}
+          onApprove={approve}
+          onReject={reject}
+        />
       </div>
     </main>
   );

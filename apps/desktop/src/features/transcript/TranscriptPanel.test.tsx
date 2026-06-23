@@ -1,7 +1,7 @@
 import type { SttError, SttStream } from "@handsoff/contracts";
 import { FakeSttStream } from "@handsoff/testkit";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // A fresh fake per capture (matching the controller's per-press stream
 // creation), with a handle on the most recent one so the test can drive events.
@@ -75,6 +75,22 @@ describe("TranscriptPanel", () => {
     expect(screen.getByText(/90% · 120 ms/)).toBeInTheDocument();
     expect(screen.getByTestId("transcript-partial")).toHaveTextContent("");
     expect(talkButton()).toHaveTextContent("Hold to talk");
+  });
+
+  it("notifies the intent lane when a final utterance is delivered", async () => {
+    const onFinalTranscript = vi.fn();
+    render(<TranscriptPanel createStream={makeFactory()} onFinalTranscript={onFinalTranscript} />);
+    const button = talkButton();
+    fireEvent.pointerDown(button);
+    await flush();
+
+    act(() => latest().emitFinal("click there", 0.9, 120));
+    fireEvent.pointerUp(talkButton());
+    await flush();
+
+    expect(onFinalTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "final", text: "click there", confidence: 0.9 }),
+    );
   });
 
   it("cancel discards the in-flight capture without delivering a final", async () => {

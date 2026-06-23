@@ -1,4 +1,4 @@
-import type { SttError, SttErrorKind, SttStream } from "@handsoff/contracts";
+import type { FinalTranscript, SttError, SttErrorKind, SttStream } from "@handsoff/contracts";
 
 import { usePushToTalk } from "./usePushToTalk";
 
@@ -17,6 +17,7 @@ import { usePushToTalk } from "./usePushToTalk";
 interface TranscriptPanelProps {
   // Builds a fresh stream per capture. Omitted when no native backend is present.
   createStream?: () => SttStream;
+  onFinalTranscript?: (utterance: FinalTranscript) => void;
 }
 
 const ERROR_COPY: Record<SttErrorKind, string> = {
@@ -48,7 +49,7 @@ function errorMessage(error: SttError): string {
   return ERROR_COPY[error.kind] ?? error.message;
 }
 
-export function TranscriptPanel({ createStream }: TranscriptPanelProps) {
+export function TranscriptPanel({ createStream, onFinalTranscript }: TranscriptPanelProps) {
   if (!createStream) {
     return (
       <section className="panel transcript">
@@ -57,12 +58,20 @@ export function TranscriptPanel({ createStream }: TranscriptPanelProps) {
       </section>
     );
   }
-  return <LiveTranscriptPanel createStream={createStream} />;
+  return <LiveTranscriptPanel createStream={createStream} onFinalTranscript={onFinalTranscript} />;
 }
 
-function LiveTranscriptPanel({ createStream }: { createStream: () => SttStream }) {
-  const { status, partial, utterances, error, press, release, cancel } =
-    usePushToTalk(createStream);
+function LiveTranscriptPanel({
+  createStream,
+  onFinalTranscript,
+}: {
+  createStream: () => SttStream;
+  onFinalTranscript?: (utterance: FinalTranscript) => void;
+}) {
+  const { status, partial, utterances, error, press, release, cancel } = usePushToTalk(
+    createStream,
+    { onUtterance: onFinalTranscript },
+  );
   const capturing = status === "capturing" || status === "finalizing";
 
   return (

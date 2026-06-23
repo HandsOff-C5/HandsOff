@@ -1,12 +1,22 @@
+import type { SupervisionSession } from "@handsoff/supervision";
+
 import { EmptyPanel } from "../../components/EmptyPanel";
 
-// Placeholder. Agent session cards (planned, waiting-approval, running, blocked,
-// complete, failed) land with the supervision lane.
-export function SessionsPanel() {
+export function SessionsPanel({ session }: { session?: SupervisionSession | null }) {
+  if (!session) {
+    return (
+      <EmptyPanel
+        title="Sessions"
+        message="No agent sessions yet. Session cards appear once supervision lands."
+      />
+    );
+  }
+
   return (
-    <EmptyPanel
-      title="Sessions"
-      message="No agent sessions yet. Session cards appear once supervision lands."
-    />
+    <section className="panel sessions">
+      <h2 className="panel__title">Sessions</h2>
+      <p className="sessions__status">Session: {session.id}</p>
+      <p className="sessions__status">Last run: {session.status}</p>
+    </section>
   );
 }
