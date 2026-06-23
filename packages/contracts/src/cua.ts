@@ -42,6 +42,11 @@ export type CuaWindowState = z.infer<typeof cuaWindowStateSchema>;
 
 export const cuaActionRequestSchema = z.discriminatedUnion("kind", [
   z.object({
+    kind: z.literal("launch_app"),
+    appName: z.string().min(1),
+    bundleId: z.string().min(1).optional(),
+  }),
+  z.object({
     kind: z.literal("get_window_state"),
     target: actionTargetSchema,
   }),

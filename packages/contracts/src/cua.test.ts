@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { safeParseCuaActionResult, safeParseCuaWindowState } from "./cua";
+import { cuaActionRequestSchema, safeParseCuaActionResult, safeParseCuaWindowState } from "./cua";
 import type { CuaActionResult, CuaWindowState } from "./cua";
 
 function state(): CuaWindowState {
@@ -61,5 +61,14 @@ describe("CUA contract", () => {
       elementCount: 3,
       elements: [],
     });
+  });
+
+  it("accepts app-launch action requests", () => {
+    const result = cuaActionRequestSchema.safeParse({
+      kind: "launch_app",
+      appName: "TextEdit",
+    });
+
+    expect(result.success).toBe(true);
   });
 });

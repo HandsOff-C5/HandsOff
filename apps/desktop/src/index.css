@@ -463,6 +463,14 @@ body {
   line-height: 1.4;
 }
 
+.sessions__events {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .plan-preview__actions {
   display: flex;
   gap: 10px;

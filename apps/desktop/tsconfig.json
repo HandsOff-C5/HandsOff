@@ -12,11 +12,11 @@
     { "path": "../../packages/contracts" },
     { "path": "../../packages/cua" },
     { "path": "../../packages/desktop" },
+    { "path": "../../packages/gesture" },
     { "path": "../../packages/intent" },
     { "path": "../../packages/speech" },
     { "path": "../../packages/supervision" }
   ],
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["src/**/*.test.tsx"],
-  "references": [{ "path": "../../packages/contracts" }, { "path": "../../packages/gesture" }]
+  "exclude": ["src/**/*.test.tsx"]
 }

@@ -1,8 +1,10 @@
 import { APP_NAME } from "@handsoff/contracts";
+import type { IntentInput, SurfaceSnapshot } from "@handsoff/contracts";
 import { createFakeCuaDriver } from "@handsoff/cua";
+import { fuseIntent, type ResolveIntentOptions } from "@handsoff/intent";
 import { FakeSttStream, fakeCuaWindowState } from "@handsoff/testkit";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../App";
 import { Dashboard } from "./Dashboard";
@@ -44,6 +46,17 @@ async function flush() {
 
 function talkButton() {
   return screen.getByRole("button", { name: /Hold to talk|Release to send/ });
+}
+
+function headPointing(surface: SurfaceSnapshot) {
+  return {
+    point: { x: 10, y: 20 },
+    candidates: [{ surface, score: 0.9, distance: 0 }],
+  };
+}
+
+async function ruleResolver(input: IntentInput, options: ResolveIntentOptions) {
+  return fuseIntent(input, { createdAt: options.createdAt });
 }
 
 beforeEach(() => {
@@ -92,77 +105,102 @@ describe("Dashboard", () => {
   });
 
   it("turns a final transcript into an approved CUA action", async () => {
-    const driver = createFakeCuaDriver({ state: fakeCuaWindowState() });
-    render(
-      <Dashboard
-        createStream={makeFactory()}
-        cuaDriver={driver}
-        now={() => "2026-06-22T12:00:00.000Z"}
-        targetResolveDelayMs={0}
-      />,
-    );
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const state = fakeCuaWindowState();
+    const driver = createFakeCuaDriver({ state });
+    try {
+      render(
+        <Dashboard
+          createStream={makeFactory()}
+          cuaDriver={driver}
+          headPointing={headPointing(state.surface)}
+          now={() => "2026-06-22T12:00:00.000Z"}
+          targetResolveDelayMs={0}
+        />,
+      );
 
-    fireEvent.pointerDown(talkButton());
-    await flush();
-    act(() => latest().emitFinal("click there", 0.95, 100));
-    fireEvent.pointerUp(talkButton());
-    await flush();
+      fireEvent.pointerDown(talkButton());
+      await flush();
+      act(() => latest().emitFinal("click there", 0.95, 100));
+      clock.mockReturnValue(1400);
+      fireEvent.pointerUp(talkButton());
+      await flush();
 
-    expect(screen.getByText("Click selected target")).toBeInTheDocument();
-    expect(screen.getByText("Session: session-1")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+      expect(screen.getByText("Click selected target")).toBeInTheDocument();
+      expect(screen.getByText("Session: session-1")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
-    await waitFor(() => expect(screen.getByText(/Last run:/)).toHaveTextContent("succeeded"));
-    expect(driver.calls().map((call) => call.kind)).toEqual([
-      "get_window_state",
-      "get_window_state",
-      "click",
-      "get_window_state",
-    ]);
+      await waitFor(() => expect(screen.getByText(/Last run:/)).toHaveTextContent("succeeded"));
+      expect(driver.calls().map((call) => call.kind)).toEqual([
+        "get_window_state",
+        "click",
+        "get_window_state",
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("waits before resolving the CUA target after speech release", async () => {
-    const driver = createFakeCuaDriver({ state: fakeCuaWindowState() });
-    render(
-      <Dashboard
-        createStream={makeFactory()}
-        cuaDriver={driver}
-        now={() => "2026-06-22T12:00:00.000Z"}
-        targetResolveDelayMs={10}
-      />,
-    );
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const state = fakeCuaWindowState();
+    const driver = createFakeCuaDriver({ state });
+    try {
+      render(
+        <Dashboard
+          createStream={makeFactory()}
+          cuaDriver={driver}
+          headPointing={headPointing(state.surface)}
+          now={() => "2026-06-22T12:00:00.000Z"}
+          resolveIntent={ruleResolver}
+          targetResolveDelayMs={10}
+        />,
+      );
 
-    fireEvent.pointerDown(talkButton());
-    await flush();
-    act(() => latest().emitFinal("click there", 0.95, 100));
-    fireEvent.pointerUp(talkButton());
-    await flush();
+      fireEvent.pointerDown(talkButton());
+      await flush();
+      act(() => latest().emitFinal("click there", 0.95, 100));
+      clock.mockReturnValue(1400);
+      fireEvent.pointerUp(talkButton());
+      await flush();
 
-    expect(driver.calls()).toHaveLength(0);
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
+      expect(driver.calls()).toHaveLength(0);
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
 
-    expect(screen.getByText("Click selected target")).toBeInTheDocument();
-    expect(driver.calls().map((call) => call.kind)).toEqual(["get_window_state"]);
+      expect(screen.getByText("Click selected target")).toBeInTheDocument();
+      expect(driver.calls()).toHaveLength(0);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
-  it("shows a blocked preview when no CUA driver is available", async () => {
-    render(
-      <Dashboard
-        createStream={makeFactory()}
-        now={() => "2026-06-22T12:00:00.000Z"}
-        targetResolveDelayMs={0}
-      />,
-    );
+  it("shows a blocked preview when no head candidates are available", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      render(
+        <Dashboard
+          createStream={makeFactory()}
+          headPointing={{ point: { x: 10, y: 20 }, candidates: [] }}
+          now={() => "2026-06-22T12:00:00.000Z"}
+          targetResolveDelayMs={0}
+        />,
+      );
 
-    fireEvent.pointerDown(talkButton());
-    await flush();
-    act(() => latest().emitFinal("click there", 0.95, 100));
-    fireEvent.pointerUp(talkButton());
-    await flush();
+      fireEvent.pointerDown(talkButton());
+      await flush();
+      act(() => latest().emitFinal("click there", 0.95, 100));
+      clock.mockReturnValue(1400);
+      fireEvent.pointerUp(talkButton());
+      await flush();
 
-    expect(await screen.findByText("No accessible target was found")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+      expect(
+        await screen.findByText("No attention-region candidates were available"),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    } finally {
+      clock.mockRestore();
+    }
   });
 });

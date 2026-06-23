@@ -1,5 +1,19 @@
-import type { FinalTranscript, SttError, SttErrorKind, SttStream } from "@handsoff/contracts";
+import type {
+  FinalTranscript,
+  HeadPointerConfig,
+  SttError,
+  SttErrorKind,
+  SttStream,
+} from "@handsoff/contracts";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { useCallback, useRef, useState } from "react";
 
+import {
+  useCaptureHotkey,
+  type CaptureHotkeyInvoke,
+  type CaptureHotkeyListen,
+} from "../head-pointing/useCaptureHotkey";
 import { usePushToTalk } from "./usePushToTalk";
 
 // Live transcript surface (#31, #32): push-to-talk capture that shows the
@@ -17,6 +31,7 @@ import { usePushToTalk } from "./usePushToTalk";
 interface TranscriptPanelProps {
   // Builds a fresh stream per capture. Omitted when no native backend is present.
   createStream?: () => SttStream;
+  headPointer?: HeadPointerConfig;
   onFinalTranscript?: (utterance: FinalTranscript) => void;
 }
 
@@ -27,13 +42,14 @@ const ERROR_COPY: Record<SttErrorKind, string> = {
   "provider-unavailable": "The speech service is unavailable. Hold to talk again to retry.",
   aborted: "Listening was cancelled.",
 };
+const ACTIVATION_HOLD_MS = 300;
 
 function errorMessage(error: SttError): string {
   if (error.kind === "start-failed" && error.message) return error.message;
   if (error.kind === "mic-permission") {
     // Use typed permission state when available, otherwise fall back to message parsing.
     if (error.permissionState === "not-determined") {
-      return "Speech recognition has not been requested yet. Choose Allow microphone & speech in Permissions, then hold to talk again.";
+      return "Speech recognition has not been requested yet. Choose Allow camera, microphone & speech in Permissions, then hold to talk again.";
     }
     if (error.permissionState === "denied" || error.permissionState === "restricted") {
       return "Speech recognition is blocked. Enable it in System Settings → Privacy & Security → Speech Recognition.";
@@ -41,7 +57,7 @@ function errorMessage(error: SttError): string {
     // Fallback for legacy errors without permissionState.
     if (/speech recognition/i.test(error.message)) {
       if (/\(0\)|not.*determined/i.test(error.message)) {
-        return "Speech recognition has not been requested yet. Choose Allow microphone & speech in Permissions, then hold to talk again.";
+        return "Speech recognition has not been requested yet. Choose Allow camera, microphone & speech in Permissions, then hold to talk again.";
       }
       return "Speech recognition is blocked. Enable it in System Settings → Privacy & Security → Speech Recognition.";
     }
@@ -49,7 +65,19 @@ function errorMessage(error: SttError): string {
   return ERROR_COPY[error.kind] ?? error.message;
 }
 
-export function TranscriptPanel({ createStream, onFinalTranscript }: TranscriptPanelProps) {
+const captureHotkeyListen: CaptureHotkeyListen = (event, handler) =>
+  listen(event, ({ payload }) => handler({ payload }));
+const captureHotkeyInvoke: CaptureHotkeyInvoke = (command, args) => invoke(command, args);
+
+function nativeErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+export function TranscriptPanel({
+  createStream,
+  headPointer,
+  onFinalTranscript,
+}: TranscriptPanelProps) {
   if (!createStream) {
     return (
       <section className="panel transcript">
@@ -58,14 +86,22 @@ export function TranscriptPanel({ createStream, onFinalTranscript }: TranscriptP
       </section>
     );
   }
-  return <LiveTranscriptPanel createStream={createStream} onFinalTranscript={onFinalTranscript} />;
+  return (
+    <LiveTranscriptPanel
+      createStream={createStream}
+      headPointer={headPointer}
+      onFinalTranscript={onFinalTranscript}
+    />
+  );
 }
 
 function LiveTranscriptPanel({
   createStream,
+  headPointer,
   onFinalTranscript,
 }: {
   createStream: () => SttStream;
+  headPointer?: HeadPointerConfig;
   onFinalTranscript?: (utterance: FinalTranscript) => void;
 }) {
   const { status, partial, utterances, error, press, release, cancel } = usePushToTalk(
@@ -73,6 +109,140 @@ function LiveTranscriptPanel({
     { onUtterance: onFinalTranscript },
   );
   const capturing = status === "capturing" || status === "finalizing";
+  const tauri = hasTauriBackend();
+  const activationStartedAt = useRef<number | null>(null);
+
+  // Full-capture test (#95): exercises the SAME downstream path as the hotkey —
+  // head tracking (golden cursor + camera) plus mic — independently of the global
+  // shortcut. Distinct from "Hold to talk": that's mic-only; this also drives the
+  // camera/head tracker, and it REFUSES to start until camera + mic + speech are
+  // all granted (so you never get a half-capture with no golden cursor).
+  const [headCapturing, setHeadCapturing] = useState(false);
+  const [headNotice, setHeadNotice] = useState<string | null>(null);
+  const captureAttemptRef = useRef(0);
+
+  const markHeadCaptureStarted = useCallback(() => {
+    setHeadNotice(null);
+    setHeadCapturing(true);
+    press();
+  }, [press]);
+
+  const markHeadCaptureStopped = useCallback(() => {
+    captureAttemptRef.current += 1;
+    setHeadCapturing(false);
+    release();
+  }, [release]);
+
+  const showHeadCaptureError = useCallback((message: string) => {
+    setHeadCapturing(false);
+    setHeadNotice(message);
+  }, []);
+
+  // Drive head+voice capture from the global hotkeys (#95): head tracker first,
+  // mic second. Command+Option+? holds; Control+Shift+Space toggles.
+  useCaptureHotkey(
+    tauri
+      ? {
+          listen: captureHotkeyListen,
+          invoke: captureHotkeyInvoke,
+          headPointer,
+          onStart: markHeadCaptureStarted,
+          onStop: markHeadCaptureStopped,
+          onStartError: showHeadCaptureError,
+        }
+      : undefined,
+  );
+
+  const startCapture = useCallback(() => {
+    const attempt = captureAttemptRef.current + 1;
+    captureAttemptRef.current = attempt;
+    if (!tauri) {
+      markHeadCaptureStarted();
+      return;
+    }
+    setHeadNotice("Checking camera, microphone, and speech permissions…");
+    // request_media_permissions triggers the OS prompts and returns the resulting
+    // states. Only start once all three are granted; otherwise tell the user what
+    // is still missing and do NOT start a partial capture.
+    void invoke<{ speech: string; microphone: string; camera: string }>("request_media_permissions")
+      .then(async (perms) => {
+        if (attempt !== captureAttemptRef.current) return;
+        const missing = (
+          [
+            ["Camera", perms.camera],
+            ["Microphone", perms.microphone],
+            ["Speech Recognition", perms.speech],
+          ] as const
+        )
+          .filter(([, state]) => state !== "granted")
+          .map(([name]) => name);
+        if (missing.length > 0) {
+          setHeadNotice(
+            `Grant ${missing.join(", ")} in System Settings → Privacy & Security, then try again.`,
+          );
+          return;
+        }
+        try {
+          await invoke("head_track_start", headPointer ? { headPointer } : undefined);
+          if (attempt !== captureAttemptRef.current) {
+            void invoke("head_track_stop");
+            return;
+          }
+          markHeadCaptureStarted();
+        } catch (error) {
+          if (attempt !== captureAttemptRef.current) return;
+          showHeadCaptureError(nativeErrorMessage(error, "Could not start head tracking"));
+        }
+      })
+      .catch((error) => {
+        if (attempt !== captureAttemptRef.current) return;
+        showHeadCaptureError(nativeErrorMessage(error, "Could not request capture permissions"));
+      });
+  }, [headPointer, markHeadCaptureStarted, showHeadCaptureError, tauri]);
+
+  const stopCapture = useCallback(() => {
+    captureAttemptRef.current += 1;
+    setHeadNotice(null);
+    if (!headCapturing) return;
+    setHeadCapturing(false);
+    release();
+    if (tauri) void invoke("head_track_stop");
+  }, [headCapturing, release, tauri]);
+
+  const cancelCapture = useCallback(() => {
+    captureAttemptRef.current += 1;
+    setHeadNotice(null);
+    if (!headCapturing) return;
+    setHeadCapturing(false);
+    cancel();
+    if (tauri) void invoke("head_track_stop");
+  }, [cancel, headCapturing, tauri]);
+
+  const recenterCapture = () => {
+    if (!headCapturing || !tauri) return;
+    void invoke("head_track_recenter");
+  };
+
+  const startActivation = useCallback(() => {
+    if (capturing) {
+      activationStartedAt.current = null;
+      release();
+      return;
+    }
+    activationStartedAt.current = Date.now();
+    press();
+  }, [capturing, press, release]);
+
+  const endActivation = useCallback(() => {
+    const startedAt = activationStartedAt.current;
+    activationStartedAt.current = null;
+    if (startedAt !== null && Date.now() - startedAt >= ACTIVATION_HOLD_MS) release();
+  }, [release]);
+
+  const cancelActivation = useCallback(() => {
+    activationStartedAt.current = null;
+    cancel();
+  }, [cancel]);
 
   return (
     <section className="panel transcript">
@@ -82,21 +252,50 @@ function LiveTranscriptPanel({
           className="transcript__talk"
           type="button"
           aria-pressed={capturing}
-          onPointerDown={press}
-          onPointerUp={release}
+          onPointerDown={startActivation}
+          onPointerUp={endActivation}
           // Sliding the pointer off a held button aborts before finalizing.
-          onPointerLeave={capturing ? cancel : undefined}
-          onPointerCancel={cancel}
+          onPointerLeave={
+            capturing && activationStartedAt.current !== null ? cancelActivation : undefined
+          }
+          onPointerCancel={cancelActivation}
           onKeyDown={(event) => {
-            if (capturing && event.key === "Escape") cancel();
+            if (capturing && event.key === "Escape") cancelActivation();
           }}
         >
           {capturing ? "Release to send" : "Hold to talk"}
         </button>
       </div>
 
+      {/* Test the full capture path (head tracking + mic) without the hotkey (#95). */}
+      {tauri && (
+        <>
+          <button
+            className="transcript__capture-test"
+            type="button"
+            aria-pressed={headCapturing}
+            onPointerDown={startCapture}
+            onPointerUp={stopCapture}
+            onPointerLeave={cancelCapture}
+            onPointerCancel={cancelCapture}
+          >
+            {headCapturing ? "Release (head + voice)" : "Hold to capture (head + voice)"}
+          </button>
+          {headCapturing && (
+            <button className="transcript__capture-test" type="button" onClick={recenterCapture}>
+              Recenter
+            </button>
+          )}
+          {headNotice && <p className="transcript__notice">{headNotice}</p>}
+        </>
+      )}
+
       {capturing ? (
-        <button className="transcript__cancel" type="button" onClick={cancel}>
+        <button
+          className="transcript__cancel"
+          type="button"
+          onClick={headCapturing ? cancelCapture : cancelActivation}
+        >
           Cancel
         </button>
       ) : null}
@@ -106,7 +305,6 @@ function LiveTranscriptPanel({
           {errorMessage(error)}
         </div>
       ) : null}
-
       <p className="transcript__partial" aria-live="polite" data-testid="transcript-partial">
         {partial}
       </p>
@@ -123,4 +321,8 @@ function LiveTranscriptPanel({
       </ul>
     </section>
   );
+}
+
+function hasTauriBackend(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }

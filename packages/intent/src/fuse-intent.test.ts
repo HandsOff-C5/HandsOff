@@ -120,4 +120,24 @@ describe("intent fusion", () => {
     expect(intent.clarification?.reason).toBe("ambiguous");
     expect(intent.clarification?.options).toHaveLength(2);
   });
+
+  it("turns open-app-and-type commands into launch plus type steps without pointing candidates", () => {
+    const intent = fuseIntent(
+      input("Open TextEdit and type hello goodbye", {
+        pointingEvidence: [{ source: "head", confidence: 0, strategy: "head-neighborhood-empty" }],
+        surfaceCandidates: [],
+      }),
+      { createdAt: "2026-06-22T12:00:00.000Z" },
+    );
+
+    expect(intent).toMatchObject({
+      status: "ready",
+      action_plan: {
+        action_plan: [
+          { kind: "launch_app", appName: "TextEdit" },
+          { kind: "type_text", text: "hello goodbye", target: { surface: { app: "TextEdit" } } },
+        ],
+      },
+    });
+  });
 });

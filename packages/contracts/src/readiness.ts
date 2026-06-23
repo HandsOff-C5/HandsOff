@@ -10,7 +10,7 @@ import { z } from "zod";
 //
 // The capability set mirrors epic #5: camera, microphone, speech recognition
 // (the on-device STT permission, #31), the computer-use agent (CUA) daemon, and
-// the two macOS TCC permissions (Accessibility and Screen Recording).
+// macOS TCC permissions for Accessibility and Screen Recording.
 
 export const CAPABILITY_IDS = [
   "camera",

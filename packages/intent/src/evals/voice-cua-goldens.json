@@ -9,7 +9,8 @@
       "requires_approval": true,
       "target_agent": "cua-driver",
       "referentId": "surface-1",
-      "actionKinds": ["click_element"]
+      "actionKinds": ["click_element"],
+      "actionTexts": []
     }
   },
   {
@@ -22,7 +23,8 @@
       "requires_approval": true,
       "target_agent": "cua-driver",
       "referentId": "surface-1",
-      "actionKinds": ["type_text"]
+      "actionKinds": ["type_text"],
+      "actionTexts": ["hello"]
     }
   },
   {
@@ -35,7 +37,8 @@
       "requires_approval": false,
       "target_agent": "cua-driver",
       "referentId": "surface-1",
-      "actionKinds": ["inspect_window_state"]
+      "actionKinds": ["inspect_window_state"],
+      "actionTexts": []
     }
   },
   {
@@ -46,7 +49,8 @@
       "requires_approval": false,
       "target_agent": "none",
       "reason": "Unsupported voice command",
-      "actionKinds": []
+      "actionKinds": [],
+      "actionTexts": []
     }
   },
   {
@@ -58,7 +62,8 @@
       "requires_approval": false,
       "target_agent": "none",
       "reason": "No accessible target was found",
-      "actionKinds": []
+      "actionKinds": [],
+      "actionTexts": []
     }
   },
   {
@@ -69,7 +74,8 @@
       "requires_approval": false,
       "target_agent": "none",
       "reason": "Unsupported voice command",
-      "actionKinds": []
+      "actionKinds": [],
+      "actionTexts": []
     }
   }
 ]

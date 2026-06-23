@@ -53,4 +53,16 @@ describe("action plan contract", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("accepts app-launch steps without a target surface", () => {
+    const result = safeParseActionPlan(
+      plan({
+        action_plan: [
+          { id: "step-1", kind: "launch_app", label: "Open TextEdit", appName: "TextEdit" },
+        ],
+      }),
+    );
+
+    expect(result.success).toBe(true);
+  });
 });
