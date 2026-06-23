@@ -1,5 +1,6 @@
 // Command modules wired into the Tauri builder.
 pub mod cua;
+pub mod gesture_overlay;
 pub mod head_track;
 pub mod hotkey;
 pub mod intent;

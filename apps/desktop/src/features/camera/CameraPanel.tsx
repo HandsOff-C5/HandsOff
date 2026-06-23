@@ -9,51 +9,62 @@ import {
   createHandLandmarker,
   createLandmarkProcessor,
   createReferentLoop,
+  multiMonitorTargets,
   pointingSignalFromFrame,
+  predictMultiMonitor,
   type AffineTransform,
+  type CalibrationTarget,
   type HandLandmarkerHandle,
+  type MultiMonitorCalibration,
   type Point,
   type ReferentLoop,
 } from "@handsoff/gesture";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { toGestureEvidence } from "../fusion/gestureEvidence";
+import {
+  displaySurfaceSnapshot,
+  toArbitrationDisplays,
+  toDisplaySurfaces,
+} from "./display-surfaces";
 import { CalibrationOverlay } from "./CalibrationOverlay";
-import { DEMO_SCREEN_BOUNDS, demoSurfaceSnapshot, demoSurfaces } from "./demo-surfaces";
 import { LandmarkOverlay } from "./LandmarkOverlay";
-import { PointerCursor } from "./PointerCursor";
+import { useGestureOverlay, type DisplayInfo, type GestureOverlay } from "./useGestureOverlay";
 
-// #25/#24 camera shell — owns the webcam + the rAF detection loop, runs the live
-// perception→referent loop, and renders the debug overlay + a camera picker, mirror
-// toggle, 9-point calibration, and frame dump. Factories are injectable so the panel is
-// testable without a real camera; the live aim/lock path is Demo Verified, not unit tested.
+// Hand-gesture camera shell. Owns the webcam + the rAF detection loop and runs the live
+// perception→referent loop. The visible cursor is NO LONGER drawn inside the camera panel —
+// it is a separate pointer rendered over the real desktop by the gesture-overlay sidecar,
+// one transparent window per display, so it can travel across ALL connected monitors and
+// calibrate against each of them (ported from the funstuff gesture architecture). Factories
+// are injectable so the panel is testable without a real camera; the live aim/lock path is
+// Demo Verified, not unit tested.
 
 interface CameraPanelProps {
   getStream?: (deviceId?: string) => Promise<MediaStream>;
   createDetector?: () => Promise<HandLandmarkerHandle>;
   listDevices?: () => Promise<MediaDeviceInfo[]>;
-  // Live gesture referent out (#35): the locked point as intent PointingEvidence,
-  // or null when nothing is locked. The dashboard feeds this into fuseIntent.
+  // Overlay sidecar handle. Injected for tests (jsdom has no Tauri `invoke`); defaults to the
+  // real `useGestureOverlay` handle in production.
+  overlay?: GestureOverlay;
+  // Live gesture referent out: the locked point as intent PointingEvidence, or null when
+  // nothing is locked. The dashboard feeds this into fuseIntent.
   onGestureEvidence?: (evidence: PointingEvidence | null) => void;
 }
 
 type Status = "idle" | "starting" | "live" | "error";
 type Mode = "live" | "calibrating";
-type Quality = "good" | "fair" | "poor";
 
 const IDENTITY: AffineTransform = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0 };
 const DWELL = { enter: 0.6, exit: 0.4, dwellMs: 600, cooldownMs: 800 };
-// Pointing signal = the index FINGERTIP (extend 0). An earlier "aim ahead" projection
-// (extend 1.5 along wrist→tip) threw the visible cursor off the fingertip — and across the
-// frame when pointing sideways — so the dot is the fingertip itself. The live loop and the
-// calibration capture MUST use the same signal or the fitted mapping is meaningless.
+// Pointing signal = the index FINGERTIP (extend 0). The live loop and the calibration capture
+// MUST use the same signal or the fitted mapping is meaningless.
 const POINTING = { anchor: "wrist", extend: 0 } as const;
 const FRAME_BUFFER = 150;
-// v2: invalidates calibrations fit against the old extend:1.5 pointing signal.
-const CALIB_KEY = "handsoff.calibration.v2";
-// Coordinate space of the smoothed pointer before calibration (identity transform → the
-// raw [0,1] pointing signal); after calibration it's DEMO_SCREEN_BOUNDS.
-const UNIT_BOUNDS = { x: 0, y: 0, w: 1, h: 1 };
+// v3: multi-monitor per-display affine fit (replaces the single-affine v2 calibration).
+const CALIB_KEY = "handsoff.calibration.v3";
+// Calibration grid inset per display — matches the funstuff margin so targets sit comfortably
+// inside each screen rather than at the extreme edges.
+const CALIB_MARGIN = 0.12;
 
 const defaultGetStream = (deviceId?: string) =>
   navigator.mediaDevices.getUserMedia({
@@ -70,10 +81,17 @@ interface Resources {
   cancelled: boolean;
 }
 
+const isMultiCal = (value: unknown): value is MultiMonitorCalibration => {
+  if (!value || typeof value !== "object") return false;
+  const byDisplay = (value as MultiMonitorCalibration).byDisplay;
+  return !!byDisplay && typeof byDisplay === "object";
+};
+
 export function CameraPanel({
   getStream = defaultGetStream,
   createDetector = createHandLandmarker,
   listDevices = defaultListDevices,
+  overlay: injectedOverlay,
   onGestureEvidence,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -85,41 +103,49 @@ export function CameraPanel({
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
   const [mirrored, setMirrored] = useState(true);
-  const [calibration, setCalibration] = useState<Quality | null>(null);
+  const [displays, setDisplays] = useState<DisplayInfo[]>([]);
+  const [multiCal, setMultiCal] = useState<MultiMonitorCalibration | null>(null);
   const [candidate, setCandidate] = useState<PointingCandidate | null>(null);
   const [referent, setReferent] = useState<LockedReferent | null>(null);
   const [phase, setPhase] = useState<GestureState>("idle");
   const [active, setActive] = useState(false);
-  const [pointer, setPointer] = useState<Point | null>(null);
-  const [confidence, setConfidence] = useState(0);
 
   const resources = useRef<Resources>({ raf: 0, handle: null, stream: null, cancelled: false });
   // Live pointing signal this frame — read by the calibration overlay's Capture.
   const latestRaw = useRef<Point | null>(null);
   // Rolling buffer of parsed frames for the dump-to-fixture button.
   const frameBuffer = useRef<LandmarkFrame[]>([]);
-  // Current calibration, so the loop can be rebuilt (unlock / restore) without re-fitting.
-  const calib = useRef<{ transform: AffineTransform; quality: Quality }>({
-    transform: IDENTITY,
-    quality: "poor",
-  });
-  // The stateful referent loop; rebuilt when calibration changes or on unlock.
+  // The stateful referent loop; rebuilt when displays or the calibration change.
   const referentLoop = useRef<ReferentLoop>(
     createReferentLoop({
       transform: IDENTITY,
-      surfaces: demoSurfaces,
+      surfaces: [],
       calibrationQuality: "poor",
       dwell: DWELL,
       pointing: POINTING,
     }),
   );
 
-  const rebuildLoop = useCallback((transform: AffineTransform, quality: Quality) => {
-    calib.current = { transform, quality };
+  // Refs mirror the state the per-frame loop reads, so the rAF closure always sees the latest
+  // calibration + overlay handle without being rebuilt.
+  const multiCalRef = useRef<MultiMonitorCalibration | null>(null);
+  useEffect(() => {
+    multiCalRef.current = multiCal;
+  }, [multiCal]);
+  const overlay = injectedOverlay ?? useGestureOverlay();
+  const overlayRef = useRef(overlay);
+  overlayRef.current = overlay;
+
+  // Rebuild the referent loop around the current displays + calibration. The multi-monitor
+  // fit is read live via `predictMultiMonitor`, so the cursor + candidate hit-test share one
+  // per-display model; surfaces are the connected displays until area:desktop supplies real
+  // app/window targets.
+  const rebuildLoop = useCallback(() => {
     referentLoop.current = createReferentLoop({
-      transform,
-      surfaces: demoSurfaces,
-      calibrationQuality: quality,
+      transform: IDENTITY,
+      applyCalibration: (raw) => predictMultiMonitor(multiCalRef.current, raw),
+      surfaces: toDisplaySurfaces(displays),
+      calibrationQuality: multiCalRef.current?.quality ?? "poor",
       dwell: DWELL,
       pointing: POINTING,
     });
@@ -127,25 +153,14 @@ export function CameraPanel({
     setCandidate(null);
     setPhase("idle");
     setActive(false);
-    setPointer(null);
-    setConfidence(0);
-  }, []);
+  }, [displays]);
 
-  // Restore a saved calibration so pointing works immediately after a restart.
+  // Rebuild whenever the displays or the calibration change (surfaces + quality depend on
+  // them), and hide the overlay cursor whenever there is no active calibration.
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(CALIB_KEY);
-      if (!saved) return;
-      const { transform, quality } = JSON.parse(saved) as {
-        transform: AffineTransform;
-        quality: Quality;
-      };
-      rebuildLoop(transform, quality);
-      setCalibration(quality);
-    } catch {
-      // Corrupt/absent storage — fall back to uncalibrated.
-    }
-  }, [rebuildLoop]);
+    rebuildLoop();
+    if (!multiCal) overlayRef.current.clear("main");
+  }, [rebuildLoop, multiCal]);
 
   const stop = useCallback(() => {
     const r = resources.current;
@@ -156,6 +171,8 @@ export function CameraPanel({
     r.raf = 0;
     r.handle = null;
     r.stream = null;
+    overlayRef.current.clear("main");
+    void overlayRef.current.stop();
   }, []);
 
   const start = useCallback(
@@ -190,6 +207,18 @@ export function CameraPanel({
           // Non-fatal: the picker is just unavailable.
         }
 
+        // Bring up the desktop overlay (one window per display) and adopt its CoreGraphics
+        // layout so calibration targets and the drawn cursor share one coordinate space.
+        try {
+          const infos = await overlayRef.current.start();
+          setDisplays(infos);
+          restoreCalibration(infos);
+        } catch (overlayError) {
+          // The camera still works without the overlay; the cursor just won't appear on the
+          // desktop. Surface this quietly rather than failing the whole camera start.
+          console.warn("[handsoff gesture-overlay] start failed", overlayError);
+        }
+
         const processor = createLandmarkProcessor({
           detector: handle.detector,
           onResult: ({ frame: f, fps: f2 }) => {
@@ -205,9 +234,12 @@ export function CameraPanel({
             setCandidate(out.candidate);
             setActive(out.active);
             setPhase(out.state.phase);
-            setPointer(f.hands.length ? out.point : null);
-            setConfidence(out.confidence);
             if (out.emit && "targetId" in out.emit) setReferent(out.emit);
+            // Drive the separate desktop cursor only while calibrated; hide it when no hand.
+            if (multiCalRef.current) {
+              if (f.hands.length) overlayRef.current.move("main", out.point[0], out.point[1]);
+              else overlayRef.current.clear("main");
+            }
           },
           onError: (e) => setError(e instanceof Error ? e.message : String(e)),
         });
@@ -229,13 +261,32 @@ export function CameraPanel({
     [getStream, createDetector, listDevices],
   );
 
+  // Restore a saved multi-monitor calibration, but ONLY for displays still attached — a
+  // CGDirectDisplayID can change across reboot/reconnect, so a stale id would route the cursor
+  // to the wrong per-display affine.
+  const restoreCalibration = (infos: DisplayInfo[]) => {
+    try {
+      const saved = localStorage.getItem(CALIB_KEY);
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as unknown;
+      if (!isMultiCal(parsed)) return;
+      const ids = Object.keys(parsed.byDisplay);
+      if (ids.length === 0) return;
+      if (ids.every((id) => infos.some((d) => d.id === id))) {
+        setMultiCal(parsed);
+      }
+    } catch {
+      // Corrupt/absent storage — fall back to uncalibrated.
+    }
+  };
+
   const switchDevice = (id: string) => {
     setDeviceId(id);
     stop();
     void start(id);
   };
 
-  const unlock = () => rebuildLoop(calib.current.transform, calib.current.quality);
+  const unlock = () => rebuildLoop();
 
   const dumpFrames = () => {
     const json = JSON.stringify(frameBuffer.current, null, 2);
@@ -248,19 +299,41 @@ export function CameraPanel({
     URL.revokeObjectURL(url);
   };
 
-  // Publish the locked gesture referent as intent evidence (#35). Emits when a
-  // candidate is locked, and clears (null) the moment it unlocks, so the intent
-  // engine only sees a gesture referent while the user is actively pointing.
+  const calibrationTargets: CalibrationTarget[] =
+    displays.length > 0
+      ? multiMonitorTargets(toArbitrationDisplays(displays), {
+          cols: 3,
+          rows: 3,
+          margin: CALIB_MARGIN,
+        })
+      : [];
+
+  const completeCalibration = (result: MultiMonitorCalibration) => {
+    setMultiCal(result);
+    overlayRef.current.untarget();
+    setMode("live");
+    try {
+      localStorage.setItem(CALIB_KEY, JSON.stringify(result));
+    } catch {
+      // Persistence is best-effort.
+    }
+  };
+
+  // Publish the locked gesture referent as intent evidence. Emits when a candidate is locked,
+  // and clears (null) the moment it unlocks, so the intent engine only sees a gesture referent
+  // while the user is actively pointing at a display.
   useEffect(() => {
     if (!onGestureEvidence) return;
     if (phase === "locked" && referent && candidate) {
-      onGestureEvidence(toGestureEvidence(candidate, demoSurfaceSnapshot(candidate.targetId)));
+      onGestureEvidence(
+        toGestureEvidence(candidate, displaySurfaceSnapshot(candidate.targetId, displays)),
+      );
     } else {
       onGestureEvidence(null);
     }
-  }, [phase, referent, candidate, onGestureEvidence]);
+  }, [phase, referent, candidate, displays, onGestureEvidence]);
 
-  // Tear down the camera + detector on unmount.
+  // Tear down the camera + detector + overlay on unmount.
   useEffect(() => stop, [stop]);
 
   const canStart = status === "idle" || status === "error";
@@ -276,7 +349,7 @@ export function CameraPanel({
         {status === "live" && (
           <span>
             Live
-            {calibration ? ` · calibrated (${calibration})` : " · uncalibrated — press Calibrate"}
+            {multiCal ? ` · calibrated (${multiCal.quality})` : " · uncalibrated — press Calibrate"}
           </span>
         )}
         {status === "error" && <span className="camera-panel__error">Camera error: {error}</span>}
@@ -313,7 +386,11 @@ export function CameraPanel({
             />
             Mirror
           </label>
-          <button type="button" onClick={() => setMode("calibrating")}>
+          <button
+            type="button"
+            disabled={displays.length === 0}
+            onClick={() => setMode("calibrating")}
+          >
             Calibrate
           </button>
           <button type="button" onClick={dumpFrames}>
@@ -331,19 +408,6 @@ export function CameraPanel({
           aria-label="webcam"
         />
         <LandmarkOverlay frame={frame} fps={fps} mirrored={mirrored} />
-        {mode === "live" && (
-          <PointerCursor
-            point={pointer}
-            bounds={calibration ? DEMO_SCREEN_BOUNDS : UNIT_BOUNDS}
-            // Flip ONLY the raw uncalibrated signal (it's in raw-image space, so it must be
-            // mirrored to line up with the selfie-view video). A calibrated point is already
-            // in on-screen stage space — the user aimed at un-flipped targets through the
-            // mirrored video, so the mirror is baked into the fit; flipping again double-
-            // mirrors it (correct at center, opposite at the edges).
-            mirrored={calibration ? false : mirrored}
-            confidence={confidence}
-          />
-        )}
 
         {mode === "live" && locked && (
           <div className="camera-panel__candidate camera-panel__candidate--locked">
@@ -363,19 +427,16 @@ export function CameraPanel({
 
         {isLive && mode === "calibrating" && (
           <CalibrationOverlay
-            bounds={DEMO_SCREEN_BOUNDS}
+            targets={calibrationTargets}
             sampleRaw={() => latestRaw.current}
-            onComplete={(result) => {
-              rebuildLoop(result.transform, result.quality);
-              setCalibration(result.quality);
-              try {
-                localStorage.setItem(
-                  CALIB_KEY,
-                  JSON.stringify({ transform: result.transform, quality: result.quality }),
-                );
-              } catch {
-                // Persistence is best-effort.
-              }
+            onShowTarget={(target) =>
+              target
+                ? overlayRef.current.target(target.target[0], target.target[1])
+                : overlayRef.current.untarget()
+            }
+            onComplete={completeCalibration}
+            onCancel={() => {
+              overlayRef.current.untarget();
               setMode("live");
             }}
           />
