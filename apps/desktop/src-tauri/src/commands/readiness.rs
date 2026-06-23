@@ -172,6 +172,11 @@ fn microphone_state() -> &'static str {
 }
 
 #[cfg(not(target_os = "macos"))]
+fn camera_state() -> &'static str {
+    "unknown"
+}
+
+#[cfg(not(target_os = "macos"))]
 fn screen_recording_state() -> &'static str {
     "unknown"
 }

@@ -124,12 +124,14 @@ pub fn stt_mint_token(expires_in_seconds: Option<u32>) -> Result<StreamingToken,
         TOKEN_WORKER_URL_ENV,
         option_env!("HANDSOFF_STT_TOKEN_WORKER_URL"),
     )
-    .ok_or_else(|| format!("missing-configuration: set {TOKEN_WORKER_URL_ENV} to enable live STT"))?;
-    let app_token =
-        super::deployment_config(APP_AUTH_TOKEN_ENV, option_env!("HANDSOFF_STT_APP_AUTH_TOKEN"))
-            .ok_or_else(|| {
-                format!("missing-credentials: set {APP_AUTH_TOKEN_ENV} to enable live STT")
-            })?;
+    .ok_or_else(|| {
+        format!("missing-configuration: set {TOKEN_WORKER_URL_ENV} to enable live STT")
+    })?;
+    let app_token = super::deployment_config(
+        APP_AUTH_TOKEN_ENV,
+        option_env!("HANDSOFF_STT_APP_AUTH_TOKEN"),
+    )
+    .ok_or_else(|| format!("missing-credentials: set {APP_AUTH_TOKEN_ENV} to enable live STT"))?;
     mint_token(&worker_url, &app_token, clamp_expires(expires_in_seconds))
 }
 
@@ -211,7 +213,10 @@ mod tests {
 
     #[test]
     fn deployment_config_prefers_runtime_env_over_baked_value() {
-        std::env::set_var(TOKEN_WORKER_URL_ENV, "https://override.handsoff.test/v1/realtime-token");
+        std::env::set_var(
+            TOKEN_WORKER_URL_ENV,
+            "https://override.handsoff.test/v1/realtime-token",
+        );
         let resolved =
             super::super::deployment_config(TOKEN_WORKER_URL_ENV, Some("https://baked.test"));
         std::env::remove_var(TOKEN_WORKER_URL_ENV);

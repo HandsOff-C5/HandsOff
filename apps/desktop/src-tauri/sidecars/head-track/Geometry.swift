@@ -93,4 +93,3 @@ func appKitToGlobalTopLeft(_ point: CGPoint, screens: [CGRect]) -> CGPoint {
         screens.first(where: { $0.origin == .zero })?.height ?? screens.first?.height ?? 0
     return CGPoint(x: point.x, y: primaryHeight - point.y)
 }
-

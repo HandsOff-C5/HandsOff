@@ -1,5 +1,10 @@
 import { createFakeCuaDriver } from "@handsoff/cua";
-import type { IntentInput, ResolvedIntent, SurfaceSnapshot } from "@handsoff/contracts";
+import type {
+  IntentInput,
+  PointingEvidence,
+  ResolvedIntent,
+  SurfaceSnapshot,
+} from "@handsoff/contracts";
 import { fakeCuaWindowState } from "@handsoff/testkit";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -35,6 +40,17 @@ const finalTranscript = {
   confidence: 0.95,
   latencyMs: 100,
   receivedAt: 1,
+};
+
+const gestureEvidence: PointingEvidence = {
+  source: "gesture",
+  confidence: 0.9,
+  strategy: "wrist-ray-calibrated:good",
+  surface: surface({
+    id: "gesture-target",
+    title: "Pointed window",
+    app: "Demo",
+  }),
 };
 
 function ready(input: IntentInput): ResolvedIntent {
@@ -200,6 +216,64 @@ describe("useVoiceCuaController", () => {
       },
     ]);
     expect(input.surfaceCandidates).toEqual([surface()]);
+  });
+
+  it("binds locked gesture evidence before head candidates", async () => {
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        getGestureEvidence: () => gestureEvidence,
+        headPointing: headPointing(),
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+
+    await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
+    expect(resolveIntent.mock.calls[0]![0]).toMatchObject({
+      pointingEvidence: [gestureEvidence],
+      surfaceCandidates: [gestureEvidence.surface],
+    });
+    expect(result.current.intent).toMatchObject({
+      status: "ready",
+      referent: { id: "gesture-target" },
+    });
+    expect(driver.calls().some((call) => call.kind === "get_window_state")).toBe(false);
+  });
+
+  it("falls back to the active-window cursor path when no gesture or head snapshot is available", async () => {
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        getGestureEvidence: () => null,
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+
+    await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
+    expect(resolveIntent.mock.calls[0]![0]).toMatchObject({
+      pointingEvidence: [
+        {
+          source: "cursor",
+          confidence: 1,
+          strategy: "active-window-current-cursor",
+          surface: surface(),
+        },
+      ],
+      surfaceCandidates: [surface()],
+    });
+    expect(driver.calls().some((call) => call.kind === "get_window_state")).toBe(true);
   });
 
   it("does not execute a plan when no candidates produce clarification", async () => {

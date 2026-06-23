@@ -549,4 +549,3 @@ struct HeadTrackingModel {
         return motion.step(signal: signal, timestamp: timestamp, screens: screens)
     }
 }
-

@@ -1,0 +1,41 @@
+[
+  {
+    "name": "point inside the only surface → that surface, full confidence",
+    "screenXY": [960, 540],
+    "calibrationQuality": "good",
+    "surfaces": [
+      {
+        "id": "win-editor",
+        "bounds": { "x": 0, "y": 0, "w": 1920, "h": 1080 },
+        "displayId": "display-0",
+        "title": "Editor"
+      }
+    ],
+    "expected": { "targetId": "win-editor", "confidence": 1, "calibrationQuality": "good" }
+  },
+  {
+    "name": "point on the secondary monitor (global px, x past primary) resolves there",
+    "screenXY": [2880, 540],
+    "calibrationQuality": "fair",
+    "surfaces": [
+      {
+        "id": "win-editor",
+        "bounds": { "x": 0, "y": 0, "w": 1920, "h": 1080 },
+        "displayId": "display-0"
+      },
+      {
+        "id": "win-browser",
+        "bounds": { "x": 1920, "y": 0, "w": 1920, "h": 1080 },
+        "displayId": "display-1"
+      }
+    ],
+    "expected": { "targetId": "win-browser", "confidence": 1, "calibrationQuality": "fair" }
+  },
+  {
+    "name": "no surfaces → no candidate",
+    "screenXY": [100, 100],
+    "calibrationQuality": "poor",
+    "surfaces": [],
+    "expected": null
+  }
+]

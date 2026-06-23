@@ -1,9 +1,20 @@
-import { APP_NAME, type SttProvider, type SttStream } from "@handsoff/contracts";
+import {
+  APP_NAME,
+  type CapabilityId,
+  type PointingEvidence,
+  type SttProvider,
+  type SttStream,
+} from "@handsoff/contracts";
 import { createTauriCuaDriver, createUnavailableCuaDriver, type CuaDriver } from "@handsoff/cua";
+import { planPermissionOnboarding } from "@handsoff/desktop";
 import { createAssemblyAiStream, createOnDeviceSttStream } from "@handsoff/speech";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useRef, useState } from "react";
 
+import { CameraPanel } from "../../features/camera/CameraPanel";
+import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
+import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnboarding";
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
 import { ReadinessPanel } from "../../features/readiness/ReadinessPanel";
@@ -94,6 +105,10 @@ export function Dashboard({
     (hasTauriBackend()
       ? createTauriCuaDriver((command, args) => invoke(command, args))
       : createUnavailableCuaDriver());
+  // Latest locked gesture referent (#35). The CameraPanel writes it on lock/unlock;
+  // the controller reads it at intent time so "point + speak" binds to the pointed
+  // surface. A ref (not state) avoids re-rendering the dashboard on every lock.
+  const gestureEvidence = useRef<PointingEvidence | null>(null);
   const intentResolver =
     resolveIntent ??
     (hasTauriBackend()
@@ -108,15 +123,86 @@ export function Dashboard({
       now,
       resolveIntent: intentResolver,
       targetResolveDelayMs,
+      getGestureEvidence: () => gestureEvidence.current,
     });
+  // The structured clarification prompt (#36) when the engine won't act blind.
+  // Display-first; interactive pick→re-resolve needs a controller round-trip (follow-up).
+  const clarification =
+    intent?.status === "clarification_required" ? (intent.clarification ?? null) : null;
+
+  // First-run permission onboarding (#18/#56). Show one guided flow on launch
+  // until every permission HandsOff needs is granted (or the user skips it),
+  // so nobody has to hunt for a per-permission button. Only in the real app.
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const onboardingPlan = planPermissionOnboarding(report);
+  const showOnboarding =
+    hasTauriBackend() && onboardingPlan.needsOnboarding && !onboardingDismissed;
+  // Fire the OS camera prompt by briefly opening a video stream, then release it.
+  const requestCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach((track) => track.stop());
+    } catch {
+      // User denied or no device — the re-check reflects the resulting state.
+    }
+  };
+  const requestMedia = async () => {
+    try {
+      await invoke("request_media_permissions");
+    } catch {
+      // Backend unavailable — re-check keeps the last good state.
+    }
+  };
+  const requestScreenRecording = async () => {
+    try {
+      // Prompts AND registers HandsOff in the Screen Recording list so it's
+      // toggleable (granting screen recording usually needs an app relaunch).
+      await invoke("request_screen_recording");
+    } catch {
+      // Backend unavailable — re-check keeps the last good state.
+    }
+  };
+  const openPrivacySettings = (pane: CapabilityId) =>
+    void invoke("open_privacy_settings", { pane });
+  const relaunchApp = () => void invoke("restart_app");
+
+  // Toggle the full-screen pointing overlay over the real desktop (#25).
+  const [overlayShown, setOverlayShown] = useState(false);
+  const toggleOverlay = () => {
+    void invoke(overlayShown ? "hide_overlay" : "show_overlay");
+    setOverlayShown((shown) => !shown);
+  };
 
   return (
     <main className="dashboard">
+      {showOnboarding && (
+        <PermissionsOnboarding
+          report={report}
+          isChecking={isChecking}
+          onRequestCamera={requestCamera}
+          onRequestMedia={requestMedia}
+          onRequestScreenRecording={requestScreenRecording}
+          onRecheck={recheck}
+          onRelaunch={relaunchApp}
+          onOpenSettings={openPrivacySettings}
+          onDismiss={() => setOnboardingDismissed(true)}
+        />
+      )}
       <header className="dashboard__header">
-        <h1 className="dashboard__brand">{APP_NAME}</h1>
-        <p className="dashboard__tagline">Point. Speak. Supervise your agents.</p>
+        <div>
+          <h1 className="dashboard__brand">{APP_NAME}</h1>
+          <p className="dashboard__tagline">Point. Speak. Supervise your agents.</p>
+        </div>
+        <button type="button" className="dashboard__overlay-toggle" onClick={toggleOverlay}>
+          {overlayShown ? "Hide screen overlay" : "Show on screen"}
+        </button>
       </header>
       <div className="dashboard__panels">
+        <CameraPanel
+          onGestureEvidence={(evidence) => {
+            gestureEvidence.current = evidence;
+          }}
+        />
         <ReadinessPanel report={report} />
         <PermissionsPanel
           report={report}
@@ -141,6 +227,7 @@ export function Dashboard({
           onFinalTranscript={handleFinalTranscript}
         />
         <SessionsPanel session={session} auditEvents={auditEvents} />
+        <ClarificationPanel request={clarification} />
         <PlanPreviewPanel
           intent={intent}
           runResult={runResult}

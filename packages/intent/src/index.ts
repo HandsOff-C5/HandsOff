@@ -1,3 +1,4 @@
+export * from "./clarification/decide";
 export * from "./attention/candidates";
 export * from "./fuse-intent";
 export * from "./resolve-intent";

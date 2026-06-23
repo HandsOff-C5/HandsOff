@@ -1,0 +1,24 @@
+# gitleaks configuration.
+#
+# CI runs `gitleaks dir /repo --redact --no-banner` (.github/workflows/ci.yml,
+# secret-scan job). gitleaks auto-loads this file from the scan-root, so the
+# secret-scan gate uses these rules. We keep the FULL default ruleset and only
+# record reviewed false positives here.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Reviewed false positives — not credentials"
+regexes = [
+  # localStorage namespace for persisted hand-pointing calibration (CameraPanel.tsx).
+  # A UI storage key read via localStorage.getItem(key); the ".v2" format-version
+  # suffix tips the generic-api-key entropy rule. Not a secret.
+  '''handsoff\.calibration''',
+]
+paths = [
+  # Local build artifacts — gitignored (never committed, absent in CI's fresh
+  # checkout), but gitleaks `dir` scans the working tree, so exclude them to keep
+  # local runs clean: `tsc -b` declaration output and the Rust/cargo target dir.
+  '''apps/[^/]+/dist/''',
+  '''apps/[^/]+/src-tauri/target/''',
+]

@@ -33,4 +33,3 @@ func landmarkInput(from observation: VNFaceObservation, id: String) -> LandmarkI
         pitch: observation.pitch?.doubleValue
     )
 }
-

@@ -1,0 +1,16 @@
+[
+  {
+    "timestampMs": 0,
+    "raw": {
+      "landmarks": [],
+      "handednesses": []
+    }
+  },
+  {
+    "timestampMs": 100,
+    "raw": {
+      "landmarks": [],
+      "handednesses": []
+    }
+  }
+]

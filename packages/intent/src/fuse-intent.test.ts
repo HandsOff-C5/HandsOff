@@ -88,6 +88,39 @@ describe("intent fusion", () => {
     });
   });
 
+  it("attaches a structured low_confidence clarification (#36)", () => {
+    const intent = fuseIntent(
+      input("click there", {
+        pointingEvidence: [
+          { source: "cursor", confidence: 0.2, strategy: "active-window-current-cursor" },
+        ],
+      }),
+    );
+
+    expect(intent.status).toBe("clarification_required");
+    if (intent.status !== "clarification_required") throw new Error("expected clarification");
+    expect(intent.clarification?.reason).toBe("low_confidence");
+  });
+
+  it("asks which target when two candidates are too close (#36)", () => {
+    const slack = surface({ id: "win-slack", title: "#general", app: "Slack" });
+    const chrome = surface({ id: "win-chrome", title: "GitHub #88", app: "Chrome" });
+    const intent = fuseIntent(
+      input("click there", {
+        pointingEvidence: [
+          { source: "gesture", confidence: 0.8, strategy: "wrist-ray", surface: slack },
+          { source: "gaze", confidence: 0.75, strategy: "head-pose", surface: chrome },
+        ],
+        surfaceCandidates: [slack, chrome],
+      }),
+    );
+
+    expect(intent.status).toBe("clarification_required");
+    if (intent.status !== "clarification_required") throw new Error("expected clarification");
+    expect(intent.clarification?.reason).toBe("ambiguous");
+    expect(intent.clarification?.options).toHaveLength(2);
+  });
+
   it("turns open-app-and-type commands into launch plus type steps without pointing candidates", () => {
     const intent = fuseIntent(
       input("Open TextEdit and type hello goodbye", {

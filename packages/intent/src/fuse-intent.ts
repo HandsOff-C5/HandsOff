@@ -2,14 +2,30 @@ import type {
   ActionPlan,
   ActionStep,
   ActionTarget,
+  ClarificationReason,
+  ClarificationRequest,
   IntentInput,
   PointingEvidence,
   ResolvedIntent,
   SurfaceSnapshot,
 } from "@handsoff/contracts";
 
+import {
+  decideClarification,
+  DEFAULT_CLARIFICATION_POLICY,
+  type ClarificationCandidate,
+} from "./clarification/decide";
 import { requiresApproval, riskForIntent } from "./risk";
 import { parseVoiceCommand } from "./voice-command-parser";
+
+// Reason → user-facing string. low_confidence keeps the original wording so the
+// existing contract/tests are unchanged; the structured prompt carries the rest
+// for the dashboard (#36).
+const CLARIFICATION_REASON_TEXT: Record<ClarificationReason, string> = {
+  low_confidence: "Pointing confidence is too low",
+  ambiguous: "Multiple targets matched — choose one",
+  no_target: "No attention-region candidates were available",
+};
 
 export type FuseIntentOptions = {
   intentId?: string;
@@ -26,28 +42,28 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
     return blockedIntent("blocked", input, id, createdAt, parsed.reason);
   }
 
-  const evidence = bestEvidence(input.pointingEvidence);
   const voiceTargetSurface = parsed.appName ? surfaceForApp(parsed.appName) : undefined;
-  const surface = voiceTargetSurface ?? evidence?.surface ?? input.surfaceCandidates[0];
+  let surface: SurfaceSnapshot | undefined = voiceTargetSurface;
+  let confidence = voiceTargetSurface ? 1 : 0;
 
-  if (!voiceTargetSurface && input.surfaceCandidates.length === 0) {
-    return blockedIntent(
-      "clarification_required",
-      input,
-      id,
-      createdAt,
-      "No attention-region candidates were available",
-    );
+  if (!voiceTargetSurface) {
+    // The clarification policy (#36) decides whether the referent is bound well
+    // enough to act, or whether to ask. It runs on the calibrated-confidence (#100)
+    // candidates; the 0.5 floor is preserved as its minConfidence.
+    const candidates = clarificationCandidates(input);
+    const decision = decideClarification(candidates, {
+      minConfidence: options.minConfidence ?? 0.5,
+      ambiguityMargin: DEFAULT_CLARIFICATION_POLICY.ambiguityMargin,
+    });
+    if (decision.kind === "clarify") {
+      return clarificationRequired(input, id, createdAt, decision.request);
+    }
+
+    const candidate = candidates.find((c) => c.targetId === decision.targetId);
+    surface = candidate?.surface ?? input.surfaceCandidates[0];
+    confidence = candidate?.confidence ?? 0;
   }
-  if (!voiceTargetSurface && (!evidence || evidence.confidence < (options.minConfidence ?? 0.5))) {
-    return blockedIntent(
-      "clarification_required",
-      input,
-      id,
-      createdAt,
-      "Pointing confidence is too low",
-    );
-  }
+
   if (
     !surface ||
     (!voiceTargetSurface &&
@@ -84,7 +100,7 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
     referent: {
       id: surface.id,
       source: "fusion",
-      confidence: voiceTargetSurface ? 1 : (evidence?.confidence ?? 0),
+      confidence,
     },
     constraints: [],
     risk_level,
@@ -107,6 +123,59 @@ function surfaceForApp(appName: string): SurfaceSnapshot {
 
 function bestEvidence(evidence: readonly PointingEvidence[]): PointingEvidence | undefined {
   return [...evidence].sort((a, b) => b.confidence - a.confidence)[0];
+}
+
+// Map the pointing evidence to clarification candidates: prefer per-surface
+// evidence (the real multi-candidate case that surfaces ambiguity); if no
+// evidence carried a surface, pair the best confidence with the top surface
+// candidate so a single weak bind still reads as low_confidence (not no_target).
+function clarificationCandidates(input: IntentInput): ClarificationCandidate[] {
+  const withSurface = input.pointingEvidence.flatMap((e) =>
+    e.surface
+      ? [
+          {
+            targetId: e.surface.id,
+            label: `${e.surface.app} — ${e.surface.title}`,
+            confidence: e.confidence,
+            surface: e.surface,
+          },
+        ]
+      : [],
+  );
+  if (withSurface.length > 0) return withSurface;
+
+  const best = bestEvidence(input.pointingEvidence);
+  const surface = input.surfaceCandidates[0];
+  if (best && surface) {
+    return [
+      {
+        targetId: surface.id,
+        label: `${surface.app} — ${surface.title}`,
+        confidence: best.confidence,
+        surface,
+      },
+    ];
+  }
+  return [];
+}
+
+function clarificationRequired(
+  input: IntentInput,
+  id: string,
+  createdAt: string,
+  request: ClarificationRequest,
+): ResolvedIntent {
+  return {
+    status: "clarification_required",
+    id,
+    input,
+    constraints: [],
+    requires_approval: false,
+    target_agent: "none",
+    reason: CLARIFICATION_REASON_TEXT[request.reason],
+    clarification: request,
+    createdAt,
+  };
 }
 
 export function blockedIntent(

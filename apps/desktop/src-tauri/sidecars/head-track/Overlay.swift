@@ -49,4 +49,3 @@ final class GoldenCursorOverlay {
         panel.orderOut(nil)
     }
 }
-

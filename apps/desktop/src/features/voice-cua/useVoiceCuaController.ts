@@ -3,8 +3,10 @@ import {
   type CuaActionRequest,
   type FinalTranscript,
   type IntentInput,
+  type PointingEvidence,
   type ResolvedIntent,
   type SupervisionAuditEvent,
+  type SurfaceSnapshot,
 } from "@handsoff/contracts";
 import type { CuaDriver } from "@handsoff/cua";
 import { resolveIntent, type ResolveIntentOptions } from "@handsoff/intent";
@@ -18,6 +20,14 @@ import { useRef, useState } from "react";
 
 import { makeApprovalDecision } from "../plan-preview/usePlanApproval";
 import type { HeadPointingSnapshot } from "../head-pointing/useHeadPointing";
+
+const ACTIVE_WINDOW_SURFACE: SurfaceSnapshot = {
+  id: "active-window",
+  title: "Active window",
+  app: "Current app",
+  availability: "available",
+  accessStatus: "accessible",
+};
 
 // ponytail: fixed retarget grace; make it configurable if manual testing proves one size wrong.
 const DEFAULT_TARGET_RESOLVE_DELAY_MS = 1500;
@@ -76,6 +86,9 @@ export function useVoiceCuaController(args: {
   now?: () => string;
   resolveIntent?: (input: IntentInput, options: ResolveIntentOptions) => Promise<ResolvedIntent>;
   targetResolveDelayMs?: number;
+  // The live gesture referent (#35): when the camera has a locked point at intent
+  // time it returns gesture `PointingEvidence`; null when nothing is locked.
+  getGestureEvidence?: () => PointingEvidence | null;
 }) {
   const [intent, setIntent] = useState<ResolvedIntent | null>(null);
   const [runResult, setRunResult] = useState<PlanRunResult | null>(null);
@@ -89,33 +102,62 @@ export function useVoiceCuaController(args: {
   resolveIntentRef.current = args.resolveIntent ?? resolveIntent;
   const timestamp = () => args.now?.() ?? new Date().toISOString();
 
+  // Cursor fallback: probe the active window via the CUA driver, degrading the
+  // surface to "unknown" availability/access when the probe doesn't succeed.
+  async function resolveActiveWindowSurface(): Promise<SurfaceSnapshot> {
+    const resolved = await args.driver.getWindowState({ surface: ACTIVE_WINDOW_SURFACE });
+    return resolved.status === "succeeded" && resolved.state
+      ? resolved.state.surface
+      : {
+          ...ACTIVE_WINDOW_SURFACE,
+          availability: "unknown" as const,
+          accessStatus: "unknown" as const,
+        };
+  }
+
   async function createIntent(finalTranscript: FinalTranscript) {
     await wait(args.targetResolveDelayMs ?? DEFAULT_TARGET_RESOLVE_DELAY_MS);
     const createdAt = timestamp();
     const started = sessions.current.start(createdAt);
+    const gesture = args.getGestureEvidence?.() ?? null;
     const headPointing = headPointingRef.current;
     const headCandidates = headPointing?.candidates ?? [];
-    const input: IntentInput = {
-      sessionId: started.id,
-      speech: { finalTranscript },
-      pointingEvidence:
-        headCandidates.length > 0
+    const pointingEvidence: PointingEvidence[] = gesture?.surface
+      ? [gesture]
+      : headPointing
+        ? headCandidates.length > 0
           ? headCandidates.map((candidate) => ({
               source: "head" as const,
               confidence: candidate.score,
               strategy: "head-neighborhood",
               surface: candidate.surface,
-              ...(headPointing?.point && { cursor: headPointing.point }),
+              ...(headPointing.point && { cursor: headPointing.point }),
             }))
           : [
               {
                 source: "head",
                 confidence: 0,
                 strategy: "head-neighborhood-empty",
-                ...(headPointing?.point && { cursor: headPointing.point }),
+                ...(headPointing.point && { cursor: headPointing.point }),
               },
-            ],
-      surfaceCandidates: headCandidates.map((candidate) => candidate.surface),
+            ]
+        : [
+            {
+              source: "cursor",
+              confidence: 1,
+              strategy: "active-window-current-cursor",
+              surface: await resolveActiveWindowSurface(),
+            },
+          ];
+    const input: IntentInput = {
+      sessionId: started.id,
+      speech: { finalTranscript },
+      pointingEvidence,
+      surfaceCandidates: gesture?.surface
+        ? [gesture.surface]
+        : headPointing
+          ? headCandidates.map((candidate) => candidate.surface)
+          : pointingEvidence.flatMap((e) => (e.surface ? [e.surface] : [])),
     };
     // Diagnostic: the exact transcript + head evidence handed to the intent engine.
     // `surfaceCandidates: []` here is the "No attention-region candidates" path.

@@ -159,7 +159,11 @@ fn is_rankable(window: &AttentionWindow) -> bool {
 // and whether it survives the rankability + radius gate. Mirrors the exact checks
 // in `rank_attention_candidates` so the head-track log explains why each window
 // was kept or dropped (the empty-candidate symptom is usually every line `drop`).
-pub(super) fn distance_report(point: HeadPoint, windows: &[AttentionWindow], radius: f64) -> Vec<String> {
+pub(super) fn distance_report(
+    point: HeadPoint,
+    windows: &[AttentionWindow],
+    radius: f64,
+) -> Vec<String> {
     windows
         .iter()
         .map(|window| {
