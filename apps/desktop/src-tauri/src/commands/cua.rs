@@ -100,6 +100,18 @@ fn call_action_tool(tool: &str, input: Value) -> Result<(), String> {
     run_cua_action(&["call", tool, &input.to_string()])
 }
 
+fn call_action_tool_json(tool: &str, input: Value) -> Result<Value, String> {
+    run_cua(&["call", tool, &input.to_string()])
+}
+
+fn launch_app_input(app_name: String, bundle_id: Option<String>) -> Value {
+    let mut input = json!({ "name": app_name });
+    if let Some(bundle_id) = bundle_id {
+        input["bundle_id"] = json!(bundle_id);
+    }
+    input
+}
+
 fn map_window(window: DriverWindow, focused: bool) -> CuaWindow {
     CuaWindow {
         id: format!("{}:{}", window.pid, window.window_id),
@@ -200,6 +212,18 @@ pub fn cua_get_window_state(pid: u32, window_id: u32) -> Result<CuaWindowState, 
 }
 
 #[tauri::command]
+pub fn cua_launch_app(
+    app_name: String,
+    bundle_id: Option<String>,
+) -> Result<CuaActionResult, String> {
+    call_action_tool_json("launch_app", launch_app_input(app_name, bundle_id))?;
+    Ok(CuaActionResult {
+        status: "succeeded",
+        summary: "Launched requested app".to_string(),
+    })
+}
+
+#[tauri::command]
 pub fn cua_click(pid: u32, window_id: u32, element_index: u32) -> Result<CuaActionResult, String> {
     call_action_tool(
         "click",
@@ -290,6 +314,21 @@ mod tests {
         assert_eq!(element_count(&json!({ "element_count": 3 })), 3);
         assert!(elements.is_empty());
         assert!(map_elements(&json!({ "element_count": 0 })).is_empty());
+    }
+
+    #[test]
+    fn encodes_launch_app_input_with_optional_bundle_id() {
+        assert_eq!(
+            launch_app_input(
+                "TextEdit".to_string(),
+                Some("com.apple.TextEdit".to_string())
+            ),
+            json!({ "name": "TextEdit", "bundle_id": "com.apple.TextEdit" })
+        );
+        assert_eq!(
+            launch_app_input("TextEdit".to_string(), None),
+            json!({ "name": "TextEdit" })
+        );
     }
 
     #[test]

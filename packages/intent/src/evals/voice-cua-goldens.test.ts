@@ -18,6 +18,7 @@ type EvalRecord = {
   referentId?: string;
   reason?: string;
   actionKinds: readonly string[];
+  actionTexts: readonly string[];
 };
 
 function surface(availability: SurfaceAvailability = "available"): SurfaceSnapshot {
@@ -59,16 +60,17 @@ function input(transcript: string, availability?: SurfaceAvailability): IntentIn
 }
 
 function project(intent: ResolvedIntent): EvalRecord {
+  const steps = "action_plan" in intent ? intent.action_plan.action_plan : [];
   return {
     status: intent.status,
     intent_type: "intent_type" in intent ? intent.intent_type : undefined,
     risk_level: "risk_level" in intent ? intent.risk_level : undefined,
     requires_approval: intent.requires_approval,
     target_agent: intent.target_agent,
-    referentId: "referent" in intent ? intent.referent.id : undefined,
+    referentId: "referent" in intent ? intent.referent?.id : undefined,
     reason: "reason" in intent ? intent.reason : undefined,
-    actionKinds:
-      "action_plan" in intent ? intent.action_plan.action_plan.map((step) => step.kind) : [],
+    actionKinds: steps.map((step) => step.kind),
+    actionTexts: steps.flatMap((step) => (step.kind === "type_text" ? [step.text] : [])),
   };
 }
 

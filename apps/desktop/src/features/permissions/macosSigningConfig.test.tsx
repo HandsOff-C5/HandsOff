@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const MEDIA_ENTITLEMENTS = [
+  "com.apple.security.device.camera",
   "com.apple.security.device.audio-input",
   "com.apple.security.personal-information.speech-recognition",
 ] as const;

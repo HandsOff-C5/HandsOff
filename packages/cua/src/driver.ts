@@ -11,6 +11,7 @@ export type CuaDriver = {
   checkPermissions(): Promise<CuaPermissionReport>;
   listApps(): Promise<readonly CuaApp[]>;
   listWindows(): Promise<readonly CuaWindow[]>;
+  launchApp(app: { appName: string; bundleId?: string }): Promise<CuaActionResult>;
   getWindowState(target: ActionTarget): Promise<CuaActionResult>;
   click(target: ActionTarget): Promise<CuaActionResult>;
   typeText(target: ActionTarget, text: string): Promise<CuaActionResult>;
@@ -39,6 +40,7 @@ export function createUnavailableCuaDriver(reason = "cua-driver is unavailable")
     async listWindows() {
       return [];
     },
+    launchApp: blocked,
     getWindowState: blocked,
     click: blocked,
     typeText: blocked,

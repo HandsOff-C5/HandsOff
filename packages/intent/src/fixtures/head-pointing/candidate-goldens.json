@@ -1,0 +1,294 @@
+[
+  {
+    "name": "head point inside codex ranks codex first",
+    "point": { "x": -200, "y": -500 },
+    "radius": 240,
+    "windows": [
+      {
+        "surface": {
+          "id": "codex:226890",
+          "title": "Codex",
+          "app": "Codex",
+          "pid": 54254,
+          "windowId": 226890,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": -1191, "y": -1080, "width": 1920, "height": 1080 },
+        "zIndex": 3
+      },
+      {
+        "surface": {
+          "id": "warp:165155",
+          "title": "Terminal",
+          "app": "Warp",
+          "pid": 39100,
+          "windowId": 165155,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 729, "y": -1080, "width": 1920, "height": 1080 },
+        "zIndex": 1
+      }
+    ],
+    "expected": [
+      {
+        "surface": {
+          "id": "codex:226890",
+          "title": "Codex",
+          "app": "Codex",
+          "pid": 54254,
+          "windowId": 226890,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "score": 1,
+        "distance": 0
+      }
+    ]
+  },
+  {
+    "name": "equal-distance candidates use frontmost z-index tie break",
+    "point": { "x": 100, "y": 100 },
+    "radius": 100,
+    "windows": [
+      {
+        "surface": {
+          "id": "a:1",
+          "title": "A",
+          "app": "Notes",
+          "pid": 1,
+          "windowId": 1,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 0, "y": 200, "width": 100, "height": 100 },
+        "zIndex": 1
+      },
+      {
+        "surface": {
+          "id": "b:2",
+          "title": "B",
+          "app": "Comet",
+          "pid": 2,
+          "windowId": 2,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 200, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 2
+      },
+      {
+        "surface": {
+          "id": "outside:3",
+          "title": "Outside",
+          "app": "Finder",
+          "pid": 3,
+          "windowId": 3,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 251, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 3
+      }
+    ],
+    "expected": [
+      {
+        "surface": {
+          "id": "b:2",
+          "title": "B",
+          "app": "Comet",
+          "pid": 2,
+          "windowId": 2,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "score": 0,
+        "distance": 100
+      },
+      {
+        "surface": {
+          "id": "a:1",
+          "title": "A",
+          "app": "Notes",
+          "pid": 1,
+          "windowId": 1,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "score": 0,
+        "distance": 100
+      }
+    ]
+  },
+  {
+    "name": "cua driver windows are excluded from stored candidate output",
+    "point": { "x": 10, "y": 10 },
+    "radius": 200,
+    "windows": [
+      {
+        "surface": {
+          "id": "driver:1",
+          "title": "CUA Driver Overlay",
+          "app": "CUA Driver",
+          "pid": 10,
+          "windowId": 1,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 0, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 10
+      },
+      {
+        "surface": {
+          "id": "codex:2",
+          "title": "Codex",
+          "app": "Codex",
+          "pid": 11,
+          "windowId": 2,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 120, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 1
+      }
+    ],
+    "expected": [
+      {
+        "surface": {
+          "id": "codex:2",
+          "title": "Codex",
+          "app": "Codex",
+          "pid": 11,
+          "windowId": 2,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "score": 0.45,
+        "distance": 110
+      }
+    ]
+  },
+  {
+    "name": "empty window list returns no candidates",
+    "point": { "x": 0, "y": 0 },
+    "radius": 240,
+    "windows": [],
+    "expected": []
+  },
+  {
+    "name": "neutral jitter replay keeps the current target",
+    "points": [
+      { "x": 104, "y": 50 },
+      { "x": 106, "y": 49 },
+      { "x": 105, "y": 51 },
+      { "x": 107, "y": 50 }
+    ],
+    "radius": 60,
+    "windows": [
+      {
+        "surface": {
+          "id": "editor:left",
+          "title": "Editor",
+          "app": "Codex",
+          "pid": 21,
+          "windowId": 210,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 0, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 2
+      },
+      {
+        "surface": {
+          "id": "browser:right",
+          "title": "Browser",
+          "app": "Comet",
+          "pid": 22,
+          "windowId": 220,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 115, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 1
+      }
+    ],
+    "expectedTopSurfaceIds": ["editor:left", "editor:left", "editor:left", "editor:left"]
+  },
+  {
+    "name": "fast intentional movement replay retargets",
+    "points": [
+      { "x": 60, "y": 50 },
+      { "x": 190, "y": 50 }
+    ],
+    "radius": 80,
+    "windows": [
+      {
+        "surface": {
+          "id": "editor:left",
+          "title": "Editor",
+          "app": "Codex",
+          "pid": 21,
+          "windowId": 210,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 0, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 2
+      },
+      {
+        "surface": {
+          "id": "browser:right",
+          "title": "Browser",
+          "app": "Comet",
+          "pid": 22,
+          "windowId": 220,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 160, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 1
+      }
+    ],
+    "expectedTopSurfaceIds": ["editor:left", "browser:right"]
+  },
+  {
+    "name": "bad-frame-like repeated point replay keeps the current target",
+    "points": [
+      { "x": 60, "y": 50 },
+      { "x": 60, "y": 50 },
+      { "x": 60, "y": 50 },
+      { "x": 60, "y": 50 }
+    ],
+    "radius": 80,
+    "windows": [
+      {
+        "surface": {
+          "id": "editor:left",
+          "title": "Editor",
+          "app": "Codex",
+          "pid": 21,
+          "windowId": 210,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 0, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 2
+      },
+      {
+        "surface": {
+          "id": "browser:right",
+          "title": "Browser",
+          "app": "Comet",
+          "pid": 22,
+          "windowId": 220,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 160, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 1
+      }
+    ],
+    "expectedTopSurfaceIds": ["editor:left", "editor:left", "editor:left", "editor:left"]
+  }
+]

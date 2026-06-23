@@ -3,6 +3,7 @@ export * from "./action-plan";
 export * from "./audit";
 export * from "./config";
 export * from "./cua";
+export * from "./head-pointing";
 export * from "./intent";
 export * from "./readiness";
 export * from "./referent";

@@ -120,11 +120,16 @@ fn mint_token(
 /// Mint a single-use AssemblyAI streaming token for the webview.
 #[tauri::command]
 pub fn stt_mint_token(expires_in_seconds: Option<u32>) -> Result<StreamingToken, String> {
-    let worker_url = std::env::var(TOKEN_WORKER_URL_ENV).map_err(|_| {
-        format!("missing-configuration: set {TOKEN_WORKER_URL_ENV} to enable live STT")
-    })?;
-    let app_token = std::env::var(APP_AUTH_TOKEN_ENV)
-        .map_err(|_| format!("missing-credentials: set {APP_AUTH_TOKEN_ENV} to enable live STT"))?;
+    let worker_url = super::deployment_config(
+        TOKEN_WORKER_URL_ENV,
+        option_env!("HANDSOFF_STT_TOKEN_WORKER_URL"),
+    )
+    .ok_or_else(|| format!("missing-configuration: set {TOKEN_WORKER_URL_ENV} to enable live STT"))?;
+    let app_token =
+        super::deployment_config(APP_AUTH_TOKEN_ENV, option_env!("HANDSOFF_STT_APP_AUTH_TOKEN"))
+            .ok_or_else(|| {
+                format!("missing-credentials: set {APP_AUTH_TOKEN_ENV} to enable live STT")
+            })?;
     mint_token(&worker_url, &app_token, clamp_expires(expires_in_seconds))
 }
 
@@ -197,11 +202,22 @@ mod tests {
     }
 
     #[test]
-    fn missing_worker_url_reports_missing_configuration_without_a_request() {
-        // The command reads the env var first and never touches the network when
-        // it is absent. We assert the error contract the webview classifies on.
+    fn deployment_config_reports_none_when_env_and_baked_are_absent() {
+        // The command resolves config (runtime env first, then the value baked from
+        // .env.local at build time) and never touches the network when it is absent.
         std::env::remove_var(TOKEN_WORKER_URL_ENV);
-        let result = stt_mint_token(Some(60));
-        assert!(matches!(result, Err(message) if message.starts_with("missing-configuration")));
+        assert!(super::super::deployment_config(TOKEN_WORKER_URL_ENV, None).is_none());
+    }
+
+    #[test]
+    fn deployment_config_prefers_runtime_env_over_baked_value() {
+        std::env::set_var(TOKEN_WORKER_URL_ENV, "https://override.handsoff.test/v1/realtime-token");
+        let resolved =
+            super::super::deployment_config(TOKEN_WORKER_URL_ENV, Some("https://baked.test"));
+        std::env::remove_var(TOKEN_WORKER_URL_ENV);
+        assert_eq!(
+            resolved.as_deref(),
+            Some("https://override.handsoff.test/v1/realtime-token")
+        );
     }
 }

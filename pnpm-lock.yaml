@@ -59,6 +59,9 @@ importers:
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
+      '@tauri-apps/plugin-global-shortcut':
+        specifier: ^2.3.2
+        version: 2.3.2
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -132,6 +135,12 @@ importers:
       '@handsoff/contracts':
         specifier: workspace:*
         version: link:../contracts
+      openai:
+        specifier: ^6.0.0
+        version: 6.44.0(ws@8.21.0)(zod@3.25.76)
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
 
   packages/speech:
     dependencies:
@@ -160,6 +169,22 @@ importers:
         version: link:../contracts
 
   workers/assemblyai-token:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260621.1
+        version: 4.20260621.1
+      wrangler:
+        specifier: ^4.103.0
+        version: 4.103.0(@cloudflare/workers-types@4.20260621.1)
+
+  workers/llm-intent:
+    dependencies:
+      '@handsoff/intent':
+        specifier: workspace:*
+        version: link:../../packages/intent
+      openai:
+        specifier: ^6.0.0
+        version: 6.44.0(ws@8.21.0)(zod@3.25.76)
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260621.1
@@ -1226,6 +1251,9 @@ packages:
     engines: {node: '>= 10'}
     hasBin: true
 
+  '@tauri-apps/plugin-global-shortcut@2.3.2':
+    resolution: {integrity: sha512-UReHNXrLvpEjylE4jb4oCYiy96uRykPUthoCQCmRXYrd5hs5X9DrW+qOn7GLW57EJN4tdK8bgK5twBTz2NOxzA==}
+
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
     engines: {node: '>=18'}
@@ -1970,6 +1998,17 @@ packages:
 
   nwsapi@2.2.24:
     resolution: {integrity: sha512-7YRhZ3jS45LwmSCT4b2sVFHt/WuovaktDU07QrtOBY2PXskss5a9jfmR9jptyumwXST+rFjrmppMY1KT/yn35A==}
+
+  openai@6.44.0:
+    resolution: {integrity: sha512-09/gH+8jH0RgUwsgWHAaxsKGRT5zVZ95IaJUnqAWj6XejIBmnFRwq2WUIF37VtDEsmGrtPmvCs5+yBSeZGWvkA==}
+    peerDependencies:
+      ws: ^8.18.0
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      ws:
+        optional: true
+      zod:
+        optional: true
 
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
@@ -3133,6 +3172,10 @@ snapshots:
       '@tauri-apps/cli-win32-ia32-msvc': 2.11.3
       '@tauri-apps/cli-win32-x64-msvc': 2.11.3
 
+  '@tauri-apps/plugin-global-shortcut@2.3.2':
+    dependencies:
+      '@tauri-apps/api': 2.11.1
+
   '@testing-library/dom@10.4.1':
     dependencies:
       '@babel/code-frame': 7.29.7
@@ -3966,6 +4009,11 @@ snapshots:
   node-releases@2.0.48: {}
 
   nwsapi@2.2.24: {}
+
+  openai@6.44.0(ws@8.21.0)(zod@3.25.76):
+    optionalDependencies:
+      ws: 8.21.0
+      zod: 3.25.76
 
   optionator@0.9.4:
     dependencies:

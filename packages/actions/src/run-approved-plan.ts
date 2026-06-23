@@ -11,6 +11,7 @@ import type {
 import { translateStep } from "./translate-plan";
 
 export type CuaActionPort = {
+  launchApp(request: Extract<CuaActionRequest, { kind: "launch_app" }>): Promise<CuaActionResult>;
   getWindowState(
     request: Extract<CuaActionRequest, { kind: "get_window_state" }>,
   ): Promise<CuaActionResult>;
@@ -62,6 +63,25 @@ export async function runApprovedPlan(args: {
   }
 
   for (const step of args.plan.action_plan) {
+    if (step.kind === "launch_app") {
+      const request = translateStep(step);
+      const result = await callCua(args.cua, request);
+      args.audit.record({
+        kind: "cua_call",
+        sessionId: args.sessionId,
+        actionId: args.plan.id,
+        stepId: step.id,
+        recordedAt,
+        request,
+        result,
+      });
+      if (result.status !== "succeeded") {
+        finish(args.audit, args.sessionId, args.plan.id, recordedAt, result);
+        return { status: result.status, result };
+      }
+      continue;
+    }
+
     const pre = await args.cua.getWindowState({ kind: "get_window_state", target: step.target });
     const preCapture = stateCapture(pre, "Pre-action");
     if ("failure" in preCapture) {
@@ -135,6 +155,9 @@ export async function runApprovedPlan(args: {
 }
 
 async function callCua(port: CuaActionPort, request: CuaActionRequest): Promise<CuaActionResult> {
+  if (request.kind === "launch_app") {
+    return port.launchApp(request);
+  }
   if (request.kind === "get_window_state") {
     return port.getWindowState(request);
   }

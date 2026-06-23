@@ -20,26 +20,35 @@ export type ActionTarget = z.infer<typeof actionTargetSchema>;
 const actionStepBaseSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
-  target: actionTargetSchema,
 });
 
 export const actionStepSchema = z.discriminatedUnion("kind", [
   actionStepBaseSchema.extend({
     kind: z.literal("inspect_window_state"),
+    target: actionTargetSchema,
   }),
   actionStepBaseSchema.extend({
     kind: z.literal("click_element"),
+    target: actionTargetSchema,
   }),
   actionStepBaseSchema.extend({
     kind: z.literal("type_text"),
+    target: actionTargetSchema,
     text: z.string().min(1),
   }),
   actionStepBaseSchema.extend({
     kind: z.literal("set_value"),
+    target: actionTargetSchema,
     value: z.string(),
   }),
   actionStepBaseSchema.extend({
     kind: z.literal("capture_screenshot"),
+    target: actionTargetSchema,
+  }),
+  actionStepBaseSchema.extend({
+    kind: z.literal("launch_app"),
+    appName: z.string().min(1),
+    bundleId: z.string().min(1).optional(),
   }),
 ]);
 export type ActionStep = z.infer<typeof actionStepSchema>;
