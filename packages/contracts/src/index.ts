@@ -2,6 +2,7 @@ export * from "./app";
 export * from "./action-plan";
 export * from "./audit";
 export * from "./clarification";
+export * from "./computer-use";
 export * from "./config";
 export * from "./cua";
 export * from "./head-pointing";
