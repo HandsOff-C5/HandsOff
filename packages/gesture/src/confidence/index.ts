@@ -11,3 +11,4 @@ export {
   type DwellResult,
   type DwellDebounce,
 } from "./dwell";
+export { calibrateConfidence } from "./calibration";
