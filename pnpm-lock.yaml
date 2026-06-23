@@ -47,6 +47,9 @@ importers:
       '@handsoff/desktop':
         specifier: workspace:*
         version: link:../../packages/desktop
+      '@handsoff/gesture':
+        specifier: workspace:*
+        version: link:../../packages/gesture
       '@handsoff/intent':
         specifier: workspace:*
         version: link:../../packages/intent
@@ -69,6 +72,9 @@ importers:
       '@handsoff/testkit':
         specifier: workspace:*
         version: link:../../packages/testkit
+      '@mediapipe/tasks-vision':
+        specifier: 0.10.35
+        version: 0.10.35
       '@tauri-apps/cli':
         specifier: ^2.11.3
         version: 2.11.3
@@ -130,6 +136,9 @@ importers:
       '@handsoff/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@mediapipe/tasks-vision':
+        specifier: 0.10.35
+        version: 0.10.35
 
   packages/intent:
     dependencies:
@@ -1011,6 +1020,9 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
+
+  '@mediapipe/tasks-vision@0.10.35':
+    resolution: {integrity: sha512-HOvadwVRE6JC+45nyYhmnywnr5h/J8KZvOeUNVOG9q/0875pZgItznFB9bRTvLc264YSJqiZ1NsIpCStJw/egg==}
 
   '@poppinss/colors@4.1.6':
     resolution: {integrity: sha512-H9xkIdFswbS8n1d6vmRd8+c10t2Qe+rZITbbDHHkQixH5+2x1FDGmi/0K+WgWiqQFKPSlIYB7jlH6Kpfn6Fleg==}
@@ -2994,6 +3006,8 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@mediapipe/tasks-vision@0.10.35': {}
 
   '@poppinss/colors@4.1.6':
     dependencies:
