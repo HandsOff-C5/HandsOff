@@ -21,6 +21,51 @@ export type ApprovalController = {
   subscribe(listener: () => void): () => void;
 };
 
+type Waiting = {
+  request: PendingApproval;
+  settle: (decision: GateDecision) => void;
+};
+
 export function createApprovalController(): ApprovalController {
-  throw new Error("not implemented");
+  const queue: Waiting[] = [];
+  const listeners = new Set<() => void>();
+  let nextId = 0;
+
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+
+  return {
+    approve(entry) {
+      nextId += 1;
+      const id = `approval-${nextId}`;
+      return new Promise<GateDecision>((settle) => {
+        queue.push({
+          request: { id, action: entry.action, risk: entry.risk },
+          settle,
+        });
+        notify();
+      });
+    },
+
+    pending() {
+      return queue.map((waiting) => waiting.request);
+    },
+
+    resolve(id, decision) {
+      const index = queue.findIndex((waiting) => waiting.request.id === id);
+      if (index === -1) return;
+      const [waiting] = queue.splice(index, 1);
+      if (!waiting) return;
+      waiting.settle(decision);
+      notify();
+    },
+
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
 }
