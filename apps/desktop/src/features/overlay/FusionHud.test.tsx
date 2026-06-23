@@ -31,10 +31,13 @@ const disagree = fuseEvidence([v("gesture", 0.9, cursor), v("gaze", 0.5, slack)]
 describe("FusionHud", () => {
   it("renders a row per fused target with its confidence percentage", () => {
     render(<FusionHud fusion={disagree} />);
-    expect(screen.getByText(/Cursor — editor/)).toBeInTheDocument();
-    expect(screen.getByText(/Slack — general/)).toBeInTheDocument();
-    expect(screen.getByText("90%")).toBeInTheDocument();
-    expect(screen.getByText("50%")).toBeInTheDocument();
+    const rows = screen.getAllByTestId("fusion-target");
+    expect(rows).toHaveLength(2);
+    const text = rows.map((row) => row.textContent ?? "").join(" ");
+    expect(text).toContain("Cursor — editor");
+    expect(text).toContain("Slack — general");
+    expect(text).toContain("90%");
+    expect(text).toContain("50%");
   });
 
   it("marks the winning target as the one being acted on", () => {
@@ -47,8 +50,12 @@ describe("FusionHud", () => {
 
   it("renders the per-source votes for a target", () => {
     render(<FusionHud fusion={disagree} />);
-    expect(screen.getByText(/gesture/)).toBeInTheDocument();
-    expect(screen.getByText(/gaze/)).toBeInTheDocument();
+    const votes = screen
+      .getAllByTestId("fusion-target")
+      .map((row) => row.textContent ?? "")
+      .join(" ");
+    expect(votes).toContain("gesture");
+    expect(votes).toContain("gaze");
   });
 
   it("shows the DRAG line naming the noisy channel", () => {
