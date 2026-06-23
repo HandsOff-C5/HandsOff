@@ -132,7 +132,7 @@ func testPointerMotion() {
     let afterRecenter = pointer.step(signal: makeSignal(x: 0.35), timestamp: 1.8, screens: [screen])!
     expectClose(afterRecenter.x, recentered.x, tolerance: 0.5, "new neutral holds after recenter")
 
-    var clamped = HeadPointerMotion(config: HeadPointerConfig(movementMode: .edge, speed: 10, distanceToEdge: 0.04))
+    var clamped = HeadPointerMotion(config: HeadPointerConfig(movementMode: .edge, speed: 30, distanceToEdge: 0.04))
     _ = clamped.step(signal: makeSignal(x: 0), timestamp: 0, screens: [screen])
     let nearEdge = clamped.step(signal: makeSignal(x: 2), timestamp: 2, screens: [screen, CGRect(x: 800, y: 0, width: 500, height: 500)])!
     expect(containsInclusive(screen, nearEdge) || containsInclusive(CGRect(x: 800, y: 0, width: 500, height: 500), nearEdge), "integrated pointer clamps into a real screen")
@@ -195,6 +195,8 @@ func testControlCommandParsing() {
     expect(parseControlCommand(#"{"kind":"recenter"}"#) == .recenter, "recenter command parses")
     let command = parseControlCommand(#"{"kind":"config","headPointer":{"movementMode":"relative","speed":7,"distanceToEdge":0.2}}"#)
     expect(command == .config(HeadPointerConfig(movementMode: .relative, speed: 7, distanceToEdge: 0.2)), "config command parses")
+    let fastCommand = parseControlCommand(#"{"kind":"config","headPointer":{"movementMode":"edge","speed":40,"distanceToEdge":0.2}}"#)
+    expect(fastCommand == .config(HeadPointerConfig(movementMode: .edge, speed: 30, distanceToEdge: 0.2)), "config speed clamps to expanded max")
 }
 
 func runSelfTest() {

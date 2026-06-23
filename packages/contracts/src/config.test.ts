@@ -13,7 +13,7 @@ describe("local config contract", () => {
       sttProvider: "assemblyai",
       headPointer: {
         movementMode: "relative",
-        speed: 8,
+        speed: 30,
         distanceToEdge: 0.25,
       },
     };
@@ -49,7 +49,7 @@ describe("local config contract", () => {
     expect(
       safeParseLocalConfig({
         ...DEFAULT_LOCAL_CONFIG,
-        headPointer: { ...DEFAULT_LOCAL_CONFIG.headPointer, speed: 11 },
+        headPointer: { ...DEFAULT_LOCAL_CONFIG.headPointer, speed: 31 },
       }).success,
     ).toBe(false);
     expect(

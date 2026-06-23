@@ -32,6 +32,7 @@ describe("SettingsPanel", () => {
     expect(screen.getByLabelText("Transcription")).toHaveValue("native");
     expect(screen.getByLabelText("Head Pointer Mode")).toHaveValue("edge");
     expect(screen.getByLabelText("Head Pointer Speed")).toHaveValue(5);
+    expect(screen.getByLabelText("Head Pointer Speed")).toHaveAttribute("max", "30");
     expect(screen.getByLabelText("Distance to Edge")).toHaveValue(0.12);
     expect(screen.getByRole("option", { name: "Native" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Realtime" })).toBeInTheDocument();
@@ -91,12 +92,12 @@ describe("SettingsPanel", () => {
     const { updateConfig } = renderPanel({ config });
 
     fireEvent.change(screen.getByLabelText("Head Pointer Speed"), {
-      target: { value: "8" },
+      target: { value: "30" },
     });
 
     expect(updateConfig).toHaveBeenCalledWith({
       ...config,
-      headPointer: { ...config.headPointer, speed: 8 },
+      headPointer: { ...config.headPointer, speed: 30 },
     });
   });
 

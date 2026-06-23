@@ -24,7 +24,7 @@ export type HeadPointerMovementMode = z.infer<typeof headPointerMovementModeSche
 
 export const headPointerConfigSchema = z.object({
   movementMode: headPointerMovementModeSchema,
-  speed: z.number().min(1).max(10),
+  speed: z.number().min(1).max(30),
   distanceToEdge: z.number().min(0.02).max(0.4),
 });
 export type HeadPointerConfig = z.infer<typeof headPointerConfigSchema>;

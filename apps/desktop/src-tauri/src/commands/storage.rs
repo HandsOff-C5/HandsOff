@@ -97,7 +97,7 @@ fn reset_config_at_path(path: &Path) -> Result<LocalConfig, String> {
 
 impl LocalConfig {
     fn is_valid(&self) -> bool {
-        (1.0..=10.0).contains(&self.head_pointer.speed)
+        (1.0..=30.0).contains(&self.head_pointer.speed)
             && (0.02..=0.4).contains(&self.head_pointer.distance_to_edge)
     }
 }
@@ -241,7 +241,7 @@ mod tests {
             .expect("test directory should be created");
         fs::write(
             &path,
-            r#"{"sttProvider":"native","headPointer":{"movementMode":"edge","speed":11,"distanceToEdge":0.12}}"#,
+            r#"{"sttProvider":"native","headPointer":{"movementMode":"edge","speed":31,"distanceToEdge":0.12}}"#,
         )
         .expect("invalid config should be written");
 

@@ -97,7 +97,7 @@ export function SettingsPanel({ config, status, updateConfig, resetConfig }: Set
           id="settings-head-pointer-speed"
           type="number"
           min="1"
-          max="10"
+          max="30"
           step="1"
           value={config.headPointer.speed}
           onChange={(event) => {

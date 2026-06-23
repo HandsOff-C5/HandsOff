@@ -21,7 +21,7 @@ struct HeadPointerConfig: Equatable {
     var sanitized: HeadPointerConfig {
         HeadPointerConfig(
             movementMode: movementMode,
-            speed: clamp(speed, 1...10),
+            speed: clamp(speed, 1...30),
             distanceToEdge: clamp(distanceToEdge, 0.02...0.4)
         )
     }
@@ -70,4 +70,3 @@ func parseControlCommand(_ line: String) -> ControlCommand? {
         return nil
     }
 }
-
