@@ -11,6 +11,7 @@ export const INTENT_TYPES = [
   "click",
   "type_text",
   "set_value",
+  "launch",
   "pause",
   "stop",
 ] as const;

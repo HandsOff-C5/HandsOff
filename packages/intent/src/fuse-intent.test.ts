@@ -140,4 +140,26 @@ describe("intent fusion", () => {
       },
     });
   });
+
+  it("turns a bare 'open Cursor' into a single launch step, no pointing needed (golden flow)", () => {
+    const intent = fuseIntent(
+      input("open Cursor", {
+        pointingEvidence: [{ source: "head", confidence: 0, strategy: "head-neighborhood-empty" }],
+        surfaceCandidates: [],
+      }),
+      { intentId: "intent-open", planId: "plan-open", createdAt: "2026-06-22T12:00:00.000Z" },
+    );
+
+    expect(intent).toMatchObject({
+      status: "ready",
+      intent_type: "launch",
+      risk_level: "reversible",
+      requires_approval: false,
+      target_agent: "cua-driver",
+      referent: { id: "app:cursor", source: "fusion", confidence: 1 },
+      action_plan: { action_plan: [{ kind: "launch_app", appName: "Cursor" }] },
+    });
+    if (intent.status !== "ready") throw new Error("expected ready");
+    expect(intent.action_plan.action_plan).toHaveLength(1);
+  });
 });

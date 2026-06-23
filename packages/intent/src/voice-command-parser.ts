@@ -31,6 +31,12 @@ export function parseVoiceCommand(transcript: string): ParsedVoiceCommand {
       text: openAndType[2].trim(),
     };
   }
+  // Bare "open/launch <app>" (the golden flow's "open Cursor") — deterministic, so the
+  // launch fires without the LLM. Matched after the "and type" form so that wins.
+  const open = command.match(/^(?:open|launch)\s+(.+)$/i);
+  if (open?.[1]) {
+    return { status: "parsed", intent_type: "launch", appName: open[1].trim() };
+  }
   if (text.startsWith("inspect ") || text === "inspect this window" || text === "look at this") {
     return { status: "parsed", intent_type: "inspect" };
   }

@@ -246,6 +246,7 @@ const SUMMARIES: Partial<Record<IntentType, string>> = {
   click: "Click the selected target",
   type_text: "Type dictated text into the selected target",
   set_value: "Set the selected value",
+  launch: "Open the requested app",
 };
 
 function planFor(args: PlanArgs): ActionPlan {
