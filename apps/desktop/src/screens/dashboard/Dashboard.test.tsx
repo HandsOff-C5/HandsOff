@@ -73,6 +73,13 @@ describe("Dashboard", () => {
     expect(screen.getByRole("heading", { level: 1, name: APP_NAME })).toBeInTheDocument();
   });
 
+  it("toggles the diagnostics board from the header", () => {
+    render(<Dashboard />);
+    expect(screen.queryByLabelText("Diagnostics board")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^diagnostics$/i }));
+    expect(screen.getByLabelText("Diagnostics board")).toBeInTheDocument();
+  });
+
   it("renders a panel for each core-loop concern (no blank state)", () => {
     render(<Dashboard />);
     for (const title of PANEL_TITLES) {
