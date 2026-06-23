@@ -1,17 +1,20 @@
 import {
   APP_NAME,
+  type CapabilityId,
   type PointingEvidence,
   type SttProvider,
   type SttStream,
 } from "@handsoff/contracts";
 import { createTauriCuaDriver, createUnavailableCuaDriver, type CuaDriver } from "@handsoff/cua";
+import { planPermissionOnboarding } from "@handsoff/desktop";
 import { createAssemblyAiStream, createOnDeviceSttStream } from "@handsoff/speech";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import { CameraPanel } from "../../features/camera/CameraPanel";
 import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
+import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnboarding";
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
 import { ReadinessPanel } from "../../features/readiness/ReadinessPanel";
@@ -98,8 +101,45 @@ export function Dashboard({
   const clarification =
     intent?.status === "clarification_required" ? (intent.clarification ?? null) : null;
 
+  // First-run permission onboarding (#18/#56). Show one guided flow on launch
+  // until every permission HandsOff needs is granted (or the user skips it),
+  // so nobody has to hunt for a per-permission button. Only in the real app.
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const onboardingPlan = planPermissionOnboarding(report);
+  const showOnboarding =
+    hasTauriBackend() && onboardingPlan.needsOnboarding && !onboardingDismissed;
+  // Fire the OS camera prompt by briefly opening a video stream, then release it.
+  const requestCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach((track) => track.stop());
+    } catch {
+      // User denied or no device — the re-check reflects the resulting state.
+    }
+  };
+  const requestMedia = async () => {
+    try {
+      await invoke("request_media_permissions");
+    } catch {
+      // Backend unavailable — re-check keeps the last good state.
+    }
+  };
+  const openPrivacySettings = (pane: CapabilityId) =>
+    void invoke("open_privacy_settings", { pane });
+
   return (
     <main className="dashboard">
+      {showOnboarding && (
+        <PermissionsOnboarding
+          report={report}
+          isChecking={isChecking}
+          onRequestCamera={requestCamera}
+          onRequestMedia={requestMedia}
+          onRecheck={recheck}
+          onOpenSettings={openPrivacySettings}
+          onDismiss={() => setOnboardingDismissed(true)}
+        />
+      )}
       <header className="dashboard__header">
         <h1 className="dashboard__brand">{APP_NAME}</h1>
         <p className="dashboard__tagline">Point. Speak. Supervise your agents.</p>

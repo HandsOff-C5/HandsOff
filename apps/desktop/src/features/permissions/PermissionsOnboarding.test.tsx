@@ -1,0 +1,116 @@
+import type { CapabilityProbe, PermissionState } from "@handsoff/contracts";
+import { buildReadinessReport } from "@handsoff/desktop";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import { PermissionsOnboarding } from "./PermissionsOnboarding";
+
+const report = (states: Partial<Record<string, string>>) =>
+  buildReadinessReport({
+    capabilities: (
+      ["camera", "microphone", "speech-recognition", "accessibility", "screen-recording"] as const
+    ).map(
+      (id): CapabilityProbe => ({
+        id,
+        kind: "permission",
+        state: (states[id] ?? "not-determined") as PermissionState,
+      }),
+    ),
+  });
+
+const noop = () => undefined;
+const asyncNoop = () => Promise.resolve();
+
+describe("PermissionsOnboarding", () => {
+  it("lists every onboarding permission with its status", () => {
+    render(
+      <PermissionsOnboarding
+        report={report({ camera: "granted" })}
+        isChecking={false}
+        onRequestCamera={asyncNoop}
+        onRequestMedia={asyncNoop}
+        onRecheck={noop}
+        onOpenSettings={noop}
+        onDismiss={noop}
+      />,
+    );
+    const labels = screen
+      .getAllByText(/Camera|Microphone|Speech Recognition|Accessibility|Screen Recording/)
+      .filter((el) => el.className === "onboarding__step-label")
+      .map((el) => el.textContent);
+    expect(labels).toEqual([
+      "Camera",
+      "Microphone",
+      "Speech Recognition",
+      "Accessibility",
+      "Screen Recording",
+    ]);
+  });
+
+  it("requests camera then media when Grant is pressed", async () => {
+    const calls: string[] = [];
+    const onRequestCamera = vi.fn(() => {
+      calls.push("camera");
+      return Promise.resolve();
+    });
+    const onRequestMedia = vi.fn(() => {
+      calls.push("media");
+      return Promise.resolve();
+    });
+    render(
+      <PermissionsOnboarding
+        report={report({})}
+        isChecking={false}
+        onRequestCamera={onRequestCamera}
+        onRequestMedia={onRequestMedia}
+        onRecheck={noop}
+        onOpenSettings={noop}
+        onDismiss={noop}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /grant/i }));
+    await waitFor(() => expect(onRequestMedia).toHaveBeenCalled());
+    expect(onRequestCamera).toHaveBeenCalled();
+    expect(calls).toEqual(["camera", "media"]);
+  });
+
+  it("deep-links a manual capability to System Settings", () => {
+    const onOpenSettings = vi.fn();
+    render(
+      <PermissionsOnboarding
+        report={report({})}
+        isChecking={false}
+        onRequestCamera={asyncNoop}
+        onRequestMedia={asyncNoop}
+        onRecheck={noop}
+        onOpenSettings={onOpenSettings}
+        onDismiss={noop}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: /open system settings/i })[0]!);
+    expect(onOpenSettings).toHaveBeenCalledWith("accessibility");
+  });
+
+  it("shows a done state and a continue action when everything is granted", () => {
+    const onDismiss = vi.fn();
+    render(
+      <PermissionsOnboarding
+        report={report({
+          camera: "granted",
+          microphone: "granted",
+          "speech-recognition": "granted",
+          accessibility: "granted",
+          "screen-recording": "granted",
+        })}
+        isChecking={false}
+        onRequestCamera={asyncNoop}
+        onRequestMedia={asyncNoop}
+        onRecheck={noop}
+        onOpenSettings={noop}
+        onDismiss={onDismiss}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    expect(onDismiss).toHaveBeenCalled();
+  });
+});
