@@ -29,3 +29,6 @@ docs/
 
 # Personal per-developer working method — not shared with the team
 CLAUDE.local.md
+
+# Session handoffs are local-only working notes, not part of the repo.
+HANDOFFS/
