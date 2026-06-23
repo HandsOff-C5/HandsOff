@@ -103,6 +103,14 @@ export function PermissionsPanel({
                   <li key={step}>{step}</li>
                 ))}
               </ol>
+              <button
+                type="button"
+                className="permissions__manage"
+                onClick={() => onOpenSettings?.(capability.id)}
+                disabled={!onOpenSettings}
+              >
+                {capability.level === "ready" ? "Manage" : "Open System Settings"}
+              </button>
             </li>
           ))}
         </ul>
