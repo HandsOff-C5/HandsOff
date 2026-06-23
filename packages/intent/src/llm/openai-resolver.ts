@@ -12,6 +12,7 @@ import {
 } from "@handsoff/contracts";
 
 import { blockedIntent } from "../fuse-intent";
+import { requiresApproval } from "../risk";
 import {
   openAiResolvedIntentSchema,
   type OpenAiActionPlan,
@@ -170,6 +171,7 @@ function normalizeParsedIntent(
     };
   }
 
+  const requires_approval = parsed.risk_level ? requiresApproval(parsed.risk_level) : false;
   return {
     status: "ready",
     id: parsed.id,
@@ -178,7 +180,7 @@ function normalizeParsedIntent(
     referent: parsed.referent,
     constraints: parsed.constraints,
     risk_level: parsed.risk_level,
-    requires_approval: parsed.requires_approval,
+    requires_approval,
     target_agent: parsed.target_agent,
     action_plan: parsed.action_plan ? normalizeActionPlan(parsed.action_plan) : null,
     createdAt,
@@ -191,7 +193,7 @@ function normalizeActionPlan(plan: OpenAiResolvedIntent["action_plan"]): ActionP
     id: plan.id,
     summary: plan.summary,
     risk_level: plan.risk_level,
-    requires_approval: plan.requires_approval,
+    requires_approval: requiresApproval(plan.risk_level),
     target_agent: plan.target_agent,
     action_plan: plan.action_plan.map(normalizeStep),
   };

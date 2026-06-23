@@ -68,7 +68,7 @@ function ready(input: IntentInput): ResolvedIntent {
 }
 
 describe("useVoiceCuaController", () => {
-  it("resolves final transcripts with head candidates and the llm seam", async () => {
+  it("resolves final transcripts with head candidates through the local rule resolver by default", async () => {
     const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
     const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
     const { result } = renderHook(() =>
@@ -85,7 +85,7 @@ describe("useVoiceCuaController", () => {
 
     await waitFor(() => expect(resolveIntent).toHaveBeenCalled());
     const [input, options] = resolveIntent.mock.calls[0]!;
-    expect(options).toMatchObject({ resolver: "llm", createdAt: NOW });
+    expect(options).toMatchObject({ resolver: "rule", createdAt: NOW });
     expect(input.pointingEvidence).toEqual([
       {
         source: "head",

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "pnpm build:sidecars && vite build",
+    "build:sidecars": "bash src-tauri/sidecars/build.sh head-track",
     "preview": "vite preview",
     "tauri": "tauri"
   },

@@ -1,9 +1,13 @@
 import { APP_NAME, type CapabilityId, type CapabilityReadiness } from "@handsoff/contracts";
 import { permissionSetupState } from "@handsoff/desktop";
 
-// On-device STT permissions (#31): requested through the app process and
-// managed/revoked in System Settings, separate from the CUA-gating grants (#18).
-const MEDIA_PERMISSION_IDS: readonly CapabilityId[] = ["microphone", "speech-recognition"];
+// Head+voice media permissions (#31, #95): requested through the app process and
+// managed/revoked in System Settings, separate from CUA-gating grants (#18).
+const MEDIA_PERMISSION_IDS: readonly CapabilityId[] = [
+  "camera",
+  "microphone",
+  "speech-recognition",
+];
 
 interface PermissionsPanelProps {
   report: CapabilityReadiness[];
@@ -48,13 +52,13 @@ export function PermissionsPanel({
         </button>
       </div>
 
-      {/* Microphone + speech for on-device transcription (#31): accept through the
-          app-owned OS prompt, manage/revoke in System Settings. */}
+      {/* Camera + microphone + speech for head+voice capture (#31, #95): accept
+          through the app-owned OS prompt, manage/revoke in System Settings. */}
       <div className="permissions__media">
-        <h3 className="permissions__name">Microphone &amp; Speech</h3>
+        <h3 className="permissions__name">Head Capture Media</h3>
         <p className="permissions__reason">
-          On-device transcription needs microphone and speech recognition access. Audio stays on
-          your device.
+          Head+voice capture needs camera, microphone, and speech recognition access. Camera frames
+          and audio stay on your device.
         </p>
         {mediaCapabilities.map((capability) => (
           <div key={capability.id} className="permissions__media-row">
@@ -77,7 +81,7 @@ export function PermissionsPanel({
             onClick={() => onRequestMedia?.()}
             disabled={!onRequestMedia}
           >
-            Allow microphone &amp; speech
+            Allow camera, microphone &amp; speech
           </button>
         )}
       </div>
@@ -85,8 +89,8 @@ export function PermissionsPanel({
       {/* CUA-gating grants (#18): guidance + ordered setup steps. */}
       {allReady ? (
         <p className="permissions__ok">
-          Camera, Accessibility, Screen Recording, and Input Monitoring are granted. {APP_NAME} can
-          track your head point, see the windows you point at, and act on your behalf.
+          Camera, Accessibility, and Screen Recording are granted. {APP_NAME} can track your head
+          point, see the windows you point at, and act on your behalf.
         </p>
       ) : (
         <ul className="permissions__list">

@@ -35,7 +35,6 @@ describe("ReadinessPanel", () => {
       "Computer-use agent",
       "Accessibility",
       "Screen Recording",
-      "Input Monitoring",
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }

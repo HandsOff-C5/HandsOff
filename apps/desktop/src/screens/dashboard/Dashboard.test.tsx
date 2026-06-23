@@ -113,7 +113,6 @@ describe("Dashboard", () => {
         cuaDriver={driver}
         headPointing={headPointing(state.surface)}
         now={() => "2026-06-22T12:00:00.000Z"}
-        resolveIntent={ruleResolver}
         targetResolveDelayMs={0}
       />,
     );

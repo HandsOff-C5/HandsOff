@@ -29,30 +29,15 @@ build_head_track() {
     -framework Vision \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$plist"
   codesign --force --sign - --identifier com.handsoff.desktop.headtrack --entitlements "$entitlements" "$out"
+  "$out" --selftest
   echo "ok → $out"
   file "$out"
 }
 
-if [[ "${1:-}" == "head-track" ]]; then
+if [[ "${1:-head-track}" == "head-track" ]]; then
   build_head_track "${2:-$(host_triple)}"
   exit 0
 fi
 
-src="$here/stt-ondevice/main.swift"
-plist="$here/stt-ondevice/Info.plist"
-entitlements="$here/stt-ondevice/entitlements.plist"
-triple="${1:-$(host_triple)}"
-out_dir="$here/../binaries"
-out="$out_dir/stt-ondevice-$triple"
-
-mkdir -p "$out_dir"
-echo "Building on-device STT sidecar for $triple"
-# Embed the Info.plist into __TEXT,__info_plist for readable helper identity.
-# The app bundle owns first-run permission prompts.
-swiftc -O -o "$out" "$src" \
-  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$plist"
-# Bind the embedded Info.plist to the code signature. A signed app bundle that
-# embeds this sidecar re-signs it with the app identity at package time.
-codesign --force --sign - --identifier com.handsoff.desktop.stt --entitlements "$entitlements" "$out"
-echo "ok → $out"
-file "$out"
+echo "usage: $0 [head-track] [target-triple]" >&2
+exit 64

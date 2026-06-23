@@ -23,6 +23,15 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
   const evidence = bestEvidence(input.pointingEvidence);
   const surface = evidence?.surface ?? input.surfaceCandidates[0];
 
+  if (input.surfaceCandidates.length === 0) {
+    return blockedIntent(
+      "clarification_required",
+      input,
+      id,
+      createdAt,
+      "No attention-region candidates were available",
+    );
+  }
   if (!evidence || evidence.confidence < (options.minConfidence ?? 0.5)) {
     return blockedIntent(
       "clarification_required",

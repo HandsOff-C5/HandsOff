@@ -1,104 +1,10 @@
 import AppKit
-import ApplicationServices
 import AVFoundation
 import CoreGraphics
 import Foundation
 import ImageIO
-import IOKit.hid
 import QuartzCore
 import Vision
-
-private let rightOptionFlagMask: UInt64 = 0x40
-private let slashKeyCode: Int64 = 44
-private let shiftFlagMask = CGEventFlags.maskShift.rawValue
-
-private struct MappingConfig {
-    let yawRange: ClosedRange<Double>
-    let pitchRange: ClosedRange<Double>
-    let yawSign: Double
-    let pitchSign: Double
-
-    static let `default` = MappingConfig(
-        yawRange: -0.45...0.45,
-        pitchRange: -0.35...0.35,
-        yawSign: 1.0,
-        pitchSign: 1.0
-    )
-}
-
-private struct HotkeyState: Equatable {
-    var rightOptionHeld = false
-    var tracking = false
-}
-
-private enum KeyboardEventKind {
-    case flagsChanged
-    case keyDown
-}
-
-private enum HotkeyDecision: Equatable {
-    case none
-    case start
-    case stop
-}
-
-private struct HotkeyTapRetryState: Equatable {
-    var armed = false
-    var retryScheduled = false
-}
-
-private enum HotkeyTapRetryAction: Equatable {
-    case none
-    case armed
-    case blocked(scheduleRetry: Bool)
-}
-
-private func decideHotkeyTapRetry(
-    installed: Bool,
-    state: HotkeyTapRetryState
-) -> (HotkeyTapRetryState, HotkeyTapRetryAction) {
-    guard !state.armed else { return (state, .none) }
-    if installed {
-        return (HotkeyTapRetryState(armed: true, retryScheduled: false), .armed)
-    }
-    var next = state
-    let shouldSchedule = !next.retryScheduled
-    next.retryScheduled = true
-    return (next, .blocked(scheduleRetry: shouldSchedule))
-}
-
-private struct HotkeyTapPermissionSnapshot {
-    let inputMonitoringGranted: Bool
-    let accessibilityGranted: Bool
-}
-
-private func requestHotkeyTapPermissions() -> HotkeyTapPermissionSnapshot {
-    let inputMonitoringGranted = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
-    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-    let accessibilityGranted = AXIsProcessTrustedWithOptions(options)
-    return HotkeyTapPermissionSnapshot(
-        inputMonitoringGranted: inputMonitoringGranted,
-        accessibilityGranted: accessibilityGranted
-    )
-}
-
-private func currentHotkeyTapPermissions() -> HotkeyTapPermissionSnapshot {
-    HotkeyTapPermissionSnapshot(
-        inputMonitoringGranted: IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted,
-        accessibilityGranted: AXIsProcessTrusted()
-    )
-}
-
-private func permissionStatus(_ granted: Bool) -> String {
-    granted ? "granted" : "pending"
-}
-
-private func logHotkeyTapPermissions(_ permissions: HotkeyTapPermissionSnapshot) {
-    fputs(
-        "head-track: permissions: Input Monitoring \(permissionStatus(permissions.inputMonitoringGranted)), Accessibility \(permissionStatus(permissions.accessibilityGranted))\n",
-        stderr
-    )
-}
 
 private func clamp(_ value: Double, _ range: ClosedRange<Double>) -> Double {
     min(max(value, range.lowerBound), range.upperBound)
@@ -128,59 +34,651 @@ private func clampIntoRealScreen(_ point: CGPoint, screens: [CGRect]) -> CGPoint
     )
 }
 
-private func mapHeadAnglesToPoint(
-    yaw: Double?,
-    pitch: Double?,
-    screens: [CGRect],
-    config: MappingConfig = .default
-) -> CGPoint? {
-    let union = screens.reduce(nil as CGRect?) { partial, rect in
-        guard let partial else { return rect }
-        return partial.union(rect)
-    }
+private enum MovementMode: String {
+    case edge
+    case relative
+}
 
-    guard let union, union.width > 0, union.height > 0 else {
+private struct HeadPointerConfig: Equatable {
+    var movementMode: MovementMode
+    var speed: Double
+    var distanceToEdge: Double
+
+    static let `default` = HeadPointerConfig(movementMode: .edge, speed: 5, distanceToEdge: 0.12)
+
+    var sanitized: HeadPointerConfig {
+        HeadPointerConfig(
+            movementMode: movementMode,
+            speed: clamp(speed, 1...10),
+            distanceToEdge: clamp(distanceToEdge, 0.02...0.4)
+        )
+    }
+}
+
+private enum ControlCommand: Equatable {
+    case config(HeadPointerConfig)
+    case recenter
+}
+
+private func doubleValue(_ value: Any?) -> Double? {
+    if let value = value as? NSNumber {
+        return value.doubleValue
+    }
+    if let value = value as? Double {
+        return value
+    }
+    if let value = value as? String {
+        return Double(value)
+    }
+    return nil
+}
+
+private func parseControlCommand(_ line: String) -> ControlCommand? {
+    guard let data = line.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let kind = object["kind"] as? String
+    else {
         return nil
     }
 
-    let clampedYaw = clamp((yaw ?? 0) * config.yawSign, config.yawRange)
-    let clampedPitch = clamp((pitch ?? 0) * config.pitchSign, config.pitchRange)
-    let xRatio = (clampedYaw - config.yawRange.lowerBound) / (config.yawRange.upperBound - config.yawRange.lowerBound)
-    let yRatio = (clampedPitch - config.pitchRange.lowerBound) / (config.pitchRange.upperBound - config.pitchRange.lowerBound)
-    let point = CGPoint(
-        x: union.minX + xRatio * union.width,
-        y: union.minY + yRatio * union.height
-    )
-
-    return clampIntoRealScreen(point, screens: screens)
+    switch kind {
+    case "recenter":
+        return .recenter
+    case "config":
+        guard let headPointer = object["headPointer"] as? [String: Any] else { return nil }
+        let modeRaw = headPointer["movementMode"] as? String ?? MovementMode.edge.rawValue
+        guard let mode = MovementMode(rawValue: modeRaw) else { return nil }
+        let config = HeadPointerConfig(
+            movementMode: mode,
+            speed: doubleValue(headPointer["speed"]) ?? HeadPointerConfig.default.speed,
+            distanceToEdge: doubleValue(headPointer["distanceToEdge"]) ?? HeadPointerConfig.default.distanceToEdge
+        )
+        return .config(config.sanitized)
+    default:
+        return nil
+    }
 }
 
-private func decideHotkey(
-    kind: KeyboardEventKind,
-    keyCode: Int64,
-    flagsRaw: UInt64,
-    state: HotkeyState
-) -> (HotkeyState, HotkeyDecision) {
-    var next = state
+private func unionRect(_ screens: [CGRect]) -> CGRect? {
+    screens.reduce(nil as CGRect?) { partial, rect in
+        guard let partial else { return rect }
+        return partial.union(rect)
+    }
+}
 
-    switch kind {
-    case .flagsChanged:
-        next.rightOptionHeld = (flagsRaw & rightOptionFlagMask) != 0
-        if state.tracking && !next.rightOptionHeld {
-            next.tracking = false
-            return (next, .stop)
-        }
-        return (next, .none)
+private func defaultPointerPoint(screens: [CGRect]) -> CGPoint? {
+    guard let union = unionRect(screens), union.width > 0, union.height > 0 else {
+        return nil
+    }
+    return clampIntoRealScreen(CGPoint(x: union.midX, y: union.midY), screens: screens)
+}
 
-    case .keyDown:
-        let rightOptionDown = next.rightOptionHeld || (flagsRaw & rightOptionFlagMask) != 0
-        let questionMarkDown = keyCode == slashKeyCode && (flagsRaw & shiftFlagMask) != 0
-        if rightOptionDown && questionMarkDown && !next.tracking {
-            next.rightOptionHeld = true
-            next.tracking = true
-            return (next, .start)
+private func center(_ rect: CGRect) -> CGPoint {
+    CGPoint(x: rect.midX, y: rect.midY)
+}
+
+private func distance(_ a: CGPoint, _ b: CGPoint) -> Double {
+    let dx = a.x - b.x
+    let dy = a.y - b.y
+    return sqrt(dx * dx + dy * dy)
+}
+
+private func blend(_ a: CGPoint, _ b: CGPoint, alpha: Double) -> CGPoint {
+    CGPoint(x: a.x + (b.x - a.x) * alpha, y: a.y + (b.y - a.y) * alpha)
+}
+
+private func area(_ rect: CGRect) -> Double {
+    max(0, rect.width) * max(0, rect.height)
+}
+
+private func intersectionOverUnion(_ a: CGRect, _ b: CGRect) -> Double {
+    let intersection = a.intersection(b)
+    let union = area(a) + area(b) - area(intersection)
+    guard union > 0 else { return 0 }
+    return area(intersection) / union
+}
+
+private struct FaceCandidate {
+    let id: String
+    let boundingBox: CGRect
+    let confidence: Double
+    let observation: VNFaceObservation?
+
+    init(id: String, boundingBox: CGRect, confidence: Double, observation: VNFaceObservation? = nil) {
+        self.id = id
+        self.boundingBox = boundingBox
+        self.confidence = confidence
+        self.observation = observation
+    }
+}
+
+private struct ActiveFaceTracker {
+    private let minConfidence = 0.45
+    private let lostFrameLimit = 3
+    private let switchConfidenceMargin = 0.22
+    private let currentAffinityThreshold = 0.2
+    private var active: FaceCandidate?
+    private var lastAcceptedBox: CGRect?
+    private var boxVelocity = CGPoint.zero
+    private var lostFrames = 0
+    private var freshTrack = false
+
+    var predictedBox: CGRect? {
+        guard !freshTrack else { return nil }
+        let box = lastAcceptedBox ?? active?.boundingBox
+        return box?.offsetBy(dx: boxVelocity.x, dy: boxVelocity.y)
+    }
+
+    var needsFreshSignal: Bool {
+        freshTrack
+    }
+
+    mutating func reset() {
+        active = nil
+        lastAcceptedBox = nil
+        boxVelocity = .zero
+        lostFrames = 0
+        freshTrack = false
+    }
+
+    mutating func choose(from faces: [FaceCandidate]) -> FaceCandidate? {
+        let validFaces = faces.filter { $0.confidence >= minConfidence }
+        guard !validFaces.isEmpty else {
+            return markMissing()
         }
-        return (next, .none)
+
+        guard let active else {
+            return setActive(bestCandidate(in: validFaces))
+        }
+
+        let predicted = predictedBox ?? active.boundingBox
+        let currentMatch = validFaces.max { affinity($0, to: predicted) < affinity($1, to: predicted) }
+        let currentAffinity = currentMatch.map { affinity($0, to: predicted) } ?? 0
+        let best = bestCandidate(in: validFaces)
+
+        guard let currentMatch, currentAffinity >= currentAffinityThreshold else {
+            lostFrames += 1
+            if lostFrames >= lostFrameLimit {
+                return replaceActive(with: best)
+            }
+            return nil
+        }
+
+        if best.id != currentMatch.id,
+           best.confidence >= currentMatch.confidence + switchConfidenceMargin {
+            return replaceActive(with: best)
+        }
+
+        return setActive(currentMatch)
+    }
+
+    mutating func accept(_ signal: HeadSignal) {
+        if freshTrack {
+            boxVelocity = .zero
+            freshTrack = false
+        } else if let lastAcceptedBox {
+            boxVelocity = CGPoint(
+                x: signal.faceBox.midX - lastAcceptedBox.midX,
+                y: signal.faceBox.midY - lastAcceptedBox.midY
+            )
+        }
+        lastAcceptedBox = signal.faceBox
+        lostFrames = 0
+    }
+
+    mutating func rejectFrame() {
+        lostFrames += 1
+        if lostFrames >= lostFrameLimit {
+            active = nil
+            lastAcceptedBox = nil
+            boxVelocity = .zero
+            freshTrack = true
+        }
+    }
+
+    private mutating func markMissing() -> FaceCandidate? {
+        guard active != nil else { return nil }
+        lostFrames += 1
+        if lostFrames >= lostFrameLimit {
+            active = nil
+            lastAcceptedBox = nil
+            boxVelocity = .zero
+            freshTrack = true
+        }
+        return nil
+    }
+
+    private mutating func setActive(_ candidate: FaceCandidate) -> FaceCandidate {
+        active = candidate
+        lostFrames = 0
+        return candidate
+    }
+
+    private mutating func replaceActive(with candidate: FaceCandidate) -> FaceCandidate {
+        active = candidate
+        lastAcceptedBox = nil
+        boxVelocity = .zero
+        lostFrames = 0
+        freshTrack = true
+        return candidate
+    }
+
+    private func bestCandidate(in faces: [FaceCandidate]) -> FaceCandidate {
+        faces.max { $0.confidence < $1.confidence }!
+    }
+
+    private func affinity(_ candidate: FaceCandidate, to box: CGRect) -> Double {
+        let iou = intersectionOverUnion(candidate.boundingBox, box)
+        let centerDistance = distance(center(candidate.boundingBox), center(box))
+        let scale = abs(sqrt(area(candidate.boundingBox)) - sqrt(area(box)))
+        return iou * 1.4 - centerDistance * 1.1 - scale * 0.5
+    }
+}
+
+private struct LandmarkInput {
+    let face: FaceCandidate
+    let leftEye: [CGPoint]?
+    let rightEye: [CGPoint]?
+    let nose: [CGPoint]?
+    let yaw: Double?
+    let pitch: Double?
+}
+
+private struct HeadSignal {
+    let faceBox: CGRect
+    let faceCenter: CGPoint
+    let eyeMidpoint: CGPoint
+    let eyeDistance: Double
+    let noseOffset: CGPoint
+    let roll: Double
+    let yaw: Double?
+    let pitch: Double?
+    let confidence: Double
+
+    init(
+        faceBox: CGRect,
+        faceCenter: CGPoint,
+        eyeMidpoint: CGPoint,
+        eyeDistance: Double,
+        noseOffset: CGPoint,
+        roll: Double,
+        yaw: Double?,
+        pitch: Double?,
+        confidence: Double
+    ) {
+        self.faceBox = faceBox
+        self.faceCenter = faceCenter
+        self.eyeMidpoint = eyeMidpoint
+        self.eyeDistance = eyeDistance
+        self.noseOffset = noseOffset
+        self.roll = roll
+        self.yaw = yaw
+        self.pitch = pitch
+        self.confidence = confidence
+    }
+
+    init(_ signal: HeadSignal, faceBox: CGRect? = nil, eyeDistance: Double? = nil, confidence: Double? = nil) {
+        self.faceBox = faceBox ?? signal.faceBox
+        self.faceCenter = faceBox.map(center) ?? signal.faceCenter
+        self.eyeMidpoint = signal.eyeMidpoint
+        self.eyeDistance = eyeDistance ?? signal.eyeDistance
+        self.noseOffset = signal.noseOffset
+        self.roll = signal.roll
+        self.yaw = signal.yaw
+        self.pitch = signal.pitch
+        self.confidence = confidence ?? signal.confidence
+    }
+
+    func blended(with raw: HeadSignal, alpha: Double) -> HeadSignal {
+        HeadSignal(
+            faceBox: CGRect(
+                x: faceBox.origin.x + (raw.faceBox.origin.x - faceBox.origin.x) * alpha,
+                y: faceBox.origin.y + (raw.faceBox.origin.y - faceBox.origin.y) * alpha,
+                width: faceBox.width + (raw.faceBox.width - faceBox.width) * alpha,
+                height: faceBox.height + (raw.faceBox.height - faceBox.height) * alpha
+            ),
+            faceCenter: blend(faceCenter, raw.faceCenter, alpha: alpha),
+            eyeMidpoint: blend(eyeMidpoint, raw.eyeMidpoint, alpha: alpha),
+            eyeDistance: eyeDistance + (raw.eyeDistance - eyeDistance) * alpha,
+            noseOffset: blend(noseOffset, raw.noseOffset, alpha: alpha),
+            roll: roll + (raw.roll - roll) * alpha,
+            yaw: blendOptional(yaw, raw.yaw, alpha: alpha),
+            pitch: blendOptional(pitch, raw.pitch, alpha: alpha),
+            confidence: raw.confidence
+        )
+    }
+}
+
+private func blendOptional(_ previous: Double?, _ raw: Double?, alpha: Double) -> Double? {
+    guard let raw else { return previous }
+    guard let previous else { return raw }
+    return previous + (raw - previous) * alpha
+}
+
+private func centroid(_ points: [CGPoint]?) -> CGPoint? {
+    guard let points, !points.isEmpty else { return nil }
+    let sum = points.reduce(CGPoint.zero) { partial, point in
+        CGPoint(x: partial.x + point.x, y: partial.y + point.y)
+    }
+    return CGPoint(x: sum.x / Double(points.count), y: sum.y / Double(points.count))
+}
+
+private func extractSignal(from input: LandmarkInput) -> HeadSignal? {
+    guard let leftEye = centroid(input.leftEye),
+          let rightEye = centroid(input.rightEye),
+          let nose = centroid(input.nose)
+    else {
+        return nil
+    }
+
+    let eyeDistance = distance(leftEye, rightEye)
+    guard eyeDistance >= 0.03 else { return nil }
+
+    let eyeMidpoint = CGPoint(x: (leftEye.x + rightEye.x) / 2, y: (leftEye.y + rightEye.y) / 2)
+    let noseOffset = CGPoint(
+        x: (nose.x - eyeMidpoint.x) / eyeDistance,
+        y: (nose.y - eyeMidpoint.y) / eyeDistance
+    )
+
+    return HeadSignal(
+        faceBox: input.face.boundingBox,
+        faceCenter: center(input.face.boundingBox),
+        eyeMidpoint: eyeMidpoint,
+        eyeDistance: eyeDistance,
+        noseOffset: noseOffset,
+        roll: atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x),
+        yaw: input.yaw,
+        pitch: input.pitch,
+        confidence: input.face.confidence
+    )
+}
+
+private struct FrameGate {
+    private let minConfidence = 0.45
+    private let maxCenterJump = 0.28
+    private let maxScaleRatio = 1.7
+    private let minScaleRatio = 0.58
+
+    func accepts(_ signal: HeadSignal, previous: HeadSignal?, predictedBox: CGRect?) -> Bool {
+        guard signal.confidence >= minConfidence, signal.eyeDistance >= 0.03 else {
+            return false
+        }
+
+        if let predictedBox,
+           distance(center(signal.faceBox), center(predictedBox)) > maxCenterJump {
+            return false
+        }
+
+        if let previous {
+            let ratio = signal.eyeDistance / previous.eyeDistance
+            if ratio > maxScaleRatio || ratio < minScaleRatio {
+                return false
+            }
+        }
+
+        return true
+    }
+}
+
+private struct SignalVector {
+    var x: Double
+    var y: Double
+
+    static let zero = SignalVector(x: 0, y: 0)
+
+    var magnitude: Double {
+        sqrt(x * x + y * y)
+    }
+
+    func scaled(_ scalar: Double) -> SignalVector {
+        SignalVector(x: x * scalar, y: y * scalar)
+    }
+}
+
+private func - (lhs: SignalVector, rhs: SignalVector) -> SignalVector {
+    SignalVector(x: lhs.x - rhs.x, y: lhs.y - rhs.y)
+}
+
+private func + (lhs: SignalVector, rhs: SignalVector) -> SignalVector {
+    SignalVector(x: lhs.x + rhs.x, y: lhs.y + rhs.y)
+}
+
+private enum TrackingState {
+    case acquiring
+    case tracking
+    case recenterPending
+    case lost
+}
+
+private struct HeadPointerMotion {
+    var config: HeadPointerConfig
+    private(set) var state: TrackingState = .acquiring
+    private var neutral: HeadSignal?
+    private var filtered: HeadSignal?
+    private var previousVector = SignalVector.zero
+    private var previousTimestamp: Double?
+    private var outputPoint: CGPoint?
+    private var movementActive = false
+    private var stableTime = 0.0
+    private var rejectedFrames = 0
+    private let rejectionBudget = 3
+
+    var neutralNoseOffsetXForSelfTest: Double? {
+        guard let x = neutral?.noseOffset.x else { return nil }
+        return Double(x)
+    }
+
+    init(config: HeadPointerConfig) {
+        self.config = config.sanitized
+    }
+
+    mutating func reset() {
+        state = .acquiring
+        neutral = nil
+        filtered = nil
+        previousVector = .zero
+        previousTimestamp = nil
+        outputPoint = nil
+        movementActive = false
+        stableTime = 0
+        rejectedFrames = 0
+    }
+
+    mutating func applyConfig(_ next: HeadPointerConfig) {
+        config = next.sanitized
+    }
+
+    mutating func requestRecenter() {
+        state = .recenterPending
+    }
+
+    mutating func rejectFrame() -> CGPoint? {
+        rejectedFrames += 1
+        if rejectedFrames >= rejectionBudget {
+            state = .lost
+            filtered = nil
+            movementActive = false
+        }
+        return outputPoint
+    }
+
+    mutating func step(signal rawSignal: HeadSignal, timestamp: Double, screens: [CGRect]) -> CGPoint? {
+        guard var point = outputPoint ?? defaultPointerPoint(screens: screens) else {
+            return nil
+        }
+
+        let dt = frameDelta(timestamp)
+        rejectedFrames = 0
+
+        if neutral == nil || state == .acquiring || state == .lost {
+            neutral = rawSignal
+            filtered = rawSignal
+            previousVector = .zero
+            previousTimestamp = timestamp
+            outputPoint = point
+            state = .tracking
+            return point
+        }
+
+        if state == .recenterPending {
+            neutral = rawSignal
+            filtered = rawSignal
+            previousVector = .zero
+            previousTimestamp = timestamp
+            outputPoint = defaultPointerPoint(screens: screens) ?? point
+            movementActive = false
+            stableTime = 0
+            state = .tracking
+            return outputPoint
+        }
+
+        guard let neutral else { return point }
+        let rawVector = controlVector(for: rawSignal, neutral: neutral)
+        let alpha = smoothingAlpha(rawVector: rawVector, dt: dt)
+        let smoothed = (filtered ?? rawSignal).blended(with: rawSignal, alpha: alpha)
+        let smoothedVector = controlVector(for: smoothed, neutral: neutral)
+        filtered = smoothed
+        previousVector = smoothedVector
+        previousTimestamp = timestamp
+
+        let velocity = pointerVelocity(rawVector: rawVector, smoothedVector: smoothedVector)
+        point = CGPoint(x: point.x + velocity.x * dt, y: point.y + velocity.y * dt)
+        point = clampIntoRealScreen(point, screens: screens)
+        outputPoint = point
+        updateStableRecenter(rawVector: rawVector, smoothed: smoothed, dt: dt)
+        state = .tracking
+        return point
+    }
+
+    private mutating func frameDelta(_ timestamp: Double) -> Double {
+        defer { previousTimestamp = timestamp }
+        guard let previousTimestamp, timestamp > previousTimestamp else {
+            return 1.0 / 30.0
+        }
+        return min(max(timestamp - previousTimestamp, 1.0 / 120.0), 0.25)
+    }
+
+    private func controlVector(for signal: HeadSignal, neutral: HeadSignal) -> SignalVector {
+        let noseX = signal.noseOffset.x - neutral.noseOffset.x
+        let noseY = signal.noseOffset.y - neutral.noseOffset.y
+        let yaw = (signal.yaw ?? neutral.yaw ?? 0) - (neutral.yaw ?? 0)
+        let pitch = (signal.pitch ?? neutral.pitch ?? 0) - (neutral.pitch ?? 0)
+        let centerX = signal.faceCenter.x - neutral.faceCenter.x
+        let centerY = signal.faceCenter.y - neutral.faceCenter.y
+
+        switch config.movementMode {
+        case .edge:
+            return SignalVector(
+                x: noseX * 0.75 + yaw * 0.55 + centerX * 0.25,
+                y: noseY * 0.75 + pitch * 0.55 + centerY * 0.25
+            )
+        case .relative:
+            let scale = max(neutral.faceBox.width, 0.1)
+            return SignalVector(
+                x: centerX / scale + noseX * 0.25,
+                y: centerY / scale + noseY * 0.25
+            )
+        }
+    }
+
+    private func smoothingAlpha(rawVector: SignalVector, dt: Double) -> Double {
+        let speed = (rawVector - previousVector).magnitude / max(dt, 0.001)
+        return clamp(0.10 + rawVector.magnitude * 0.55 + min(speed * 0.025, 0.28), 0.10...0.52)
+    }
+
+    private mutating func pointerVelocity(rawVector: SignalVector, smoothedVector: SignalVector) -> SignalVector {
+        let outer = max(config.distanceToEdge, 0.01)
+        let inner = outer * 0.55
+        let rawMagnitude = rawVector.magnitude
+
+        if movementActive {
+            if rawMagnitude < inner {
+                movementActive = false
+            }
+        } else if rawMagnitude > outer {
+            movementActive = true
+        }
+
+        let driveVector = smoothedVector.magnitude >= inner ? smoothedVector : rawVector
+        guard movementActive, driveVector.magnitude > 0 else {
+            return .zero
+        }
+
+        let excess = max(driveVector.magnitude - inner, 0)
+        let normalized = min(excess / max(1 - inner, 0.001), 1)
+        let gain = pow(normalized, 1.35)
+        let maxPixelsPerSecond = 180 + config.speed * 90
+        let scalar = maxPixelsPerSecond * gain / driveVector.magnitude
+        return driveVector.scaled(scalar)
+    }
+
+    private mutating func updateStableRecenter(rawVector: SignalVector, smoothed: HeadSignal, dt: Double) {
+        let inner = max(config.distanceToEdge, 0.01) * 0.55
+        guard rawVector.magnitude < inner, movementActive == false else {
+            stableTime = 0
+            return
+        }
+
+        stableTime += dt
+        if stableTime >= 2.0, let currentNeutral = neutral {
+            neutral = currentNeutral.blended(with: smoothed, alpha: min(dt * 0.02, 0.02))
+        }
+    }
+}
+
+private struct HeadTrackingModel {
+    private var faceTracker = ActiveFaceTracker()
+    private var motion = HeadPointerMotion(config: .default)
+    private let gate = FrameGate()
+    private var lastAcceptedSignal: HeadSignal?
+
+    mutating func reset() {
+        faceTracker.reset()
+        motion.reset()
+        lastAcceptedSignal = nil
+    }
+
+    mutating func applyConfig(_ config: HeadPointerConfig) {
+        motion.applyConfig(config)
+    }
+
+    mutating func requestRecenter() {
+        motion.requestRecenter()
+    }
+
+    mutating func chooseFace(from faces: [FaceCandidate]) -> FaceCandidate? {
+        faceTracker.choose(from: faces)
+    }
+
+    mutating func rejectFrame() {
+        faceTracker.rejectFrame()
+        _ = motion.rejectFrame()
+        if motion.state == .lost {
+            lastAcceptedSignal = nil
+        }
+    }
+
+    mutating func missFace() {
+        _ = motion.rejectFrame()
+        if motion.state == .lost {
+            lastAcceptedSignal = nil
+        }
+    }
+
+    mutating func point(for signal: HeadSignal, timestamp: Double, screens: [CGRect]) -> CGPoint? {
+        let freshTrack = faceTracker.needsFreshSignal
+        guard gate.accepts(
+            signal,
+            previous: freshTrack ? nil : lastAcceptedSignal,
+            predictedBox: faceTracker.predictedBox
+        ) else {
+            rejectFrame()
+            return nil
+        }
+
+        faceTracker.accept(signal)
+        lastAcceptedSignal = signal
+        return motion.step(signal: signal, timestamp: timestamp, screens: screens)
     }
 }
 
@@ -299,6 +797,34 @@ private final class GoldenCursorOverlay {
     }
 }
 
+private func landmarkPoints(_ region: VNFaceLandmarkRegion2D?, in faceBox: CGRect) -> [CGPoint]? {
+    guard let region, region.pointCount > 0 else { return nil }
+    return region.normalizedPoints.map { point in
+        CGPoint(
+            x: faceBox.minX + point.x * faceBox.width,
+            y: faceBox.minY + point.y * faceBox.height
+        )
+    }
+}
+
+private func landmarkInput(from observation: VNFaceObservation, id: String) -> LandmarkInput? {
+    guard let landmarks = observation.landmarks else { return nil }
+    let face = FaceCandidate(
+        id: id,
+        boundingBox: observation.boundingBox,
+        confidence: Double(observation.confidence),
+        observation: observation
+    )
+    return LandmarkInput(
+        face: face,
+        leftEye: landmarkPoints(landmarks.leftEye, in: observation.boundingBox),
+        rightEye: landmarkPoints(landmarks.rightEye, in: observation.boundingBox),
+        nose: landmarkPoints(landmarks.nose, in: observation.boundingBox),
+        yaw: observation.yaw?.doubleValue,
+        pitch: observation.pitch?.doubleValue
+    )
+}
+
 private final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private let writer: EventWriter
     private let overlay = GoldenCursorOverlay()
@@ -311,6 +837,7 @@ private final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferD
     private var wantsRunning = false
     private var running = false
     private var lastFrameTime = 0.0
+    private var trackingModel = HeadTrackingModel()
 
     init(writer: EventWriter) {
         self.writer = writer
@@ -355,6 +882,18 @@ private final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferD
         }
     }
 
+    func applyConfig(_ config: HeadPointerConfig) {
+        videoQueue.async { [weak self] in
+            self?.trackingModel.applyConfig(config)
+        }
+    }
+
+    func requestRecenter() {
+        videoQueue.async { [weak self] in
+            self?.trackingModel.requestRecenter()
+        }
+    }
+
     private func startAuthorized() {
         sessionQueue.async { [weak self] in
             guard let self else { return }
@@ -362,6 +901,9 @@ private final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferD
             do {
                 let session = try self.makeSession()
                 guard self.beginRunningIfWanted() else { return }
+                self.videoQueue.sync {
+                    self.trackingModel.reset()
+                }
                 self.session = session
                 self.writer.start()
                 session.startRunning()
@@ -425,22 +967,52 @@ private final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferD
             return
         }
 
-        guard let observation = request.results?.first as? VNFaceObservation else {
+        let candidates = (request.results ?? []).enumerated().map { index, observation in
+            FaceCandidate(
+                id: "vision-\(index)",
+                boundingBox: observation.boundingBox,
+                confidence: Double(observation.confidence),
+                observation: observation
+            )
+        }
+
+        guard let chosen = trackingModel.chooseFace(from: candidates),
+              let chosenObservation = chosen.observation
+        else {
+            trackingModel.missFace()
             return
         }
 
-        let yaw = observation.yaw?.doubleValue
-        let pitch = observation.pitch?.doubleValue
-        let confidence = Double(observation.confidence)
+        let landmarkRequest = VNDetectFaceLandmarksRequest()
+        landmarkRequest.inputFaceObservations = [chosenObservation]
+
+        do {
+            try handler.perform([landmarkRequest])
+        } catch {
+            trackingModel.rejectFrame()
+            writer.error("Vision face landmarks failed: \(error.localizedDescription)")
+            return
+        }
+
+        guard let landmarkObservation = landmarkRequest.results?.first as? VNFaceObservation,
+              let input = landmarkInput(from: landmarkObservation, id: chosen.id),
+              let signal = extractSignal(from: input)
+        else {
+            trackingModel.rejectFrame()
+            return
+        }
+
         let screens = DispatchQueue.main.sync { NSScreen.screens.map(\.frame) }
 
-        guard let point = mapHeadAnglesToPoint(yaw: yaw, pitch: pitch, screens: screens) else {
-            writer.error("No screens available for head-point mapping")
+        guard let point = trackingModel.point(for: signal, timestamp: now, screens: screens) else {
+            if screens.isEmpty {
+                writer.error("No screens available for head-point mapping")
+            }
             return
         }
 
         DispatchQueue.main.async { [overlay] in overlay.show(at: point) }
-        writer.point(x: point.x, y: point.y, yaw: yaw, pitch: pitch, confidence: confidence)
+        writer.point(x: point.x, y: point.y, yaw: signal.yaw, pitch: signal.pitch, confidence: signal.confidence)
     }
 
     private func requestStart() -> Bool {
@@ -498,6 +1070,27 @@ private enum SidecarError: LocalizedError {
     }
 }
 
+private func startControlReader(tracker: HeadTracker, writer: EventWriter) {
+    DispatchQueue.global(qos: .utility).async {
+        while let line = readLine(strippingNewline: true) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            guard let command = parseControlCommand(trimmed) else {
+                writer.error("Invalid head-track control command")
+                continue
+            }
+
+            switch command {
+            case .config(let config):
+                tracker.applyConfig(config)
+            case .recenter:
+                tracker.requestRecenter()
+            }
+        }
+    }
+}
+
 
 
 private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -514,52 +1107,195 @@ private func expectEvent(_ event: [String: Any], kind: String, keys: Set<String>
     expect(JSONSerialization.isValidJSONObject(event), "\(kind) event is JSON serializable")
 }
 
+private func expectClose(_ actual: Double, _ expected: Double, tolerance: Double, _ message: String) {
+    expect(abs(actual - expected) <= tolerance, message)
+}
+
+private func testActiveFaceSelection() {
+    var tracker = ActiveFaceTracker()
+    let current = FaceCandidate(id: "current", boundingBox: CGRect(x: 0.1, y: 0.2, width: 0.25, height: 0.35), confidence: 0.72)
+    let slightCompetitor = FaceCandidate(id: "competitor", boundingBox: CGRect(x: 0.65, y: 0.2, width: 0.25, height: 0.35), confidence: 0.79)
+    let clearCompetitor = FaceCandidate(id: "winner", boundingBox: CGRect(x: 0.65, y: 0.2, width: 0.25, height: 0.35), confidence: 0.98)
+
+    expect(tracker.choose(from: [current])?.id == "current", "one valid face becomes active")
+    expect(tracker.choose(from: [slightCompetitor, current])?.id == "current", "active face resists slight confidence wins")
+    expect(tracker.choose(from: [slightCompetitor]) == nil, "short active-face dropout holds instead of switching")
+    expect(tracker.choose(from: [slightCompetitor]) == nil, "second active-face dropout still holds")
+    expect(tracker.choose(from: [slightCompetitor])?.id == "competitor", "lost active face reacquires best candidate")
+
+    tracker = ActiveFaceTracker()
+    _ = tracker.choose(from: [current])
+    tracker.accept(makeSignal(x: 0))
+    expect(tracker.predictedBox != nil, "accepted active face predicts the next box")
+    let farReentry = FaceCandidate(id: "far-reentry", boundingBox: CGRect(x: 0.78, y: 0.2, width: 0.18, height: 0.3), confidence: 0.9)
+    expect(tracker.choose(from: [farReentry]) == nil, "first far jump waits for lost budget")
+    expect(tracker.choose(from: [farReentry]) == nil, "second far jump still waits for lost budget")
+    expect(tracker.choose(from: [farReentry])?.id == "far-reentry", "far jump reacquires after lost budget")
+    expect(tracker.predictedBox == nil, "fresh reacquisition does not use stale box prediction")
+
+    tracker = ActiveFaceTracker()
+    expect(tracker.choose(from: [current])?.id == "current", "active face reset selects current")
+    expect(tracker.choose(from: [clearCompetitor, current])?.id == "winner", "clear competitor can take over")
+}
+
+private func testSignalExtractionAndFrameGate() {
+    let face = FaceCandidate(id: "face", boundingBox: CGRect(x: 0.2, y: 0.25, width: 0.3, height: 0.4), confidence: 0.9)
+    let landmarks = LandmarkInput(
+        face: face,
+        leftEye: [CGPoint(x: 0.30, y: 0.55)],
+        rightEye: [CGPoint(x: 0.54, y: 0.55)],
+        nose: [CGPoint(x: 0.44, y: 0.43)],
+        yaw: 0.1,
+        pitch: -0.05
+    )
+    let signal = extractSignal(from: landmarks)!
+    expectClose(signal.eyeDistance, 0.24, tolerance: 0.001, "inter-eye distance is measured")
+    expectClose(signal.noseOffset.x, 0.02 / 0.24, tolerance: 0.002, "nose x offset is eye-distance normalized")
+    expectClose(signal.roll, 0, tolerance: 0.001, "level eyes produce zero roll")
+
+    let closer = FaceCandidate(id: "face", boundingBox: CGRect(x: 0.15, y: 0.2, width: 0.45, height: 0.55), confidence: 0.9)
+    let closerSignal = extractSignal(from: LandmarkInput(
+        face: closer,
+        leftEye: [CGPoint(x: 0.30, y: 0.55)],
+        rightEye: [CGPoint(x: 0.54, y: 0.55)],
+        nose: [CGPoint(x: 0.44, y: 0.43)],
+        yaw: 0.1,
+        pitch: -0.05
+    ))!
+    expectClose(closerSignal.noseOffset.x, signal.noseOffset.x, tolerance: 0.001, "scale alone does not change normalized nose offset")
+
+    expect(extractSignal(from: LandmarkInput(face: face, leftEye: nil, rightEye: landmarks.rightEye, nose: landmarks.nose, yaw: nil, pitch: nil)) == nil, "missing eye landmarks reject extraction")
+
+    let gate = FrameGate()
+    expect(gate.accepts(signal, previous: nil, predictedBox: nil), "first valid signal is accepted")
+    let lowConfidence = HeadSignal(signal, confidence: 0.2)
+    expect(!gate.accepts(lowConfidence, previous: signal, predictedBox: signal.faceBox), "low-confidence frame is rejected")
+    let jumped = HeadSignal(signal, faceBox: CGRect(x: 0.75, y: 0.25, width: 0.3, height: 0.4))
+    expect(!gate.accepts(jumped, previous: signal, predictedBox: signal.faceBox), "implausible face-box jump is rejected")
+    let scaled = HeadSignal(signal, faceBox: CGRect(x: 0.2, y: 0.25, width: 0.55, height: 0.75), eyeDistance: signal.eyeDistance * 2.1)
+    expect(!gate.accepts(scaled, previous: signal, predictedBox: signal.faceBox), "implausible scale change is rejected")
+}
+
+private func makeSignal(x: Double, y: Double = 0, confidence: Double = 0.9) -> HeadSignal {
+    HeadSignal(
+        faceBox: CGRect(x: 0.3 + x * 0.02, y: 0.3, width: 0.25, height: 0.35),
+        faceCenter: CGPoint(x: 0.425 + x * 0.02, y: 0.475),
+        eyeMidpoint: CGPoint(x: 0.425, y: 0.55),
+        eyeDistance: 0.22,
+        noseOffset: CGPoint(x: x, y: y),
+        roll: 0,
+        yaw: x * 0.2,
+        pitch: y * 0.2,
+        confidence: confidence
+    )
+}
+
+private func testPointerMotion() {
+    let screen = CGRect(x: 0, y: 0, width: 500, height: 500)
+    var pointer = HeadPointerMotion(config: .default)
+
+    let first = pointer.step(signal: makeSignal(x: 0), timestamp: 0, screens: [screen])!
+    for frame in 1...30 {
+        let jitter = pointer.step(signal: makeSignal(x: frame.isMultiple(of: 2) ? 0.015 : -0.012), timestamp: Double(frame) / 30, screens: [screen])!
+        expectClose(jitter.x, first.x, tolerance: 0.5, "neutral jitter does not move pointer")
+    }
+
+    let slowStart = pointer.step(signal: makeSignal(x: 0.16), timestamp: 1.1, screens: [screen])!
+    let slowEnd = pointer.step(signal: makeSignal(x: 0.18), timestamp: 1.2, screens: [screen])!
+    let slowDelta = slowEnd.x - slowStart.x
+    let fastStart = pointer.step(signal: makeSignal(x: 0.42), timestamp: 1.3, screens: [screen])!
+    let fastEnd = pointer.step(signal: makeSignal(x: 0.55), timestamp: 1.4, screens: [screen])!
+    let fastDelta = fastEnd.x - fastStart.x
+    expect(fastDelta > slowDelta * 2, "larger faster movement accelerates more than slow movement")
+
+    let hysteresisHold = pointer.step(signal: makeSignal(x: 0.08), timestamp: 1.5, screens: [screen])!
+    expect(hysteresisHold.x > slowEnd.x, "outer-to-inner hysteresis keeps movement active")
+    let stopped = pointer.step(signal: makeSignal(x: 0.01), timestamp: 1.6, screens: [screen])!
+    expectClose(stopped.x, hysteresisHold.x, tolerance: 0.5, "inner hysteresis band stops movement")
+
+    pointer.requestRecenter()
+    let recentered = pointer.step(signal: makeSignal(x: 0.35), timestamp: 1.7, screens: [screen])!
+    expectClose(recentered.x, 250, tolerance: 0.5, "manual recenter centers pointer")
+    let afterRecenter = pointer.step(signal: makeSignal(x: 0.35), timestamp: 1.8, screens: [screen])!
+    expectClose(afterRecenter.x, recentered.x, tolerance: 0.5, "new neutral holds after recenter")
+
+    var clamped = HeadPointerMotion(config: HeadPointerConfig(movementMode: .edge, speed: 10, distanceToEdge: 0.04))
+    _ = clamped.step(signal: makeSignal(x: 0), timestamp: 0, screens: [screen])
+    let nearEdge = clamped.step(signal: makeSignal(x: 2), timestamp: 2, screens: [screen, CGRect(x: 800, y: 0, width: 500, height: 500)])!
+    expect(containsInclusive(screen, nearEdge) || containsInclusive(CGRect(x: 800, y: 0, width: 500, height: 500), nearEdge), "integrated pointer clamps into a real screen")
+
+    var relative = HeadPointerMotion(config: HeadPointerConfig(movementMode: .relative, speed: 5, distanceToEdge: 0.12))
+    _ = relative.step(signal: makeSignal(x: 0), timestamp: 0, screens: [screen])
+    let relativeMove = relative.step(signal: makeSignal(x: 0.45), timestamp: 0.2, screens: [screen])!
+    expect(relativeMove.x > 250, "relative mode moves from face translation")
+}
+
+private func testPeriodicRecenterOnlyWhileStable() {
+    let screen = CGRect(x: 0, y: 0, width: 500, height: 500)
+    var stable = HeadPointerMotion(config: .default)
+    _ = stable.step(signal: makeSignal(x: 0), timestamp: 0, screens: [screen])
+    for frame in 1...150 {
+        _ = stable.step(signal: makeSignal(x: 0.04), timestamp: Double(frame) / 30, screens: [screen])
+    }
+    expect(
+        (stable.neutralNoseOffsetXForSelfTest ?? 0) > 0,
+        "stable in-band drift can slowly update neutral"
+    )
+
+    var active = HeadPointerMotion(config: .default)
+    _ = active.step(signal: makeSignal(x: 0), timestamp: 0, screens: [screen])
+    for frame in 1...150 {
+        _ = active.step(signal: makeSignal(x: 0.4), timestamp: Double(frame) / 30, screens: [screen])
+    }
+    expectClose(
+        active.neutralNoseOffsetXForSelfTest ?? -1,
+        0,
+        tolerance: 0.0001,
+        "active movement does not drag neutral"
+    )
+}
+
+private func testModelRecoversAfterNoFaceGap() {
+    let screen = CGRect(x: 0, y: 0, width: 500, height: 500)
+    var model = HeadTrackingModel()
+    let initial = makeSignal(x: 0)
+    let initialFace = FaceCandidate(id: "initial", boundingBox: initial.faceBox, confidence: 0.9)
+    expect(model.chooseFace(from: [initialFace])?.id == "initial", "model selects initial face")
+    expect(model.point(for: initial, timestamp: 0, screens: [screen]) != nil, "initial face produces a point")
+
+    for _ in 0..<3 {
+        expect(model.chooseFace(from: []) == nil, "missing face produces no candidate")
+        model.missFace()
+    }
+
+    let returned = HeadSignal(
+        makeSignal(x: 0.02),
+        faceBox: CGRect(x: 0.78, y: 0.2, width: 0.18, height: 0.3),
+        eyeDistance: 0.09
+    )
+    let returnedFace = FaceCandidate(id: "returned", boundingBox: returned.faceBox, confidence: 0.9)
+    expect(model.chooseFace(from: [returnedFace])?.id == "returned", "model reacquires after a no-face gap")
+    expect(model.point(for: returned, timestamp: 1, screens: [screen]) != nil, "freshly reacquired face is not rejected by stale geometry")
+}
+
+private func testControlCommandParsing() {
+    expect(parseControlCommand(#"{"kind":"recenter"}"#) == .recenter, "recenter command parses")
+    let command = parseControlCommand(#"{"kind":"config","headPointer":{"movementMode":"relative","speed":7,"distanceToEdge":0.2}}"#)
+    expect(command == .config(HeadPointerConfig(movementMode: .relative, speed: 7, distanceToEdge: 0.2)), "config command parses")
+}
+
 private func runSelfTest() {
     let primary = CGRect(x: 0, y: 0, width: 100, height: 100)
     let secondary = CGRect(x: 200, y: 0, width: 100, height: 100)
-    let center = mapHeadAnglesToPoint(yaw: 0, pitch: 0, screens: [primary, secondary])!
-    expect(containsInclusive(primary, center) || containsInclusive(secondary, center), "gap point clamps into a real screen")
+    let clamped = clampIntoRealScreen(CGPoint(x: 150, y: 50), screens: [primary, secondary])
+    expect(containsInclusive(primary, clamped) || containsInclusive(secondary, clamped), "gap point clamps into a real screen")
 
-    let left = mapHeadAnglesToPoint(yaw: -0.45, pitch: 0, screens: [primary])!
-    let right = mapHeadAnglesToPoint(yaw: 0.45, pitch: 0, screens: [primary])!
-    expect(left.x < right.x, "yaw is monotonic left-to-right")
-
-    let low = mapHeadAnglesToPoint(yaw: 0, pitch: -0.35, screens: [primary])!
-    let high = mapHeadAnglesToPoint(yaw: 0, pitch: 0.35, screens: [primary])!
-    expect(low.y < high.y, "pitch is monotonic bottom-to-top")
-
-    var state = HotkeyState()
-    var decision: HotkeyDecision
-    (state, decision) = decideHotkey(kind: .flagsChanged, keyCode: 61, flagsRaw: rightOptionFlagMask, state: state)
-    expect(decision == .none && state.rightOptionHeld, "right option hold is tracked")
-    (state, decision) = decideHotkey(
-        kind: .keyDown,
-        keyCode: slashKeyCode,
-        flagsRaw: rightOptionFlagMask | shiftFlagMask,
-        state: state
-    )
-    expect(decision == .start && state.tracking, "right option plus question mark starts")
-    (state, decision) = decideHotkey(kind: .flagsChanged, keyCode: 61, flagsRaw: 0, state: state)
-    expect(decision == .stop && !state.tracking, "right option release stops")
-
-    let leftOptionOnly = decideHotkey(kind: .flagsChanged, keyCode: 58, flagsRaw: 0x20, state: HotkeyState())
-    expect(leftOptionOnly.1 == .none && !leftOptionOnly.0.rightOptionHeld, "left option does not arm")
-    let questionWithoutRightOption = decideHotkey(
-        kind: .keyDown,
-        keyCode: slashKeyCode,
-        flagsRaw: shiftFlagMask,
-        state: HotkeyState()
-    )
-    expect(questionWithoutRightOption.1 == .none, "question mark without right option does not start")
-
-    var retryState = HotkeyTapRetryState()
-    var retryAction: HotkeyTapRetryAction
-    (retryState, retryAction) = decideHotkeyTapRetry(installed: false, state: retryState)
-    expect(retryAction == .blocked(scheduleRetry: true), "blocked tap keeps process alive and schedules retry")
-    (retryState, retryAction) = decideHotkeyTapRetry(installed: false, state: retryState)
-    expect(retryAction == .blocked(scheduleRetry: false), "repeated blocked tap emits recoverable error without duplicate timer")
-    (retryState, retryAction) = decideHotkeyTapRetry(installed: true, state: retryState)
-    expect(retryAction == .armed, "later successful tap install arms without relaunch")
+    testActiveFaceSelection()
+    testSignalExtractionAndFrameGate()
+    testPointerMotion()
+    testPeriodicRecenterOnlyWhileStable()
+    testModelRecoversAfterNoFaceGap()
+    testControlCommandParsing()
 
     expectEvent(startEvent(ts: 123), kind: "start", keys: ["kind", "ts"])
     expectEvent(stopEvent(ts: 123), kind: "stop", keys: ["kind", "ts"])
@@ -578,12 +1314,13 @@ if CommandLine.arguments.contains("--selftest") {
     exit(0)
 }
 
-// The capture hotkey (Right Option + ?) is owned by the app process (#95), which
+// The capture hotkey is owned by the app process (#95), which
 // spawns this sidecar only for the duration of a capture. So tracking auto-starts
 // on launch and stops when the host kills the process.
 private let writer = EventWriter()
 private let tracker = HeadTracker(writer: writer)
 
 NSApplication.shared.setActivationPolicy(.accessory)
+startControlReader(tracker: tracker, writer: writer)
 tracker.start()
 RunLoop.main.run()

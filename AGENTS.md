@@ -77,7 +77,7 @@ open -n apps/desktop/src-tauri/target/debug/bundle/macos/HandsOff.app \
 
 Worker deploy + a curl smoke test live in `workers/assemblyai-token/README.md`.
 
-Head tracking follows the same TCC rule: test Camera/Input Monitoring from the bundled `.app`, not `tauri dev`.
+Head tracking follows the same TCC rule: test Camera/head tracking from the bundled `.app`, not `tauri dev`; this path must not require Input Monitoring.
 
 ## Performance
 

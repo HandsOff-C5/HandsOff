@@ -65,7 +65,7 @@ describe("useHeadPointing", () => {
     });
 
     expect(result.current).toMatchObject({
-      status: "idle",
+      status: "tracking",
       point: { x: 10, y: 20 },
       candidates: [candidate],
     });
@@ -84,10 +84,24 @@ describe("useHeadPointing", () => {
     const { result } = renderHook(() => useHeadPointing({ listen }));
     await waitFor(() => expect(handler).not.toBeNull());
 
+    act(() =>
+      handler?.({
+        payload: {
+          kind: "point",
+          x: 10,
+          y: 20,
+          yaw: null,
+          pitch: null,
+          confidence: 0.9,
+          ts: 1,
+        },
+      }),
+    );
     act(() => handler?.({ payload: { kind: "point", confidence: 2 } }));
 
     expect(result.current).toMatchObject({
       status: "error",
+      point: { x: 10, y: 20 },
       error: "Invalid head pointing event",
     });
   });

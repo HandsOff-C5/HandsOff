@@ -12,7 +12,6 @@ const ALL_GRANTED = report([
   { id: "camera", kind: "permission", state: "granted" },
   { id: "accessibility", kind: "permission", state: "granted" },
   { id: "screen-recording", kind: "permission", state: "granted" },
-  { id: "input-monitoring", kind: "permission", state: "granted" },
 ]);
 
 // Accessibility denied, Screen Recording still not granted.
@@ -20,28 +19,18 @@ const ACCESSIBILITY_DENIED = report([
   { id: "camera", kind: "permission", state: "granted" },
   { id: "accessibility", kind: "permission", state: "denied" },
   { id: "screen-recording", kind: "permission", state: "granted" },
-  { id: "input-monitoring", kind: "permission", state: "granted" },
 ]);
 
 const SCREEN_RECORDING_DENIED = report([
   { id: "camera", kind: "permission", state: "granted" },
   { id: "accessibility", kind: "permission", state: "granted" },
   { id: "screen-recording", kind: "permission", state: "denied" },
-  { id: "input-monitoring", kind: "permission", state: "granted" },
 ]);
 
 const CAMERA_DENIED = report([
   { id: "camera", kind: "permission", state: "denied" },
   { id: "accessibility", kind: "permission", state: "granted" },
   { id: "screen-recording", kind: "permission", state: "granted" },
-  { id: "input-monitoring", kind: "permission", state: "granted" },
-]);
-
-const INPUT_MONITORING_DENIED = report([
-  { id: "camera", kind: "permission", state: "granted" },
-  { id: "accessibility", kind: "permission", state: "granted" },
-  { id: "screen-recording", kind: "permission", state: "granted" },
-  { id: "input-monitoring", kind: "permission", state: "denied" },
 ]);
 
 const noop = () => {};
@@ -82,16 +71,6 @@ describe("PermissionsPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows targeted Input Monitoring guidance when it is missing", () => {
-    render(
-      <PermissionsPanel report={INPUT_MONITORING_DENIED} isChecking={false} onRecheck={noop} />,
-    );
-    expect(screen.getByRole("heading", { level: 3, name: /Input Monitoring/ })).toBeInTheDocument();
-    expect(
-      screen.getByText("System Settings → Privacy & Security → Input Monitoring"),
-    ).toBeInTheDocument();
-  });
-
   it("lists the ordered grant steps for a missing permission", () => {
     render(<PermissionsPanel report={ACCESSIBILITY_DENIED} isChecking={false} onRecheck={noop} />);
     const steps = screen.getAllByRole("listitem").map((item) => item.textContent);
@@ -126,21 +105,24 @@ describe("PermissionsPanel", () => {
 
 // Microphone + speech accept/manage controls (#31).
 const MEDIA_NOT_GRANTED = report([
+  { id: "camera", kind: "permission", state: "not-determined" },
   { id: "microphone", kind: "permission", state: "not-determined" },
   { id: "speech-recognition", kind: "permission", state: "not-determined" },
 ]);
 
 const MEDIA_GRANTED = report([
+  { id: "camera", kind: "permission", state: "granted" },
   { id: "microphone", kind: "permission", state: "granted" },
   { id: "speech-recognition", kind: "permission", state: "granted" },
 ]);
 
-describe("PermissionsPanel — microphone & speech", () => {
-  it("shows the microphone and speech statuses", () => {
+describe("PermissionsPanel — head capture media", () => {
+  it("shows the camera, microphone, and speech statuses", () => {
     render(<PermissionsPanel report={MEDIA_NOT_GRANTED} isChecking={false} onRecheck={noop} />);
     expect(
-      screen.getByRole("heading", { level: 3, name: /Microphone & Speech/ }),
+      screen.getByRole("heading", { level: 3, name: /Head Capture Media/ }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Camera · /)).toBeInTheDocument();
     expect(screen.getByText(/Microphone · /)).toBeInTheDocument();
     expect(screen.getByText(/Speech Recognition · /)).toBeInTheDocument();
   });
@@ -155,7 +137,7 @@ describe("PermissionsPanel — microphone & speech", () => {
         onRequestMedia={onRequestMedia}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Allow microphone & speech/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Allow camera, microphone & speech/ }));
     expect(onRequestMedia).toHaveBeenCalledTimes(1);
   });
 
@@ -169,9 +151,9 @@ describe("PermissionsPanel — microphone & speech", () => {
         onOpenSettings={onOpenSettings}
       />,
     );
-    // The first "Open System Settings" button is microphone's.
+    // The first media "Open System Settings" button is camera's.
     fireEvent.click(screen.getAllByRole("button", { name: "Open System Settings" })[0]!);
-    expect(onOpenSettings).toHaveBeenCalledWith("microphone");
+    expect(onOpenSettings).toHaveBeenCalledWith("camera");
   });
 
   it("hides Allow and offers Manage once both are granted", () => {
@@ -184,8 +166,8 @@ describe("PermissionsPanel — microphone & speech", () => {
       />,
     );
     expect(
-      screen.queryByRole("button", { name: /Allow microphone & speech/ }),
+      screen.queryByRole("button", { name: /Allow camera, microphone & speech/ }),
     ).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(3);
   });
 });

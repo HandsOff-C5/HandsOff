@@ -3,6 +3,14 @@ import { FakeSttStream } from "@handsoff/testkit";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const tauri = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  listen: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: tauri.invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: tauri.listen }));
+
 // A fresh fake per capture (matching the controller's per-press stream
 // creation), with a handle on the most recent one so the test can drive events.
 let fakes: FakeSttStream[];
@@ -20,6 +28,10 @@ function latest(): FakeSttStream {
   return fake;
 }
 
+import {
+  CAPTURE_HOTKEY_EVENT,
+  type CaptureHotkeyListenEvent,
+} from "../head-pointing/useCaptureHotkey";
 import { TranscriptPanel } from "./TranscriptPanel";
 
 async function flush() {
@@ -35,6 +47,9 @@ function talkButton() {
 
 beforeEach(() => {
   fakes = [];
+  tauri.invoke.mockReset();
+  tauri.listen.mockReset();
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
 });
 
 describe("TranscriptPanel", () => {
@@ -193,7 +208,7 @@ describe("TranscriptPanel", () => {
     fireEvent.pointerDown(talkButton());
 
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(/Allow microphone & speech/i),
+      expect(screen.getByRole("alert")).toHaveTextContent(/Allow camera, microphone & speech/i),
     );
   });
 
@@ -232,6 +247,111 @@ describe("TranscriptPanel", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(
         /On-device recognition exited before the microphone was ready/i,
       ),
+    );
+  });
+
+  it("starts full capture with head pointer config and recenters while capturing", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
+    const headPointer = { movementMode: "edge" as const, speed: 5, distanceToEdge: 0.12 };
+    tauri.listen.mockResolvedValue(vi.fn());
+    tauri.invoke.mockImplementation(async (command: string) => {
+      if (command === "request_media_permissions") {
+        return { speech: "granted", microphone: "granted", camera: "granted" };
+      }
+      return undefined;
+    });
+
+    render(<TranscriptPanel createStream={makeFactory()} headPointer={headPointer} />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Hold to capture (head + voice)" }));
+    await flush();
+
+    await waitFor(() =>
+      expect(tauri.invoke).toHaveBeenCalledWith("head_track_start", { headPointer }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Recenter" }));
+    expect(tauri.invoke).toHaveBeenCalledWith("head_track_recenter");
+
+    fireEvent.pointerUp(screen.getByRole("button", { name: "Release (head + voice)" }));
+    await flush();
+    expect(tauri.invoke).toHaveBeenCalledWith("head_track_stop");
+  });
+
+  it("does not start full capture when permission work resolves after release", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
+    tauri.listen.mockResolvedValue(vi.fn());
+    let resolvePermissions:
+      | ((permissions: { speech: string; microphone: string; camera: string }) => void)
+      | null = null;
+    tauri.invoke.mockImplementation((command: string) => {
+      if (command === "request_media_permissions") {
+        return new Promise((resolve) => {
+          resolvePermissions = resolve;
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(<TranscriptPanel createStream={makeFactory()} />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Hold to capture (head + voice)" }));
+    fireEvent.pointerUp(screen.getByRole("button", { name: "Hold to capture (head + voice)" }));
+    await act(async () => {
+      resolvePermissions?.({ speech: "granted", microphone: "granted", camera: "granted" });
+    });
+    await flush();
+
+    expect(tauri.invoke).not.toHaveBeenCalledWith("head_track_start", expect.anything());
+    expect(fakes).toHaveLength(0);
+  });
+
+  it("does not start voice capture when full-capture head tracking fails", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
+    tauri.listen.mockResolvedValue(vi.fn());
+    tauri.invoke.mockImplementation(async (command: string) => {
+      if (command === "request_media_permissions") {
+        return { speech: "granted", microphone: "granted", camera: "granted" };
+      }
+      if (command === "head_track_start") {
+        throw new Error("head-track sidecar unavailable");
+      }
+      return undefined;
+    });
+
+    render(<TranscriptPanel createStream={makeFactory()} />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Hold to capture (head + voice)" }));
+
+    expect(await screen.findByText("head-track sidecar unavailable")).toBeInTheDocument();
+    expect(fakes).toHaveLength(0);
+  });
+
+  it("shows Recenter for the Command+Option+/ hotkey capture path", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
+    let hotkeyHandler: ((event: CaptureHotkeyListenEvent) => void) | null = null;
+    tauri.listen.mockImplementation(
+      async (event: string, next: (event: CaptureHotkeyListenEvent) => void) => {
+        if (event === CAPTURE_HOTKEY_EVENT) hotkeyHandler = next;
+        return vi.fn();
+      },
+    );
+    tauri.invoke.mockResolvedValue(undefined);
+
+    render(<TranscriptPanel createStream={makeFactory()} />);
+    await waitFor(() => expect(hotkeyHandler).not.toBeNull());
+
+    act(() => hotkeyHandler?.({ payload: { phase: "start" } }));
+    await waitFor(() => expect(tauri.invoke).toHaveBeenCalledWith("head_track_start", undefined));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Recenter" })).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Recenter" }));
+    expect(tauri.invoke).toHaveBeenCalledWith("head_track_recenter");
+
+    act(() => hotkeyHandler?.({ payload: { phase: "stop" } }));
+    await waitFor(() =>
+      expect(tauri.invoke.mock.calls.some(([command]) => command === "head_track_stop")).toBe(true),
     );
   });
 });

@@ -109,7 +109,7 @@ export function Dashboard({
           isChecking={isChecking}
           onRecheck={recheck}
           onRequestMedia={() => {
-            // Fire the OS mic + speech prompts, then re-probe so the panel
+            // Fire the OS camera + mic + speech prompts, then re-probe so the panel
             // reflects the new grants.
             void invoke("request_media_permissions").finally(() => recheck());
           }}
@@ -121,7 +121,11 @@ export function Dashboard({
           updateConfig={updateConfig}
           resetConfig={resetConfig}
         />
-        <TranscriptPanel createStream={createStream} onFinalTranscript={handleFinalTranscript} />
+        <TranscriptPanel
+          createStream={createStream}
+          headPointer={config.headPointer}
+          onFinalTranscript={handleFinalTranscript}
+        />
         <SessionsPanel session={session} />
         <PlanPreviewPanel
           intent={intent}

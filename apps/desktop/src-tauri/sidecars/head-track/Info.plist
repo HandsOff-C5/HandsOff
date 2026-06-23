@@ -20,7 +20,5 @@
   <string>14.0</string>
   <key>NSCameraUsageDescription</key>
   <string>HandsOff uses the front camera locally to map head movement to a passive on-screen pointer.</string>
-  <key>NSInputMonitoringUsageDescription</key>
-  <string>HandsOff watches Right Option + ? to start and stop the head pointer.</string>
 </dict>
 </plist>

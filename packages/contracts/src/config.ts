@@ -14,17 +14,34 @@ import { z } from "zod";
 // User-facing labels deliberately avoid the provider names; see SettingsPanel.
 
 export const STT_PROVIDERS = ["native", "assemblyai"] as const;
+export const HEAD_POINTER_MOVEMENT_MODES = ["edge", "relative"] as const;
 
 export const sttProviderSchema = z.enum(STT_PROVIDERS);
 export type SttProvider = z.infer<typeof sttProviderSchema>;
 
+export const headPointerMovementModeSchema = z.enum(HEAD_POINTER_MOVEMENT_MODES);
+export type HeadPointerMovementMode = z.infer<typeof headPointerMovementModeSchema>;
+
+export const headPointerConfigSchema = z.object({
+  movementMode: headPointerMovementModeSchema,
+  speed: z.number().min(1).max(10),
+  distanceToEdge: z.number().min(0.02).max(0.4),
+});
+export type HeadPointerConfig = z.infer<typeof headPointerConfigSchema>;
+
 export const localConfigSchema = z.object({
   sttProvider: sttProviderSchema,
+  headPointer: headPointerConfigSchema,
 });
 export type LocalConfig = z.infer<typeof localConfigSchema>;
 
 export const DEFAULT_LOCAL_CONFIG: LocalConfig = {
   sttProvider: "native",
+  headPointer: {
+    movementMode: "edge",
+    speed: 5,
+    distanceToEdge: 0.12,
+  },
 };
 
 export function safeParseLocalConfig(input: unknown): z.SafeParseReturnType<unknown, LocalConfig> {

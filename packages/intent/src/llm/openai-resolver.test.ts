@@ -121,6 +121,33 @@ describe("resolveWithOpenAi", () => {
     expect(resolvedIntentSchema.safeParse(resolved).success).toBe(true);
   });
 
+  it("derives approval from risk instead of trusting model output", async () => {
+    const { client } = clientWith({
+      finish_reason: "stop",
+      message: {
+        parsed: readyOutput({
+          risk_level: "mutating",
+          requires_approval: false,
+          action_plan: {
+            ...readyOutput().action_plan!,
+            risk_level: "mutating",
+            requires_approval: false,
+          },
+        }),
+      },
+    });
+
+    await expect(resolveWithOpenAi(input(), { client })).resolves.toMatchObject({
+      status: "ready",
+      risk_level: "mutating",
+      requires_approval: true,
+      action_plan: {
+        risk_level: "mutating",
+        requires_approval: true,
+      },
+    });
+  });
+
   it("turns an OpenAI refusal into a recoverable clarification", async () => {
     const { client } = clientWith({
       finish_reason: "stop",

@@ -28,7 +28,7 @@ fn build_native_permissions_bridge() {
         build_speech_analyzer_bridge(speech_analyzer);
     }
 
-    // The Option + ? capture hotkey (#95) uses tauri-plugin-global-shortcut
+    // The Command + Option + / capture hotkey (#95) uses tauri-plugin-global-shortcut
     // (Carbon RegisterEventHotKey) — no native event tap, no extra frameworks.
 
     println!("cargo:rustc-link-lib=framework=AVFoundation");

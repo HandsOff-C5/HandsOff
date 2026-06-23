@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { pointingEvidenceSchema } from "./intent";
 import {
   safeParseAttentionRegionCandidate,
+  safeParseHeadPointingAppEvent,
   safeParseHeadPointingEvent,
   safeParseHeadPointingEvidence,
 } from "./head-pointing";
@@ -19,6 +20,14 @@ const surface: SurfaceSnapshot = {
 };
 
 describe("headPointingEventSchema", () => {
+  it.each([
+    { kind: "start", ts: 1 },
+    { kind: "stop", ts: 2 },
+    { kind: "error", message: "camera unavailable", ts: 3 },
+  ])("parses the existing $kind wire event", (event) => {
+    expect(safeParseHeadPointingEvent(event).success).toBe(true);
+  });
+
   it("parses the sidecar point wire event", () => {
     const parsed = safeParseHeadPointingEvent({
       kind: "point",
@@ -72,6 +81,18 @@ describe("headPointingEventSchema", () => {
         ts: 1,
       }).success,
     ).toBe(false);
+  });
+
+  it("parses the app candidates wire event", () => {
+    const parsed = safeParseHeadPointingAppEvent({
+      kind: "candidates",
+      point: { x: 10, y: 20 },
+      candidates: [{ surface, score: 0.94, distance: 12 }],
+      ts: 4,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.kind).toBe("candidates");
   });
 });
 

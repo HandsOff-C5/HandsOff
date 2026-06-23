@@ -22,23 +22,103 @@ describe("SettingsPanel", () => {
     renderPanel();
     expect(screen.getByRole("heading", { level: 2, name: "Settings" })).toBeInTheDocument();
     expect(screen.getByLabelText("Transcription")).toBeInTheDocument();
+    expect(screen.getByLabelText("Head Pointer Mode")).toBeInTheDocument();
+    expect(screen.getByLabelText("Head Pointer Speed")).toBeInTheDocument();
+    expect(screen.getByLabelText("Distance to Edge")).toBeInTheDocument();
   });
 
-  it("defaults to Native and offers Realtime without naming the provider", () => {
+  it("defaults to Native and edge-mode Head Pointer settings", () => {
     renderPanel();
     expect(screen.getByLabelText("Transcription")).toHaveValue("native");
+    expect(screen.getByLabelText("Head Pointer Mode")).toHaveValue("edge");
+    expect(screen.getByLabelText("Head Pointer Speed")).toHaveValue(5);
+    expect(screen.getByLabelText("Distance to Edge")).toHaveValue(0.12);
     expect(screen.getByRole("option", { name: "Native" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Realtime" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Edge" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Relative" })).toBeInTheDocument();
     // Provider brand names are never shown to the user.
     expect(screen.queryByText(/assemblyai/i)).not.toBeInTheDocument();
   });
 
-  it("updates the provider when the selection changes", () => {
-    const { updateConfig } = renderPanel();
+  it("updates the provider without dropping Head Pointer settings", () => {
+    const config: LocalConfig = {
+      sttProvider: "native",
+      headPointer: {
+        movementMode: "relative",
+        speed: 7,
+        distanceToEdge: 0.2,
+      },
+    };
+    const { updateConfig } = renderPanel({ config });
+
     fireEvent.change(screen.getByLabelText("Transcription"), {
       target: { value: "assemblyai" },
     });
-    expect(updateConfig).toHaveBeenCalledWith({ sttProvider: "assemblyai" });
+    expect(updateConfig).toHaveBeenCalledWith({ ...config, sttProvider: "assemblyai" });
+  });
+
+  it("updates Head Pointer mode without dropping the existing config", () => {
+    const config: LocalConfig = {
+      sttProvider: "assemblyai",
+      headPointer: {
+        movementMode: "edge",
+        speed: 5,
+        distanceToEdge: 0.12,
+      },
+    };
+    const { updateConfig } = renderPanel({ config });
+
+    fireEvent.change(screen.getByLabelText("Head Pointer Mode"), {
+      target: { value: "relative" },
+    });
+
+    expect(updateConfig).toHaveBeenCalledWith({
+      ...config,
+      headPointer: { ...config.headPointer, movementMode: "relative" },
+    });
+  });
+
+  it("updates Head Pointer speed without dropping the existing config", () => {
+    const config: LocalConfig = {
+      sttProvider: "assemblyai",
+      headPointer: {
+        movementMode: "edge",
+        speed: 5,
+        distanceToEdge: 0.12,
+      },
+    };
+    const { updateConfig } = renderPanel({ config });
+
+    fireEvent.change(screen.getByLabelText("Head Pointer Speed"), {
+      target: { value: "8" },
+    });
+
+    expect(updateConfig).toHaveBeenCalledWith({
+      ...config,
+      headPointer: { ...config.headPointer, speed: 8 },
+    });
+  });
+
+  it("updates distance to edge without dropping the existing config", () => {
+    const config: LocalConfig = {
+      sttProvider: "assemblyai",
+      headPointer: {
+        movementMode: "relative",
+        speed: 7,
+        distanceToEdge: 0.12,
+      },
+    };
+    const { updateConfig } = renderPanel({ config });
+
+    fireEvent.change(screen.getByLabelText("Distance to Edge"), {
+      target: { value: "0.25" },
+    });
+
+    expect(updateConfig).toHaveBeenCalledWith({
+      ...config,
+      headPointer: { ...config.headPointer, distanceToEdge: 0.25 },
+    });
   });
 
   it("resets when the Reset button is pressed", () => {

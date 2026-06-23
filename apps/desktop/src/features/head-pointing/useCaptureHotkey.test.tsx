@@ -20,14 +20,16 @@ describe("useCaptureHotkey", () => {
     const onStart = vi.fn();
     const onStop = vi.fn();
 
-    renderHook(() => useCaptureHotkey({ listen, invoke, onStart, onStop }));
+    const headPointer = { movementMode: "edge" as const, speed: 5, distanceToEdge: 0.12 };
+
+    renderHook(() => useCaptureHotkey({ listen, invoke, headPointer, onStart, onStop }));
     await waitFor(() =>
       expect(listen).toHaveBeenCalledWith(CAPTURE_HOTKEY_EVENT, expect.any(Function)),
     );
 
     act(() => handler?.({ payload: { phase: "start" } }));
-    expect(invoke).toHaveBeenCalledWith("head_track_start");
-    expect(onStart).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("head_track_start", { headPointer }));
+    await waitFor(() => expect(onStart).toHaveBeenCalledTimes(1));
 
     act(() => handler?.({ payload: { phase: "stop" } }));
     expect(invoke).toHaveBeenCalledWith("head_track_stop");
@@ -50,5 +52,29 @@ describe("useCaptureHotkey", () => {
     act(() => handler?.({ payload: { phase: "weird" } }));
     act(() => handler?.({ payload: null }));
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("does not start voice capture when head tracking fails to start", async () => {
+    let handler: ((event: CaptureHotkeyListenEvent) => void) | null = null;
+    const listen = vi.fn(
+      async (_event: string, next: (event: CaptureHotkeyListenEvent) => void) => {
+        handler = next;
+        return vi.fn();
+      },
+    );
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "head_track_start") throw new Error("camera denied");
+      return undefined;
+    });
+    const onStart = vi.fn();
+    const onStartError = vi.fn();
+
+    renderHook(() => useCaptureHotkey({ listen, invoke, onStart, onStartError }));
+    await waitFor(() => expect(handler).not.toBeNull());
+
+    act(() => handler?.({ payload: { phase: "start" } }));
+
+    await waitFor(() => expect(onStartError).toHaveBeenCalledWith("camera denied"));
+    expect(onStart).not.toHaveBeenCalled();
   });
 });

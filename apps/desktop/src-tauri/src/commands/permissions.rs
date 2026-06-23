@@ -136,7 +136,6 @@ pub fn open_privacy_settings(pane: String) -> Result<(), String> {
         "speech-recognition" => "Privacy_SpeechRecognition",
         "accessibility" => "Privacy_Accessibility",
         "screen-recording" => "Privacy_ScreenCapture",
-        "input-monitoring" => "Privacy_ListenEvent",
         other => return Err(format!("unknown privacy pane: {other}")),
     };
     let url = format!("x-apple.systempreferences:com.apple.preference.security?{anchor}");

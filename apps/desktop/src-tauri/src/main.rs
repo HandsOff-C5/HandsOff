@@ -11,9 +11,9 @@ mod commands;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        // Command + ? capture hotkey (#95) via the global-shortcut plugin — no
-        // Accessibility/Input Monitoring permission needed. Pressed/Released drive
-        // capture start/stop through `hotkey://capture`.
+        // Command + Option + / capture hotkey (#95) via the global-shortcut
+        // plugin — no Accessibility/Input Monitoring permission needed.
+        // Pressed/Released drive capture start/stop through `hotkey://capture`.
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -44,6 +44,7 @@ fn main() {
             commands::stt::stt_mint_token,
             commands::head_track::head_track_start,
             commands::head_track::head_track_stop,
+            commands::head_track::head_track_recenter,
             commands::stt_ondevice::stt_ondevice_start,
             commands::stt_ondevice::stt_ondevice_stop,
             commands::cua::cua_permissions,

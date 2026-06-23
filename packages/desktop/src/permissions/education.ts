@@ -2,12 +2,7 @@ import { APP_NAME } from "@handsoff/contracts";
 import type { CapabilityId, CapabilityReadiness, PermissionGuidance } from "@handsoff/contracts";
 
 // The macOS TCC grants that gate head pointing and computer-use actions, in display order.
-export const EDUCATED_PERMISSION_IDS = [
-  "camera",
-  "accessibility",
-  "screen-recording",
-  "input-monitoring",
-] as const;
+export const EDUCATED_PERMISSION_IDS = ["camera", "accessibility", "screen-recording"] as const;
 
 const GUIDANCE: Record<(typeof EDUCATED_PERMISSION_IDS)[number], PermissionGuidance> = {
   camera: {
@@ -37,17 +32,6 @@ const GUIDANCE: Record<(typeof EDUCATED_PERMISSION_IDS)[number], PermissionGuida
     settingsPath: "System Settings → Privacy & Security → Screen Recording",
     steps: [
       "Open System Settings → Privacy & Security → Screen Recording.",
-      `Find ${APP_NAME} in the list (use the + button to add it if it isn't there).`,
-      `Turn the switch next to ${APP_NAME} on.`,
-      `Quit and reopen ${APP_NAME} if macOS asks, then choose Re-check.`,
-    ],
-  },
-  "input-monitoring": {
-    reason:
-      "The head-pointing hotkey needs Input Monitoring to distinguish the Right Option hold from ordinary typing. Without it, the shared voice and head capture trigger cannot arm.",
-    settingsPath: "System Settings → Privacy & Security → Input Monitoring",
-    steps: [
-      "Open System Settings → Privacy & Security → Input Monitoring.",
       `Find ${APP_NAME} in the list (use the + button to add it if it isn't there).`,
       `Turn the switch next to ${APP_NAME} on.`,
       `Quit and reopen ${APP_NAME} if macOS asks, then choose Re-check.`,

@@ -65,7 +65,6 @@ export function useHeadPointing(options?: {
         } else if (event.kind === "candidates") {
           setState((prev) => ({
             ...prev,
-            status: "idle",
             point: event.point,
             candidates: event.candidates,
             error: null,

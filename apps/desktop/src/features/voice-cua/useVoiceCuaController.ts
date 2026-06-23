@@ -92,7 +92,7 @@ export function useVoiceCuaController(args: {
             ],
       surfaceCandidates: headCandidates.map((candidate) => candidate.surface),
     };
-    const next = await resolveIntentRef.current(input, { resolver: "llm", createdAt });
+    const next = await resolveIntentRef.current(input, { resolver: "rule", createdAt });
     const nextSession =
       next.status === "ready" ? started : sessions.current.finish(started.id, "blocked", createdAt);
     setSession(nextSession);
