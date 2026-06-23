@@ -15,7 +15,11 @@ import {
 } from "../calibration/calibrate";
 import { createDwellDebounce, type DwellDebounceParams } from "../confidence/dwell";
 import { alphaFromCutoff, createOneEuroFilter, ema } from "../confidence/smoothing";
-import { pointingSignal, type PointingSignalOptions } from "../perception/pointing";
+import {
+  pointingReliability,
+  pointingSignal,
+  type PointingSignalOptions,
+} from "../perception/pointing";
 import { initialState, reduce, type GestureMachineState } from "../state-machine/machine";
 
 // #25 runtime — the live perception→referent loop. Wires the built pure cores into one
@@ -52,6 +56,11 @@ export interface ReferentLoopResult {
   // 1€-smoothed screen-space pointer position — the signal for the visible cursor and a
   // steadier feel. Targeting/lock still use the RAW calibrated point; this is display-only.
   point: Point;
+  // Per-frame fusion weight for the hand channel, in [0,1] — the gesture lane's own
+  // reliability handed across the seam to signal fusion (gaze/voice). Detection score
+  // scaled by the least-visible ray endpoint; falls under single-camera occlusion. 0 when
+  // no hand is present this frame.
+  reliability: number;
   // FSM side-effect this frame (a referent locked, or an interrupt raised).
   emit?: LockedReferent | InterruptIntent;
 }
@@ -96,7 +105,11 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
 
       let candidate: PointingCandidate | null = null;
       let confidence = 0;
+      // The hand-channel fusion weight is a raw per-frame signal (occlusion-aware); the
+      // consumer smooths/combines it. 0 with no hand so fusion fully discounts us.
+      let reliability = 0;
       if (hand) {
+        reliability = pointingReliability(hand, pointing);
         const screenXY = applyTransform(transform, pointingSignal(hand, pointing));
         // Cursor uses the 1€-smoothed point; targeting/lock use the raw point (unchanged).
         point = [
@@ -143,7 +156,7 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
         state = reduce(state, { type: "lost" }).state;
       }
 
-      return { state, candidate, confidence: smoothedConfidence, active, emit, point };
+      return { state, candidate, confidence: smoothedConfidence, active, emit, point, reliability };
     },
   };
 };

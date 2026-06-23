@@ -63,6 +63,23 @@ describe("createReferentLoop", () => {
     expect(out.point[1]).toBeGreaterThan(0.1);
   });
 
+  it("exposes a per-frame fusion reliability that drops when the index tip is occluded (C1 seam)", () => {
+    const l = loop();
+    const clear = l.process(frame(handAt(0.5, 0.5, 0.9)), 50);
+    // Full visibility → the weight is just the detection score.
+    expect(clear.reliability).toBeCloseTo(0.9, 6);
+
+    // Occlude the index tip: the ray direction is untrustworthy, so the weight must fall
+    // even though detection score is unchanged — the signal fusion should down-weight.
+    const occluded = handAt(0.5, 0.5, 0.9);
+    occluded.landmarks[8] = { ...occluded.landmarks[8]!, visibility: 0.2 };
+    expect(l.process(frame(occluded, 50), 50).reliability).toBeCloseTo(0.18, 6);
+  });
+
+  it("reports zero fusion reliability when no hand is present", () => {
+    expect(loop().process(frame(null), 50).reliability).toBe(0);
+  });
+
   it("engages and produces a candidate after a few frames of steady pointing", () => {
     const l = loop();
     const hand = handAt(0.5, 0.5, 0.95);
