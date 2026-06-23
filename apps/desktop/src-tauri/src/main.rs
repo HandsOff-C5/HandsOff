@@ -11,7 +11,7 @@ mod commands;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        // Command + Option + / capture hotkey (#95) via the global-shortcut
+        // Control + Shift + Space capture hotkey (#95) via the global-shortcut
         // plugin — no Accessibility/Input Monitoring permission needed.
         // Pressed/Released drive capture start/stop through `hotkey://capture`.
         .plugin(

@@ -16,10 +16,6 @@ import {
 } from "../head-pointing/useCaptureHotkey";
 import { usePushToTalk } from "./usePushToTalk";
 
-function hasTauriBackend(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
 // Live transcript surface (#31, #32): push-to-talk capture that shows the
 // interim partial while the user holds to speak, then renders the one stable
 // final utterance the capture produced (endpointing). The stream is injected via
@@ -46,6 +42,7 @@ const ERROR_COPY: Record<SttErrorKind, string> = {
   "provider-unavailable": "The speech service is unavailable. Hold to talk again to retry.",
   aborted: "Listening was cancelled.",
 };
+const ACTIVATION_HOLD_MS = 300;
 
 function errorMessage(error: SttError): string {
   if (error.kind === "start-failed" && error.message) return error.message;
@@ -113,6 +110,7 @@ function LiveTranscriptPanel({
   );
   const capturing = status === "capturing" || status === "finalizing";
   const tauri = hasTauriBackend();
+  const activationStartedAt = useRef<number | null>(null);
 
   // Full-capture test (#95): exercises the SAME downstream path as the hotkey —
   // head tracking (golden cursor + camera) plus mic — independently of the global
@@ -140,7 +138,7 @@ function LiveTranscriptPanel({
     setHeadNotice(message);
   }, []);
 
-  // Drive head+voice capture from the Command + Option + / hotkey (#95):
+  // Drive head+voice capture from the Control + Shift + Space hotkey (#95):
   // head tracker first, mic second, release stops both.
   useCaptureHotkey(
     tauri
@@ -225,6 +223,27 @@ function LiveTranscriptPanel({
     void invoke("head_track_recenter");
   };
 
+  const startActivation = useCallback(() => {
+    if (capturing) {
+      activationStartedAt.current = null;
+      release();
+      return;
+    }
+    activationStartedAt.current = Date.now();
+    press();
+  }, [capturing, press, release]);
+
+  const endActivation = useCallback(() => {
+    const startedAt = activationStartedAt.current;
+    activationStartedAt.current = null;
+    if (startedAt !== null && Date.now() - startedAt >= ACTIVATION_HOLD_MS) release();
+  }, [release]);
+
+  const cancelActivation = useCallback(() => {
+    activationStartedAt.current = null;
+    cancel();
+  }, [cancel]);
+
   return (
     <section className="panel transcript">
       <div className="transcript__header">
@@ -233,13 +252,15 @@ function LiveTranscriptPanel({
           className="transcript__talk"
           type="button"
           aria-pressed={capturing}
-          onPointerDown={press}
-          onPointerUp={release}
+          onPointerDown={startActivation}
+          onPointerUp={endActivation}
           // Sliding the pointer off a held button aborts before finalizing.
-          onPointerLeave={capturing ? cancel : undefined}
-          onPointerCancel={cancel}
+          onPointerLeave={
+            capturing && activationStartedAt.current !== null ? cancelActivation : undefined
+          }
+          onPointerCancel={cancelActivation}
           onKeyDown={(event) => {
-            if (capturing && event.key === "Escape") cancel();
+            if (capturing && event.key === "Escape") cancelActivation();
           }}
         >
           {capturing ? "Release to send" : "Hold to talk"}
@@ -270,7 +291,11 @@ function LiveTranscriptPanel({
       )}
 
       {capturing ? (
-        <button className="transcript__cancel" type="button" onClick={cancel}>
+        <button
+          className="transcript__cancel"
+          type="button"
+          onClick={headCapturing ? cancelCapture : cancelActivation}
+        >
           Cancel
         </button>
       ) : null}
@@ -280,7 +305,6 @@ function LiveTranscriptPanel({
           {errorMessage(error)}
         </div>
       ) : null}
-
       <p className="transcript__partial" aria-live="polite" data-testid="transcript-partial">
         {partial}
       </p>
@@ -297,4 +321,8 @@ function LiveTranscriptPanel({
       </ul>
     </section>
   );
+}
+
+function hasTauriBackend(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }

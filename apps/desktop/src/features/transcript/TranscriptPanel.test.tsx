@@ -72,6 +72,7 @@ describe("TranscriptPanel", () => {
   });
 
   it("delivers one stable final utterance on release and clears the partial", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
     render(<TranscriptPanel createStream={makeFactory()} />);
     const button = talkButton();
     fireEvent.pointerDown(button);
@@ -80,6 +81,7 @@ describe("TranscriptPanel", () => {
     act(() => latest().emitFinal("open the issue", 0.9, 120));
     act(() => latest().emitPartial("and brief the agent"));
 
+    now.mockReturnValue(1400);
     fireEvent.pointerUp(talkButton());
     await flush();
 
@@ -90,9 +92,32 @@ describe("TranscriptPanel", () => {
     expect(screen.getByText(/90% · 120 ms/)).toBeInTheDocument();
     expect(screen.getByTestId("transcript-partial")).toHaveTextContent("");
     expect(talkButton()).toHaveTextContent("Hold to talk");
+    now.mockRestore();
+  });
+
+  it("toggles capture with a quick talk button click", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    render(<TranscriptPanel createStream={makeFactory()} />);
+
+    fireEvent.pointerDown(talkButton());
+    await flush();
+    now.mockReturnValue(1100);
+    fireEvent.pointerUp(talkButton());
+    await flush();
+
+    expect(talkButton()).toHaveTextContent("Release to send");
+    act(() => latest().emitFinal("button toggle", 1, 100));
+
+    fireEvent.pointerDown(talkButton());
+    await flush();
+
+    expect(screen.getByRole("listitem")).toHaveTextContent("button toggle");
+    expect(talkButton()).toHaveTextContent("Hold to talk");
+    now.mockRestore();
   });
 
   it("notifies the intent lane when a final utterance is delivered", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
     const onFinalTranscript = vi.fn();
     render(<TranscriptPanel createStream={makeFactory()} onFinalTranscript={onFinalTranscript} />);
     const button = talkButton();
@@ -100,12 +125,14 @@ describe("TranscriptPanel", () => {
     await flush();
 
     act(() => latest().emitFinal("click there", 0.9, 120));
+    now.mockReturnValue(1400);
     fireEvent.pointerUp(talkButton());
     await flush();
 
     expect(onFinalTranscript).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "final", text: "click there", confidence: 0.9 }),
     );
+    now.mockRestore();
   });
 
   it("cancel discards the in-flight capture without delivering a final", async () => {
@@ -124,16 +151,20 @@ describe("TranscriptPanel", () => {
   });
 
   it("accumulates one final per capture across multiple holds", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
     render(<TranscriptPanel createStream={makeFactory()} />);
     fireEvent.pointerDown(talkButton());
     await flush();
     act(() => latest().emitFinal("first command", 1, 100));
+    now.mockReturnValue(1400);
     fireEvent.pointerUp(talkButton());
     await flush();
 
+    now.mockReturnValue(2000);
     fireEvent.pointerDown(talkButton());
     await flush();
     act(() => latest().emitFinal("second command", 1, 110));
+    now.mockReturnValue(2400);
     fireEvent.pointerUp(talkButton());
     await flush();
 
@@ -141,6 +172,7 @@ describe("TranscriptPanel", () => {
     expect(items).toHaveLength(2);
     expect(items[0]).toHaveTextContent("first command");
     expect(items[1]).toHaveTextContent("second command");
+    now.mockRestore();
   });
 
   it("shows a visible, recoverable error and resumes on a fresh hold", async () => {
@@ -326,7 +358,7 @@ describe("TranscriptPanel", () => {
     expect(fakes).toHaveLength(0);
   });
 
-  it("shows Recenter for the Command+Option+/ hotkey capture path", async () => {
+  it("shows Recenter for the Control+Shift+Space hotkey capture path", async () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
     let hotkeyHandler: ((event: CaptureHotkeyListenEvent) => void) | null = null;
     tauri.listen.mockImplementation(

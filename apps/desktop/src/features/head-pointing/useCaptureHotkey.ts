@@ -1,7 +1,7 @@
 import type { HeadPointerConfig } from "@handsoff/contracts";
 import { useEffect, useRef } from "react";
 
-// The app process owns the Command + Option + / global shortcut (#95) and emits
+// The app process owns the Control + Shift + Space global shortcut (#95) and emits
 // `hotkey://capture` {phase: "start"|"stop"} as the user holds/releases. This
 // hook turns those into head-tracking start/stop, so capture is driven by the
 // hotkey rather than on dashboard mount.
