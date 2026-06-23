@@ -77,10 +77,9 @@ export function useHeadPointing(options?: {
       .then((nextUnlisten) => {
         if (!mounted) {
           nextUnlisten();
-          return undefined;
+          return;
         }
         unlisten = nextUnlisten;
-        return options.invoke?.("head_track_start");
       })
       .catch((caught) => {
         if (!mounted) return;
@@ -94,9 +93,10 @@ export function useHeadPointing(options?: {
     return () => {
       mounted = false;
       unlisten?.();
-      void options.invoke?.("head_track_stop");
     };
-  }, [options?.invoke, options?.listen]);
+    // Head tracking is started/stopped by the capture hotkey (see useCaptureHotkey),
+    // not on mount — this hook only renders the live head-pointing state.
+  }, [options?.listen]);
 
   return state;
 }

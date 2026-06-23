@@ -28,9 +28,21 @@ fn build_native_permissions_bridge() {
         build_speech_analyzer_bridge(speech_analyzer);
     }
 
+    // Right Option + ? global hotkey tap (#95). Lives in the app process so it
+    // gets a stable TCC identity for Accessibility + Input Monitoring.
+    let hotkey_src = format!("{manifest}/src/hotkey_tap.m");
+    println!("cargo:rerun-if-changed={hotkey_src}");
+    cc::Build::new()
+        .file(&hotkey_src)
+        .flag("-fobjc-arc")
+        .compile("handsoff_hotkey_tap");
+
     println!("cargo:rustc-link-lib=framework=AVFoundation");
     println!("cargo:rustc-link-lib=framework=Foundation");
     println!("cargo:rustc-link-lib=framework=Speech");
+    println!("cargo:rustc-link-lib=framework=ApplicationServices");
+    println!("cargo:rustc-link-lib=framework=CoreGraphics");
+    println!("cargo:rustc-link-lib=framework=IOKit");
 }
 
 #[cfg(target_os = "macos")]

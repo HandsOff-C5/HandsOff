@@ -498,132 +498,7 @@ private enum SidecarError: LocalizedError {
     }
 }
 
-private final class HotkeyTap {
-    private let tracker: HeadTracker
-    private var state = HotkeyState()
-    private var tap: CFMachPort?
-    private var source: CFRunLoopSource?
 
-    init(tracker: HeadTracker) {
-        self.tracker = tracker
-    }
-
-    func start() -> Bool {
-        let mask = eventMask([.flagsChanged, .keyDown])
-        let refcon = Unmanaged.passUnretained(self).toOpaque()
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: { _, type, event, refcon in
-                guard let refcon else { return Unmanaged.passUnretained(event) }
-                let owner = Unmanaged<HotkeyTap>.fromOpaque(refcon).takeUnretainedValue()
-                owner.handle(type: type, event: event)
-                return Unmanaged.passUnretained(event)
-            },
-            userInfo: refcon
-        ) else {
-            return false
-        }
-
-        self.tap = tap
-        source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        if let source {
-            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        }
-        CGEvent.tapEnable(tap: tap, enable: true)
-        return true
-    }
-
-    private func handle(type: CGEventType, event: CGEvent) {
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap {
-                CGEvent.tapEnable(tap: tap, enable: true)
-            }
-            return
-        }
-
-        let kind: KeyboardEventKind
-        switch type {
-        case .flagsChanged:
-            kind = .flagsChanged
-        case .keyDown:
-            kind = .keyDown
-        default:
-            return
-        }
-
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        let result = decideHotkey(kind: kind, keyCode: keyCode, flagsRaw: event.flags.rawValue, state: state)
-        state = result.0
-
-        switch result.1 {
-        case .start:
-            DispatchQueue.main.async { [tracker] in tracker.start() }
-        case .stop:
-            DispatchQueue.main.async { [tracker] in tracker.stop() }
-        case .none:
-            break
-        }
-    }
-}
-
-private final class HotkeyTapSupervisor {
-    private let hotkeyTap: HotkeyTap
-    private let writer: EventWriter
-    private let retryInterval: TimeInterval = 1.5
-    private var retryState = HotkeyTapRetryState()
-    private var retryTimer: Timer?
-
-    init(hotkeyTap: HotkeyTap, writer: EventWriter) {
-        self.hotkeyTap = hotkeyTap
-        self.writer = writer
-    }
-
-    func start() {
-        logHotkeyTapPermissions(requestHotkeyTapPermissions())
-        attemptInstall()
-    }
-
-    private func attemptInstall() {
-        guard !retryState.armed else { return }
-        let result = decideHotkeyTapRetry(installed: hotkeyTap.start(), state: retryState)
-        retryState = result.0
-
-        switch result.1 {
-        case .armed:
-            retryTimer?.invalidate()
-            retryTimer = nil
-            fputs("head-track: armed Right Option + ? trigger\n", stderr)
-        case .blocked(let scheduleRetry):
-            reportBlocked()
-            if scheduleRetry {
-                retryTimer = Timer.scheduledTimer(withTimeInterval: retryInterval, repeats: true) { [weak self] _ in
-                    self?.attemptInstall()
-                }
-            }
-        case .none:
-            break
-        }
-    }
-
-    private func reportBlocked() {
-        let permissions = currentHotkeyTapPermissions()
-        let message = "Unable to install CGEventTap; grant Accessibility and Input Monitoring permissions"
-        writer.error(message)
-        fputs(
-            "head-track: \(message) (Input Monitoring \(permissionStatus(permissions.inputMonitoringGranted)), Accessibility \(permissionStatus(permissions.accessibilityGranted)))\n",
-            stderr
-        )
-    }
-}
-
-private func eventMask(_ types: [CGEventType]) -> CGEventMask {
-    types.reduce(CGEventMask(0)) { partial, type in
-        partial | (CGEventMask(1) << Int(type.rawValue))
-    }
-}
 
 private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     let passed = condition()
@@ -703,11 +578,12 @@ if CommandLine.arguments.contains("--selftest") {
     exit(0)
 }
 
+// The capture hotkey (Right Option + ?) is owned by the app process (#95), which
+// spawns this sidecar only for the duration of a capture. So tracking auto-starts
+// on launch and stops when the host kills the process.
 private let writer = EventWriter()
 private let tracker = HeadTracker(writer: writer)
-private let hotkeyTap = HotkeyTap(tracker: tracker)
-private let hotkeySupervisor = HotkeyTapSupervisor(hotkeyTap: hotkeyTap, writer: writer)
 
 NSApplication.shared.setActivationPolicy(.accessory)
-hotkeySupervisor.start()
+tracker.start()
 RunLoop.main.run()

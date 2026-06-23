@@ -22,7 +22,8 @@ describe("useHeadPointing", () => {
     await waitFor(() =>
       expect(listen).toHaveBeenCalledWith(HEAD_POINTING_EVENT, expect.any(Function)),
     );
-    expect(invoke).toHaveBeenCalledWith("head_track_start");
+    // Head tracking is started by the capture hotkey, not on mount (#95).
+    expect(invoke).not.toHaveBeenCalledWith("head_track_start");
 
     act(() => {
       handler?.({
@@ -71,29 +72,6 @@ describe("useHeadPointing", () => {
 
     unmount();
     expect(unlisten).toHaveBeenCalledTimes(1);
-    expect(invoke).toHaveBeenCalledWith("head_track_stop");
-  });
-
-  it("starts tracking only after the head event listener is registered", async () => {
-    let resolveListen!: (unlisten: () => void) => void;
-    const listen = vi.fn(
-      () =>
-        new Promise<() => void>((resolve) => {
-          resolveListen = resolve;
-        }),
-    );
-    const invoke = vi.fn(async () => undefined);
-
-    renderHook(() => useHeadPointing({ listen, invoke }));
-
-    await waitFor(() =>
-      expect(listen).toHaveBeenCalledWith(HEAD_POINTING_EVENT, expect.any(Function)),
-    );
-    expect(invoke).not.toHaveBeenCalledWith("head_track_start");
-
-    act(() => resolveListen(vi.fn()));
-
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("head_track_start"));
   });
 
   it("surfaces invalid event payloads", async () => {

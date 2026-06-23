@@ -13,6 +13,11 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .manage(commands::head_track::HeadTrackState::default())
         .manage(commands::stt_ondevice::OnDeviceSttState::default())
+        .setup(|app| {
+            // Arm the Right Option + ? capture hotkey in the app process (#95).
+            commands::hotkey::arm(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::readiness::readiness_probe,
             commands::storage::load_local_config,

@@ -1,6 +1,13 @@
 import type { FinalTranscript, SttError, SttErrorKind, SttStream } from "@handsoff/contracts";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
+import { useCaptureHotkey } from "../head-pointing/useCaptureHotkey";
 import { usePushToTalk } from "./usePushToTalk";
+
+function hasTauriBackend(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
 
 // Live transcript surface (#31, #32): push-to-talk capture that shows the
 // interim partial while the user holds to speak, then renders the one stable
@@ -73,6 +80,18 @@ function LiveTranscriptPanel({
     { onUtterance: onFinalTranscript },
   );
   const capturing = status === "capturing" || status === "finalizing";
+
+  // Drive mic capture from the Right Option + ? hotkey (#95): hold = press, release.
+  useCaptureHotkey(
+    hasTauriBackend()
+      ? {
+          listen: (event, handler) => listen(event, ({ payload }) => handler({ payload })),
+          invoke: (command) => invoke(command),
+          onStart: press,
+          onStop: release,
+        }
+      : undefined,
+  );
 
   return (
     <section className="panel transcript">
