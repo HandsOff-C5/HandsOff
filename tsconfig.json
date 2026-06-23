@@ -11,6 +11,7 @@
     { "path": "packages/intent" },
     { "path": "packages/speech" },
     { "path": "packages/supervision" },
-    { "path": "packages/testkit" }
+    { "path": "packages/testkit" },
+    { "path": "workers/assemblyai-token" }
   ]
 }

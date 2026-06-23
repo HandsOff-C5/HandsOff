@@ -1,0 +1,38 @@
+# cargo-deny config for the Tauri desktop crate (issue #78, baseline §7).
+# Run: cargo deny --config deny.toml --manifest-path apps/desktop/src-tauri/Cargo.toml check
+[advisories]
+version = 2 # RustSec advisory DB; fail on vulnerable crates.
+# Tauri's Linux GTK backend (gtk-rs, glib, atk, cairo, pango, gdk, unic-*) pulls
+# in many unmaintained transitive crates. This is a macOS-only app that never
+# compiles them, so only fail on unmaintained advisories affecting our own
+# workspace crates.
+unmaintained = "workspace"
+
+[licenses]
+version = 2
+# CDLA-Permissive-2.0 and Apache-2.0-WITH-LLVM-exception come from permissively
+# licensed transitive deps; both are industry-standard permissive terms.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "Zlib",
+  "MPL-2.0",
+  "CC0-1.0",
+]
+# Our own workspace crate (handsoff) is private (publish = false) and carries no
+# license expression — skip license checks for first-party private crates.
+private = { ignore = true }
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

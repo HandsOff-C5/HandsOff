@@ -1,0 +1,74 @@
+# Per-layer quality gate additions (issue #78 / HandsOff-Knowledge baseline §7).
+#
+# This workflow ADDS the gates that ci.yml does not yet cover — the Rust/Tauri
+# static analysis and TypeScript dead-code analysis. ci.yml stays the
+# authoritative TS verify + gitleaks secret-scan; this file does not duplicate
+# or replace it.
+#
+# These new gates start ADVISORY (continue-on-error) so they surface findings
+# without blocking PRs while the codebase is brought into compliance. Flip a job
+# to required by removing `continue-on-error` and adding it to branch protection
+# — tracked as a follow-up child issue of #78.
+
+name: Quality gate (advisory)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: quality-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: rust · fmt · clippy · audit · deny
+    # HandsOff is a macOS-only Tauri app (objc FFI + a swiftc sidecar). Building
+    # it on Linux pulls the GTK/webkit2gtk backend (glib-2.0), which the runner
+    # lacks — so clippy can't even compile. Run on macOS, the actual target,
+    # where the cfg(macos) code is what gets checked.
+    runs-on: macos-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: apps/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      # `tauri::generate_context!` embeds the built frontend, so `../dist` must
+      # exist before clippy compiles the bin. Build it first.
+      - run: corepack enable
+        working-directory: .
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Build the frontend (dist) for generate_context
+        working-directory: .
+        run: pnpm install --frozen-lockfile && pnpm --filter @handsoff/desktop-app build
+      - name: Install Rust (pinned by rust-toolchain.toml) + components
+        run: rustup component add rustfmt clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: cargo-audit (RustSec advisory DB)
+        run: cargo install cargo-audit --locked && cargo audit
+      - name: cargo-deny (licenses · bans · advisories · sources)
+        run: cargo install cargo-deny --locked && cargo deny check --config ../../../deny.toml
+
+  dead-code:
+    name: typescript · knip
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: knip (unused files / exports / dependencies)
+        run: pnpm dlx knip

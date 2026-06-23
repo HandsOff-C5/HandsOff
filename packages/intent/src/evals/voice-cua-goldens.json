@@ -1,0 +1,75 @@
+[
+  {
+    "name": "click there",
+    "transcript": "click there",
+    "expected": {
+      "status": "ready",
+      "intent_type": "click",
+      "risk_level": "mutating",
+      "requires_approval": true,
+      "target_agent": "cua-driver",
+      "referentId": "surface-1",
+      "actionKinds": ["click_element"]
+    }
+  },
+  {
+    "name": "type hello into that",
+    "transcript": "type hello into that",
+    "expected": {
+      "status": "ready",
+      "intent_type": "type_text",
+      "risk_level": "mutating",
+      "requires_approval": true,
+      "target_agent": "cua-driver",
+      "referentId": "surface-1",
+      "actionKinds": ["type_text"]
+    }
+  },
+  {
+    "name": "inspect this window",
+    "transcript": "inspect this window",
+    "expected": {
+      "status": "ready",
+      "intent_type": "inspect",
+      "risk_level": "read_only",
+      "requires_approval": false,
+      "target_agent": "cua-driver",
+      "referentId": "surface-1",
+      "actionKinds": ["inspect_window_state"]
+    }
+  },
+  {
+    "name": "ambiguous do that",
+    "transcript": "do that",
+    "expected": {
+      "status": "blocked",
+      "requires_approval": false,
+      "target_agent": "none",
+      "reason": "Unsupported voice command",
+      "actionKinds": []
+    }
+  },
+  {
+    "name": "unavailable target",
+    "transcript": "click there",
+    "surfaceAvailability": "closed",
+    "expected": {
+      "status": "clarification_required",
+      "requires_approval": false,
+      "target_agent": "none",
+      "reason": "No accessible target was found",
+      "actionKinds": []
+    }
+  },
+  {
+    "name": "unsupported send it",
+    "transcript": "send it",
+    "expected": {
+      "status": "blocked",
+      "requires_approval": false,
+      "target_agent": "none",
+      "reason": "Unsupported voice command",
+      "actionKinds": []
+    }
+  }
+]

@@ -25,6 +25,36 @@ WebView at it.
 > Frontend only? `corepack pnpm --filter @handsoff/desktop-app dev` serves the
 > UI at <http://localhost:1420> in a browser (no native window).
 
+## Speech-to-text (on-device, no setup)
+
+STT is **provisioned by HandsOff, not bring-your-own-key** (AD2). The **default
+provider is macOS on-device recognition**, so end users who download the app
+need **no API key, no network, and nothing to configure**. It targets **all
+supported Macs**: the baseline is on-device `SFSpeechRecognizer` (macOS 15–26,
+builds with the current SDK), with `SpeechAnalyzer` added as a macOS-26 fast-path
+(tracked in #81, built with the macOS 26 SDK). Audio never leaves the device.
+The OS prompts once for Speech Recognition + microphone permission, surfaced
+through the readiness/permissions panels.
+
+### AssemblyAI hosted provider (optional)
+
+AssemblyAI realtime stays behind the same `SttStream` seam as a deferred,
+optional provider and is **off by default**. In production it will be
+provisioned by a Cloudflare Worker that holds the provider key server-side; the
+app ships no provider credentials. For local/dev cohorts against the hosted
+provider, `stt_mint_token` reads the token Worker endpoint and app-auth
+credential from the **Rust process environment** (not a Vite var, and not
+`local-config.json`):
+
+```bash
+export HANDSOFF_STT_TOKEN_WORKER_URL="https://<worker-host>/v1/realtime-token"
+export HANDSOFF_STT_APP_AUTH_TOKEN="<launch-cohort app token>"
+corepack pnpm --filter @handsoff/desktop-app tauri dev
+```
+
+Without both values, `stt_mint_token` returns a recoverable provider setup error
+when Realtime is selected — expected when using the on-device default.
+
 ## Layout
 
 - `src/` — React frontend (`main.tsx` → `App` → `screens/dashboard/Dashboard`).

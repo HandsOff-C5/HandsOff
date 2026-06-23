@@ -29,6 +29,9 @@ A pnpm + TypeScript workspace; the macOS shell is a Tauri app.
 - Keep this repo code-only; research and notes belong in `HandsOff-Knowledge`.
 - Many small, focused files over few large ones. Prefer immutable data; handle errors explicitly.
 - Match the conventions already in the file you're editing.
+- Prefer small high-conviction comments over long cosmetic notes.
+- Do not use mocks, placeholders, fallbacks.
+- Always defer from backwards-compatibility. Do not keep dead code.
 
 ## Local checks (run before you push)
 
@@ -49,15 +52,44 @@ its runtime: `tsconfig.node.json` (e.g. `cua`, `actions`, `supervision`),
 
 `lefthook` runs format/lint/typecheck on pre-commit and test/build on pre-push as a fast guardrail. **CI is authoritative** — hooks can be skipped, CI cannot.
 
+## Quality gate (`just check`)
+
+One entry point for humans, CI, and agents (implements `../HandsOff-Knowledge/docs/agent-dev-baseline.md` §7, issue #78):
+
+```bash
+just check       # authoritative TS gate — mirrors CI; green on a clean checkout
+just check-rust  # Rust/Tauri gate (rustfmt, clippy, tests) — opt-in
+just check-full  # + opt-in analyzers (knip, cargo audit/deny, semgrep); see `just setup`
+```
+
+Pinned toolchain is committed: `.node-version`, `rust-toolchain.toml`, `knip.json`, `deny.toml`. The Rust gate is opt-in/advisory until pre-existing `cargo fmt` drift in the desktop crate is cleaned up (child task of #78). Install `just` with `brew install just`. Shared agent MCP servers live in `.mcp.json` (Claude Code), `.cursor/mcp.json` (Cursor), and `.codex/config.toml` (Codex).
+
+## Testing macOS permissions & Realtime STT
+
+`tauri dev` crashes when the app requests microphone/speech or Realtime STT (the dev binary lacks a bundle identity macOS TCC requires). Use `tauri dev` only for UI/logic work. To test microphone/speech permissions or the AssemblyAI Realtime path, build and launch the bundled `.app`:
+
+```bash
+corepack pnpm --filter @handsoff/desktop-app exec tauri build --debug --bundles app
+open -n apps/desktop/src-tauri/target/debug/bundle/macos/HandsOff.app \
+  --env "HANDSOFF_STT_TOKEN_WORKER_URL=https://<worker-host>/v1/realtime-token" \
+  --env "HANDSOFF_STT_APP_AUTH_TOKEN=<launch-cohort app token>"
+```
+
+Worker deploy + a curl smoke test live in `workers/assemblyai-token/README.md`.
+
+## Performance
+
+**Context management:** Avoid last 20% of context window for large refactoring and multi-file features. Lower-sensitivity tasks (single edits, docs, simple fixes) tolerate higher utilization.
+
 ## CI/CD & GitHub workflow — follow this exactly
 
-Canonical source: `../HandsOff-Knowledge/docs/Github CICD.md`. The load-bearing rules:
+Canonical source: `../HandsOff-Knowledge/docs/github-cicd.md`. The load-bearing rules:
 
-**Flow:** issue → focused branch → PR linked to the issue → CI + human review → squash-merge → demo verification → close issue.
+**Flow:** issue → focused branch → PR linked with a closing keyword → CI + human review → squash-merge / GitHub issue automation → demo verification → Demo Verified.
 
 - **`main` is protected.** No direct pushes, no force pushes. Every change lands through a PR.
 - **One branch per issue**, named `feat/<issue>-slug` or `fix/<issue>-slug` (e.g. `feat/15-tauri-shell`, `fix/41-cua-health`). Use `chore/`, `docs/`, `test/` for non-feature work.
-- **Open a draft PR early** and link the issue with **`Refs #<n>`** — never `Closes #<n>`. "Merged" is not done; **"done" is Demo Verified** (merged, then the issue's demo proof run from the built app).
+- **Open a draft PR early** and link the issue with **`Closes #<n>`** so GitHub issue/project automation can progress it. "Merged" is not demo-complete; **"done" is Demo Verified** (merged, then the issue's demo proof run from the built app).
 - **One PR = one purpose**, with acceptance criteria. Every PR must include:
   - the user-visible behavior it improves,
   - **test proof** (actual test/CI output — never "tests should pass"),

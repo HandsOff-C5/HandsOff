@@ -3,3 +3,6 @@
 
 # Tauri-generated schemas / artifacts
 /gen
+
+# Compiled sidecar binaries — rebuilt from sidecars/*/ by sidecars/build.sh
+/binaries
