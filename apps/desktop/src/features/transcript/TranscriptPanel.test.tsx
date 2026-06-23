@@ -358,7 +358,7 @@ describe("TranscriptPanel", () => {
     expect(fakes).toHaveLength(0);
   });
 
-  it("shows Recenter for the Control+Shift+Space hotkey capture path", async () => {
+  it("shows Recenter for the hold hotkey capture path", async () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
     let hotkeyHandler: ((event: CaptureHotkeyListenEvent) => void) | null = null;
     tauri.listen.mockImplementation(
@@ -384,6 +384,35 @@ describe("TranscriptPanel", () => {
     act(() => hotkeyHandler?.({ payload: { phase: "stop" } }));
     await waitFor(() =>
       expect(tauri.invoke.mock.calls.some(([command]) => command === "head_track_stop")).toBe(true),
+    );
+  });
+
+  it("toggles the Control+Shift+Space hotkey capture path", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
+    let hotkeyHandler: ((event: CaptureHotkeyListenEvent) => void) | null = null;
+    tauri.listen.mockImplementation(
+      async (event: string, next: (event: CaptureHotkeyListenEvent) => void) => {
+        if (event === CAPTURE_HOTKEY_EVENT) hotkeyHandler = next;
+        return vi.fn();
+      },
+    );
+    tauri.invoke.mockResolvedValue(undefined);
+
+    render(<TranscriptPanel createStream={makeFactory()} />);
+    await waitFor(() => expect(hotkeyHandler).not.toBeNull());
+
+    act(() => hotkeyHandler?.({ payload: { phase: "toggle" } }));
+    await waitFor(() => expect(tauri.invoke).toHaveBeenCalledWith("head_track_start", undefined));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Recenter" })).toBeInTheDocument(),
+    );
+
+    act(() => hotkeyHandler?.({ payload: { phase: "toggle" } }));
+    await waitFor(() =>
+      expect(tauri.invoke.mock.calls.some(([command]) => command === "head_track_stop")).toBe(true),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Recenter" })).not.toBeInTheDocument(),
     );
   });
 });

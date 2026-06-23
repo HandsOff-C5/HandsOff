@@ -11,28 +11,33 @@ mod commands;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        // Control + Shift + Space capture hotkey (#95) via the global-shortcut
-        // plugin — no Accessibility/Input Monitoring permission needed.
-        // Pressed/Released drive capture start/stop through `hotkey://capture`.
+        // Capture hotkeys (#95) via the global-shortcut plugin — no
+        // Accessibility/Input Monitoring permission needed. Command+Option+? is
+        // hold-to-capture; Control+Shift+Space is tap-to-toggle.
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    commands::hotkey::handle_event(app, event.state());
+                .with_handler(|app, shortcut, event| {
+                    commands::hotkey::handle_event(app, shortcut, event.state());
                 })
                 .build(),
         )
         .manage(commands::head_track::HeadTrackState::default())
         .manage(commands::stt_ondevice::OnDeviceSttState::default())
         .setup(|app| {
-            // Register the capture hotkey once the app is up. Surface (don't
+            // Register capture hotkeys once the app is up. Surface (don't
             // swallow with `?`) a registration failure: macOS can refuse a global
             // hotkey silently, and a swallowed error here looks like "nothing
             // happens on press" with no clue why.
             use tauri_plugin_global_shortcut::GlobalShortcutExt;
-            let shortcut = commands::hotkey::capture_shortcut();
-            match app.global_shortcut().register(shortcut) {
-                Ok(()) => eprintln!("handsoff: registered capture hotkey {shortcut:?}"),
-                Err(error) => eprintln!("handsoff: FAILED to register capture hotkey: {error}"),
+            for shortcut in commands::hotkey::capture_shortcuts() {
+                match app.global_shortcut().register(shortcut) {
+                    Ok(()) => eprintln!("handsoff: registered capture hotkey {shortcut:?}"),
+                    Err(error) => {
+                        eprintln!(
+                            "handsoff: FAILED to register capture hotkey {shortcut:?}: {error}"
+                        )
+                    }
+                }
             }
             Ok(())
         })

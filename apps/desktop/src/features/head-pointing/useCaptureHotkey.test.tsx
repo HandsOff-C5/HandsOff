@@ -36,6 +36,30 @@ describe("useCaptureHotkey", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 
+  it("toggles head tracking and capture on toggle phases", async () => {
+    let handler: ((event: CaptureHotkeyListenEvent) => void) | null = null;
+    const listen = vi.fn(
+      async (_event: string, next: (event: CaptureHotkeyListenEvent) => void) => {
+        handler = next;
+        return vi.fn();
+      },
+    );
+    const invoke = vi.fn(async () => undefined);
+    const onStart = vi.fn();
+    const onStop = vi.fn();
+
+    renderHook(() => useCaptureHotkey({ listen, invoke, onStart, onStop }));
+    await waitFor(() => expect(handler).not.toBeNull());
+
+    act(() => handler?.({ payload: { phase: "toggle" } }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("head_track_start", undefined));
+    await waitFor(() => expect(onStart).toHaveBeenCalledTimes(1));
+
+    act(() => handler?.({ payload: { phase: "toggle" } }));
+    expect(invoke).toHaveBeenCalledWith("head_track_stop");
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores payloads without a valid phase", async () => {
     let handler: ((event: CaptureHotkeyListenEvent) => void) | null = null;
     const listen = vi.fn(
