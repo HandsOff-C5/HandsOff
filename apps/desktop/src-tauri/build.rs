@@ -3,12 +3,44 @@ use std::path::Path;
 use std::process::Command;
 
 fn main() {
+    bake_local_worker_config();
     // Compile the native permissions bridge (#31). macOS-only; the app targets macOS.
     #[cfg(target_os = "macos")]
     {
         build_native_permissions_bridge();
     }
     tauri_build::build()
+}
+
+// Dev convenience: bake the `HANDSOFF_*` worker config (Worker URLs + app-cohort
+// tokens) from `apps/desktop/.env.local` into the binary at compile time, so every
+// launch is fully wired without launch-time `--env` flags. The runtime env still
+// overrides (see `commands::deployment_config`). Only `HANDSOFF_*` keys are baked —
+// never the provider API keys (`OPENAI_API_KEY`/`ASSEMBLYAI_API_KEY`), which live
+// solely in the deployed Workers. A release build on a machine without `.env.local`
+// bakes nothing and falls back to runtime env — provider-secret-free by default.
+fn bake_local_worker_config() {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let env_path = format!("{manifest}/../.env.local");
+    println!("cargo:rerun-if-changed={env_path}");
+    let Ok(contents) = std::fs::read_to_string(&env_path) else {
+        return;
+    };
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !key.starts_with("HANDSOFF_") {
+            continue;
+        }
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        println!("cargo:rustc-env={key}={value}");
+    }
 }
 
 #[cfg(target_os = "macos")]

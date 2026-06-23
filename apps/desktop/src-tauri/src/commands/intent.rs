@@ -77,12 +77,18 @@ fn resolve_with_worker(
 
 #[tauri::command]
 pub fn intent_resolve(request: IntentResolveRequest) -> Result<Value, String> {
-    let worker_url = std::env::var(INTENT_WORKER_URL_ENV).map_err(|_| {
+    let worker_url = super::deployment_config(
+        INTENT_WORKER_URL_ENV,
+        option_env!("HANDSOFF_INTENT_WORKER_URL"),
+    )
+    .ok_or_else(|| {
         format!("missing-configuration: set {INTENT_WORKER_URL_ENV} to enable LLM intent")
     })?;
-    let app_token = std::env::var(APP_AUTH_TOKEN_ENV).map_err(|_| {
-        format!("missing-credentials: set {APP_AUTH_TOKEN_ENV} to enable LLM intent")
-    })?;
+    let app_token =
+        super::deployment_config(APP_AUTH_TOKEN_ENV, option_env!("HANDSOFF_INTENT_APP_AUTH_TOKEN"))
+            .ok_or_else(|| {
+                format!("missing-credentials: set {APP_AUTH_TOKEN_ENV} to enable LLM intent")
+            })?;
     resolve_with_worker(&worker_url, &app_token, request)
 }
 
@@ -148,9 +154,30 @@ mod tests {
     }
 
     #[test]
-    fn missing_worker_url_reports_missing_configuration_without_a_request() {
+    fn deployment_config_reports_none_when_env_and_baked_are_absent() {
         std::env::remove_var(INTENT_WORKER_URL_ENV);
-        let result = intent_resolve(request());
-        assert!(matches!(result, Err(message) if message.starts_with("missing-configuration")));
+        assert!(super::super::deployment_config(INTENT_WORKER_URL_ENV, None).is_none());
+        assert!(super::super::deployment_config(INTENT_WORKER_URL_ENV, Some("  ")).is_none());
+    }
+
+    #[test]
+    fn deployment_config_prefers_runtime_env_over_baked_value() {
+        std::env::set_var(INTENT_WORKER_URL_ENV, "https://override.handsoff.test/v1/resolve-intent");
+        let resolved =
+            super::super::deployment_config(INTENT_WORKER_URL_ENV, Some("https://baked.test"));
+        std::env::remove_var(INTENT_WORKER_URL_ENV);
+        assert_eq!(
+            resolved.as_deref(),
+            Some("https://override.handsoff.test/v1/resolve-intent")
+        );
+    }
+
+    #[test]
+    fn deployment_config_falls_back_to_baked_value_when_env_absent() {
+        std::env::remove_var(INTENT_WORKER_URL_ENV);
+        assert_eq!(
+            super::super::deployment_config(INTENT_WORKER_URL_ENV, Some("https://baked.test")),
+            Some("https://baked.test".to_string())
+        );
     }
 }
