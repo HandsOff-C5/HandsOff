@@ -49,15 +49,15 @@ describe("alignPointingEvidence", () => {
     expect(aligned.map((e) => e.source)).toEqual(["gesture", "head"]);
   });
 
-  it("falls back to the single nearest evidence when nothing lands in the window", () => {
+  it("returns empty when nothing lands in the window, even if stale samples exist", () => {
+    // Stale pointing must NOT be treated as aligned (AD5: clarify, don't guess).
     const buffer = [timed(100, "gesture"), timed(5000, "head")];
     const aligned = alignPointingEvidence(
       buffer,
       { startMs: 900, endMs: 1000 },
       { toleranceMs: 50 },
     );
-    expect(aligned).toHaveLength(1);
-    expect(aligned[0]?.source).toBe("gesture"); // 800ms away beats 4000ms away
+    expect(aligned).toEqual([]);
   });
 
   it("returns an empty array for an empty buffer", () => {
