@@ -84,11 +84,11 @@ pub fn intent_resolve(request: IntentResolveRequest) -> Result<Value, String> {
     .ok_or_else(|| {
         format!("missing-configuration: set {INTENT_WORKER_URL_ENV} to enable LLM intent")
     })?;
-    let app_token =
-        super::deployment_config(APP_AUTH_TOKEN_ENV, option_env!("HANDSOFF_INTENT_APP_AUTH_TOKEN"))
-            .ok_or_else(|| {
-                format!("missing-credentials: set {APP_AUTH_TOKEN_ENV} to enable LLM intent")
-            })?;
+    let app_token = super::deployment_config(
+        APP_AUTH_TOKEN_ENV,
+        option_env!("HANDSOFF_INTENT_APP_AUTH_TOKEN"),
+    )
+    .ok_or_else(|| format!("missing-credentials: set {APP_AUTH_TOKEN_ENV} to enable LLM intent"))?;
     resolve_with_worker(&worker_url, &app_token, request)
 }
 
@@ -162,7 +162,10 @@ mod tests {
 
     #[test]
     fn deployment_config_prefers_runtime_env_over_baked_value() {
-        std::env::set_var(INTENT_WORKER_URL_ENV, "https://override.handsoff.test/v1/resolve-intent");
+        std::env::set_var(
+            INTENT_WORKER_URL_ENV,
+            "https://override.handsoff.test/v1/resolve-intent",
+        );
         let resolved =
             super::super::deployment_config(INTENT_WORKER_URL_ENV, Some("https://baked.test"));
         std::env::remove_var(INTENT_WORKER_URL_ENV);
