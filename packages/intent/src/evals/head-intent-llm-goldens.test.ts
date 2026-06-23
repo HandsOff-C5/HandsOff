@@ -51,7 +51,7 @@ function project(intent: ResolvedIntent) {
   return {
     status: intent.status,
     intent_type: "intent_type" in intent ? intent.intent_type : undefined,
-    referentId: "referent" in intent ? intent.referent.id : undefined,
+    referentId: "referent" in intent ? intent.referent?.id : undefined,
     target_agent: intent.target_agent,
     requires_approval: intent.requires_approval,
     actionKinds: steps.map((step) => step.kind),

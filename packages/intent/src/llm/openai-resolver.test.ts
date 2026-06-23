@@ -191,6 +191,82 @@ describe("resolveWithOpenAi", () => {
     });
   });
 
+  it("treats a blank bundleId as absent so launch plans stay valid", async () => {
+    const { client } = clientWith({
+      finish_reason: "stop",
+      message: {
+        parsed: readyOutput({
+          intent_type: "type_text",
+          action_plan: {
+            ...readyOutput().action_plan!,
+            summary: "Open Brave",
+            action_plan: [
+              {
+                id: "1",
+                kind: "launch_app",
+                label: "launch Brave",
+                appName: "Brave",
+                bundleId: "",
+              },
+            ],
+          },
+        }),
+      },
+    });
+
+    const resolved = await resolveWithOpenAi(input(), { client });
+
+    expect(resolvedIntentSchema.safeParse(resolved).success).toBe(true);
+    expect(resolved.status).toBe("ready");
+    if (resolved.status === "ready") {
+      // bundleId omitted entirely — an empty string would fail the .min(1) contract.
+      expect(resolved.action_plan.action_plan[0]).toEqual({
+        id: "1",
+        kind: "launch_app",
+        label: "launch Brave",
+        appName: "Brave",
+      });
+    }
+  });
+
+  it("derives intent_type and risk_level from the plan when the model leaves them null", async () => {
+    const { client } = clientWith({
+      finish_reason: "stop",
+      message: {
+        parsed: readyOutput({
+          intent_type: null,
+          risk_level: null,
+          referent: null,
+          action_plan: {
+            ...readyOutput().action_plan!,
+            summary: "Open Comet",
+            risk_level: "reversible",
+            action_plan: [
+              {
+                id: "1",
+                kind: "launch_app",
+                label: "launch Comet",
+                appName: "Comet",
+                bundleId: "",
+              },
+            ],
+          },
+        }),
+      },
+    });
+
+    const resolved = await resolveWithOpenAi(input(), { client });
+
+    expect(resolvedIntentSchema.safeParse(resolved).success).toBe(true);
+    expect(resolved).toMatchObject({
+      status: "ready",
+      intent_type: "launch",
+      risk_level: "reversible",
+      referent: null,
+      action_plan: { action_plan: [{ kind: "launch_app", appName: "Comet" }] },
+    });
+  });
+
   it("turns an OpenAI refusal into a recoverable clarification", async () => {
     const { client } = clientWith({
       finish_reason: "stop",

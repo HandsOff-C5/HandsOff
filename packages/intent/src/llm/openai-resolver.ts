@@ -7,6 +7,7 @@ import {
   type ActionPlan,
   type ActionStep,
   type IntentInput,
+  type IntentType,
   type ResolvedIntent,
   type SurfaceSnapshot,
 } from "@handsoff/contracts";
@@ -161,20 +162,47 @@ function normalizeParsedIntent(
     };
   }
 
-  const requires_approval = parsed.risk_level ? requiresApproval(parsed.risk_level) : false;
+  const action_plan = parsed.action_plan ? normalizeActionPlan(parsed.action_plan) : null;
+  // The OpenAI subset lets intent_type/risk_level come back null (notably for an
+  // app-launch, which has no natural intent_type). The action plan is the source
+  // of truth for what will execute, so derive the ready intent's classification
+  // from it rather than forcing the model to fill every field — and failing the
+  // strict ready contract when it leaves one null.
+  const risk_level = parsed.risk_level ?? action_plan?.risk_level ?? "reversible";
+  const intent_type = parsed.intent_type ?? intentTypeForPlan(action_plan);
   return {
     status: "ready",
     id: parsed.id,
     input,
-    intent_type: parsed.intent_type,
+    intent_type,
     referent: parsed.referent,
     constraints: parsed.constraints,
-    risk_level: parsed.risk_level,
-    requires_approval,
+    risk_level,
+    requires_approval: requiresApproval(risk_level),
     target_agent: parsed.target_agent,
-    action_plan: parsed.action_plan ? normalizeActionPlan(parsed.action_plan) : null,
+    action_plan,
     createdAt,
   };
+}
+
+// Map the plan's primary action — the first non-launch step, else the first step
+// — to the descriptive intent_type. Used only when the model leaves it null
+// (a pure launch_app plan resolves to "launch").
+function intentTypeForPlan(plan: ActionPlan | null): IntentType {
+  const steps = plan?.action_plan ?? [];
+  const primary = steps.find((step) => step.kind !== "launch_app") ?? steps[0];
+  switch (primary?.kind) {
+    case "click_element":
+      return "click";
+    case "type_text":
+      return "type_text";
+    case "set_value":
+      return "set_value";
+    case "launch_app":
+      return "launch";
+    default:
+      return "inspect";
+  }
 }
 
 function normalizeActionPlan(plan: OpenAiResolvedIntent["action_plan"]): ActionPlan | null {
@@ -193,20 +221,32 @@ type OpenAiActionStep = OpenAiActionPlan["action_plan"][number];
 type OpenAiTargetedActionStep = Extract<OpenAiActionStep, { target: unknown }>;
 type OpenAiSurface = OpenAiTargetedActionStep["target"]["surface"];
 
+// The OpenAI subset schema types optional string fields as nullable, but the
+// model often emits "" instead of null (e.g. bundleId for a launch with no known
+// bundle id). The real contract requires `.min(1)` when these are present, so an
+// empty string fails validation ("invalid action plan"). Coalesce blank strings
+// to absent so the optional field is simply omitted.
+function nonEmpty(value: string | null): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 function normalizeStep(step: OpenAiActionStep): ActionStep {
   if (step.kind === "launch_app") {
+    const bundleId = nonEmpty(step.bundleId);
     return {
       id: step.id,
       kind: "launch_app",
       label: step.label,
       appName: step.appName,
-      ...(step.bundleId !== null && { bundleId: step.bundleId }),
+      ...(bundleId && { bundleId }),
     };
   }
 
+  const elementId = nonEmpty(step.target.elementId);
   const target = {
     surface: normalizeSurface(step.target.surface),
-    ...(step.target.elementId !== null && { elementId: step.target.elementId }),
+    ...(elementId && { elementId }),
     ...(step.target.elementIndex !== null && { elementIndex: step.target.elementIndex }),
   };
 

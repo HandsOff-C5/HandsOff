@@ -19,8 +19,12 @@ function runSummary(runResult: PlanRunResult): string {
 }
 
 function targetTitle(intent: Extract<ResolvedIntent, { status: "ready" }>): string {
-  const targeted = intent.action_plan.action_plan.find((step) => "target" in step);
-  return targeted?.target.surface.title ?? intent.referent.id;
+  const steps = intent.action_plan.action_plan;
+  const targeted = steps.find((step) => "target" in step);
+  if (targeted && "target" in targeted) return targeted.target.surface.title;
+  const launch = steps.find((step) => step.kind === "launch_app");
+  if (launch?.kind === "launch_app") return launch.appName;
+  return intent.referent?.id ?? intent.action_plan.summary;
 }
 
 export function PlanPreviewPanel({

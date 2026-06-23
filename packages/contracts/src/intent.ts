@@ -10,6 +10,7 @@ export const INTENT_TYPES = [
   "click",
   "type_text",
   "set_value",
+  "launch",
   "pause",
   "stop",
 ] as const;
@@ -46,7 +47,10 @@ export const resolvedIntentSchema = z.discriminatedUnion("status", [
     id: z.string().min(1),
     input: intentInputSchema,
     intent_type: intentTypeSchema,
-    referent: selectedReferentSchema,
+    // Null for referent-less actions such as launching a named app — there is no
+    // pointed-at surface to ground. Targeted actions still carry their surface on
+    // each action step, so execution never depends on this field.
+    referent: selectedReferentSchema.nullable(),
     constraints: z.array(z.string()),
     risk_level: riskLevelSchema,
     requires_approval: z.boolean(),
