@@ -1,14 +1,26 @@
 import { fakeActionTarget, fakeCuaActionResult, fakeCuaWindowState } from "@handsoff/testkit";
 import { describe, expect, it } from "vitest";
 
-import { runApprovedPlan } from "./run-approved-plan";
+import { appWindowPresent, runApprovedPlan } from "./run-approved-plan";
 import type {
   ActionPlan,
   CuaActionRequest,
   CuaActionResult,
+  CuaWindow,
   SupervisionAuditEvent,
 } from "@handsoff/contracts";
 import type { CuaActionPort } from "./run-approved-plan";
+
+function appWindow(app: string, overrides: Partial<CuaWindow> = {}): CuaWindow {
+  return {
+    id: `app:${app.toLowerCase()}`,
+    title: app,
+    app,
+    availability: "available",
+    accessStatus: "accessible",
+    ...overrides,
+  };
+}
 
 function plan(overrides: Partial<ActionPlan> = {}): ActionPlan {
   return {
@@ -34,6 +46,7 @@ function port(
     result?: CuaActionResult;
     stateResult?: CuaActionResult;
     stateResults?: CuaActionResult[];
+    windows?: readonly CuaWindow[];
   } = {},
 ): CuaActionPort & { calls: CuaActionRequest[] } {
   const calls: CuaActionRequest[] = [];
@@ -71,6 +84,9 @@ function port(
     async screenshot(request) {
       calls.push(request);
       return result;
+    },
+    async listWindows() {
+      return options.windows ?? [];
     },
   };
 }
@@ -221,7 +237,7 @@ describe("approved plan runner", () => {
   });
 
   it("runs app-launch steps before target actions", async () => {
-    const cua = port();
+    const cua = port({ windows: [appWindow("TextEdit")] });
     const audit = auditSink();
     const target = fakeActionTarget({
       surface: {
@@ -285,5 +301,76 @@ describe("approved plan runner", () => {
       "approval_decided",
       "execution_finished",
     ]);
+  });
+
+  it("verifies a launch-only plan succeeds when the app's window appears", async () => {
+    const cua = port({ windows: [appWindow("Cursor", { focused: true })] });
+    const audit = auditSink();
+
+    const result = await runApprovedPlan({
+      sessionId: "session-1",
+      plan: plan({
+        risk_level: "reversible",
+        requires_approval: false,
+        action_plan: [
+          { id: "step-1", kind: "launch_app", label: "Open Cursor", appName: "Cursor" },
+        ],
+      }),
+      cua,
+      audit,
+      recordedAt: "2026-06-22T12:00:00.000Z",
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(cua.calls.map((call) => call.kind)).toEqual(["launch_app"]);
+    expect(audit.list().at(-1)).toMatchObject({ kind: "execution_finished", status: "succeeded" });
+  });
+
+  it("fails a launch when the launched app never appears (not OS-verified)", async () => {
+    const cua = port({ windows: [appWindow("Finder")] });
+    const audit = auditSink();
+
+    const result = await runApprovedPlan({
+      sessionId: "session-1",
+      plan: plan({
+        risk_level: "reversible",
+        requires_approval: false,
+        action_plan: [
+          { id: "step-1", kind: "launch_app", label: "Open Cursor", appName: "Cursor" },
+        ],
+      }),
+      cua,
+      audit,
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      // Poll quickly with a no-op wait so the test doesn't sleep.
+      launchVerify: { attempts: 3, delayMs: 0 },
+      wait: async () => {},
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.result?.status).toBe("failed");
+    expect(audit.list().at(-1)).toMatchObject({
+      kind: "execution_finished",
+      status: "failed",
+      result: { error: expect.stringContaining("launch not verified") },
+    });
+  });
+});
+
+describe("appWindowPresent", () => {
+  it("matches the launched app case-insensitively and reports focus", () => {
+    const windows = [appWindow("Cursor", { focused: true }), appWindow("Finder")];
+    expect(appWindowPresent(windows, "cursor")).toEqual({ present: true, focused: true });
+  });
+
+  it("tolerates an .app suffix on either side", () => {
+    expect(appWindowPresent([appWindow("Cursor")], "Cursor.app").present).toBe(true);
+  });
+
+  it("reports absent when no window matches", () => {
+    expect(appWindowPresent([appWindow("Finder")], "Cursor")).toEqual({
+      present: false,
+      focused: false,
+    });
   });
 });

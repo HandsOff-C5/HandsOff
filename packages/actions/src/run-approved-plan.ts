@@ -3,6 +3,7 @@ import type {
   ApprovalDecision,
   CuaActionRequest,
   CuaActionResult,
+  CuaWindow,
   CuaWindowState,
   ExecutionStatus,
   SupervisionAuditEvent,
@@ -19,7 +20,27 @@ export type CuaActionPort = {
   typeText(request: Extract<CuaActionRequest, { kind: "type_text" }>): Promise<CuaActionResult>;
   setValue(request: Extract<CuaActionRequest, { kind: "set_value" }>): Promise<CuaActionResult>;
   screenshot(request: Extract<CuaActionRequest, { kind: "screenshot" }>): Promise<CuaActionResult>;
+  // Lists on-screen windows — used to VERIFY a launch actually happened (the OS shows the
+  // app), rather than trusting the launch command's own success report.
+  listWindows(): Promise<readonly CuaWindow[]>;
 };
+
+// Did a window for `appName` actually appear? Matches the app name case-insensitively
+// either way (so "Cursor" matches a "Cursor" window and tolerates ".app" suffixes).
+export function appWindowPresent(
+  windows: readonly CuaWindow[],
+  appName: string,
+): { present: boolean; focused: boolean } {
+  const wanted = appName.trim().toLowerCase();
+  const match = windows.find((w) => {
+    const app = w.app.trim().toLowerCase();
+    return app === wanted || app.includes(wanted) || wanted.includes(app);
+  });
+  return { present: match !== undefined, focused: match?.focused === true };
+}
+
+const DEFAULT_LAUNCH_VERIFY = { attempts: 6, delayMs: 400 };
+const realWait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export type ActionAuditSink = {
   record(event: SupervisionAuditEvent): SupervisionAuditEvent;
@@ -37,8 +58,16 @@ export async function runApprovedPlan(args: {
   cua: CuaActionPort;
   audit: ActionAuditSink;
   recordedAt?: string;
+  // Launch verification poll (how many times / how long to wait for the app's window to
+  // appear) and the wait fn (injected so tests run instantly). An app cold-start can take
+  // a couple of seconds, so we poll rather than check once.
+  launchVerify?: { attempts?: number; delayMs?: number };
+  wait?: (ms: number) => Promise<void>;
 }): Promise<PlanRunResult> {
   const recordedAt = args.recordedAt ?? new Date().toISOString();
+  const verifyAttempts = args.launchVerify?.attempts ?? DEFAULT_LAUNCH_VERIFY.attempts;
+  const verifyDelayMs = args.launchVerify?.delayMs ?? DEFAULT_LAUNCH_VERIFY.delayMs;
+  const wait = args.wait ?? realWait;
 
   if (args.approval) {
     args.audit.record({
@@ -78,6 +107,23 @@ export async function runApprovedPlan(args: {
       if (result.status !== "succeeded") {
         finish(args.audit, args.sessionId, args.plan.id, recordedAt, result);
         return { status: result.status, result };
+      }
+
+      // SEMANTIC verification (DoD): don't trust the launch command's own "succeeded" —
+      // confirm the OS actually shows the app by polling the window list until it appears.
+      const appName = step.appName;
+      let verification = appWindowPresent(await args.cua.listWindows(), appName);
+      for (let left = verifyAttempts - 1; !verification.present && left > 0; left -= 1) {
+        await wait(verifyDelayMs);
+        verification = appWindowPresent(await args.cua.listWindows(), appName);
+      }
+      if (!verification.present) {
+        const failure: CuaActionResult = {
+          status: "failed",
+          error: `Launched ${appName} but no ${appName} window appeared — launch not verified`,
+        };
+        finish(args.audit, args.sessionId, args.plan.id, recordedAt, failure);
+        return { status: "failed", result: failure };
       }
       continue;
     }

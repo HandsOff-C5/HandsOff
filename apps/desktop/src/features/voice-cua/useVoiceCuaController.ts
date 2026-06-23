@@ -51,6 +51,7 @@ function actionPortFor(driver: CuaDriver): CuaActionPort {
       driver.setValue(target, value),
     screenshot: ({ target }: Extract<CuaActionRequest, { kind: "screenshot" }>) =>
       driver.screenshot(target),
+    listWindows: () => driver.listWindows(),
   };
 }
 
