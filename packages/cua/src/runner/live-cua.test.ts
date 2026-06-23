@@ -12,6 +12,17 @@ const screenshotTurn = {
     { type: "tool_use", id: "tu_1", name: "computer", input: { action: "screenshot" } },
   ],
 };
+const clickTurn = {
+  stop_reason: "tool_use",
+  content: [
+    {
+      type: "tool_use",
+      id: "tu_2",
+      name: "computer",
+      input: { action: "left_click", coordinate: [7, 8] },
+    },
+  ],
+};
 const doneTurn = { stop_reason: "end_turn", content: [{ type: "text", text: "done" }] };
 
 type Call = { command: string; args?: Record<string, unknown> };
@@ -90,6 +101,26 @@ describe("createTauriCuaEscalator", () => {
     // Each run opens with exactly one user message (the goal) — no carry-over.
     expect(brainRequestMessages(firstRun)).toHaveLength(1);
     expect(brainRequestMessages(secondRun)).toHaveLength(1);
+  });
+
+  it("queues a mutating action for human approval and proceeds once allowed", async () => {
+    let turn = 0;
+    const turns = [clickTurn, doneTurn];
+    const { invoke, calls } = fakeInvoke({
+      cua_brain_step: () => turns[turn++],
+      cua_pointer_click: () => undefined,
+    });
+    const escalator = createTauriCuaEscalator({ invoke, display });
+
+    const runPromise = escalator.escalate({ command: "click OK" });
+    await vi.waitFor(() => expect(escalator.approval.pending()).toHaveLength(1));
+    const pendingId = escalator.approval.pending()[0]?.id;
+    if (!pendingId) throw new Error("expected a pending approval");
+    escalator.approval.resolve(pendingId, "allow");
+
+    const result = await runPromise;
+    expect(result.status).toBe("succeeded");
+    expect(calls.map((c) => c.command)).toContain("cua_pointer_click");
   });
 
   it("exposes a shared approval controller for the UI", () => {
