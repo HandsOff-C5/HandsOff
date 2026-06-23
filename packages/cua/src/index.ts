@@ -3,5 +3,6 @@ export * from "./fake-driver";
 export * from "./runner/anthropic-brain";
 export * from "./runner/computer-env";
 export * from "./runner/computer-use-loop";
+export * from "./runner/escalation";
 export * from "./safety/blast-radius";
 export * from "./tauri-driver";

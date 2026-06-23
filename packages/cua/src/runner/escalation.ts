@@ -1,3 +1,5 @@
+import type { ComputerAction, RiskLevel } from "@handsoff/contracts";
+
 import {
   runComputerUseLoop,
   type ComputerEnv,
@@ -6,21 +8,56 @@ import {
   type LoopResult,
 } from "./computer-use-loop";
 
-// STUB — red phase. The failing test demands the real instruction + orchestrator.
+// What the user pointed at, resolved by fusion/perception — injected into the
+// brain's goal so the agent starts grounded instead of hunting the whole screen.
 export type CuaReferent = { app: string; title?: string; pointer?: { x: number; y: number } };
+
 export type CuaEscalationRequest = { command: string; referent?: CuaReferent };
 
+// Build the computer-use goal for an escalated request. The research is explicit
+// that a pixel-only agent's native ceiling is low and that the *pointed-at
+// referent is what lifts it* — so when fusion resolved a referent we name it (and
+// its rough screen location) up front, then instruct the screenshot-first,
+// verify-each-step discipline the computer-use docs recommend.
 export function buildCuaInstruction(req: CuaEscalationRequest): string {
-  return req.command ? "" : "";
+  const lines = [`The user said: "${req.command}".`];
+
+  if (req.referent) {
+    const title = req.referent.title ? ` titled "${req.referent.title}"` : "";
+    const where = req.referent.pointer
+      ? ` near screen point (${req.referent.pointer.x}, ${req.referent.pointer.y})`
+      : "";
+    lines.push(`They pointed at the ${req.referent.app} window${title}${where}.`);
+  }
+
+  lines.push(
+    "Complete the request by operating the screen. Take a screenshot first to see the current " +
+      "state, and after each step take a screenshot and verify the result before continuing.",
+  );
+
+  return lines.join(" ");
 }
 
 export type RunCuaEscalationArgs = CuaEscalationRequest & {
   brain: ComputerUseBrain;
   env: ComputerEnv;
-  approve?: (entry: { action: unknown; risk: unknown }) => Promise<GateDecision> | GateDecision;
+  approve?: (entry: {
+    action: ComputerAction;
+    risk: RiskLevel;
+  }) => Promise<GateDecision> | GateDecision;
   maxSteps?: number;
 };
 
+// Run the computer-use loop for a below-threshold / ambiguous request, with the
+// referent-grounded instruction as the goal. The brain (live Claude call) and
+// env (cua-driver) are injected; the safety gate and termination come from the
+// loop. This is the DoD #5 escalation path.
 export function runCuaEscalation(args: RunCuaEscalationArgs): Promise<LoopResult> {
-  return runComputerUseLoop({ goal: args.command, brain: args.brain, env: args.env });
+  return runComputerUseLoop({
+    goal: buildCuaInstruction({ command: args.command, referent: args.referent }),
+    brain: args.brain,
+    env: args.env,
+    approve: args.approve,
+    maxSteps: args.maxSteps,
+  });
 }
