@@ -83,6 +83,7 @@ export function CameraPanel({
   const [phase, setPhase] = useState<GestureState>("idle");
   const [active, setActive] = useState(false);
   const [pointer, setPointer] = useState<Point | null>(null);
+  const [confidence, setConfidence] = useState(0);
 
   const resources = useRef<Resources>({ raf: 0, handle: null, stream: null, cancelled: false });
   // Live pointing signal this frame — read by the calibration overlay's Capture.
@@ -119,6 +120,7 @@ export function CameraPanel({
     setPhase("idle");
     setActive(false);
     setPointer(null);
+    setConfidence(0);
   }, []);
 
   // Restore a saved calibration so pointing works immediately after a restart.
@@ -196,6 +198,7 @@ export function CameraPanel({
             setActive(out.active);
             setPhase(out.state.phase);
             setPointer(f.hands.length ? out.point : null);
+            setConfidence(out.confidence);
             if (out.emit && "targetId" in out.emit) setReferent(out.emit);
           },
           onError: (e) => setError(e instanceof Error ? e.message : String(e)),
@@ -313,6 +316,7 @@ export function CameraPanel({
             point={pointer}
             bounds={calibration ? DEMO_SCREEN_BOUNDS : UNIT_BOUNDS}
             mirrored={mirrored}
+            confidence={confidence}
           />
         )}
 
