@@ -10,7 +10,7 @@ export function buildResolveIntentMessages(input: IntentInput): ResolveIntentMes
     {
       role: "system",
       content:
-        "Resolve the user's transcript into a HandsOff action plan. Use only the supplied transcript and ordered candidate surface metadata. If the target is ambiguous, blocked, or unsafe, return clarification_required or blocked. Never produce destructive actions.",
+        "Resolve the user's transcript into a HandsOff action plan. You are the natural-language command parser; use only the supplied transcript and ordered candidate surface metadata. You may launch a named macOS app before typing into it. For named app launch targets, use surface id app:<lowercase app name> with pid/windowId null and unknown availability/access. For this/current app/window/document with no candidate surfaces, use surface id active-window, title Active window, app Current app, pid/windowId null, availability available, accessStatus accessible. If the target is ambiguous, blocked, or unsafe, return clarification_required or blocked. Never produce destructive actions.",
     },
     {
       role: "user",

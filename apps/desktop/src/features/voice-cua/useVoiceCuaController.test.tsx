@@ -67,8 +67,69 @@ function ready(input: IntentInput): ResolvedIntent {
   };
 }
 
+function readyType(
+  input: IntentInput,
+  targetSurface: SurfaceSnapshot,
+  text: string,
+): ResolvedIntent {
+  return {
+    status: "ready",
+    id: "intent-1",
+    input,
+    intent_type: "type_text",
+    referent: { id: targetSurface.id, source: "fusion", confidence: 1 },
+    constraints: [],
+    risk_level: "mutating",
+    requires_approval: true,
+    target_agent: "cua-driver",
+    action_plan: {
+      id: "plan-1",
+      summary: "Type dictated text",
+      risk_level: "mutating",
+      requires_approval: true,
+      target_agent: "cua-driver",
+      action_plan: [
+        {
+          id: "step-1",
+          kind: "type_text",
+          label: "Type dictated text",
+          target: { surface: targetSurface, elementIndex: 0 },
+          text,
+        },
+      ],
+    },
+    createdAt: NOW,
+  };
+}
+
+function readyLaunchAndType(
+  input: IntentInput,
+  appName: string,
+  targetSurface: SurfaceSnapshot,
+  text: string,
+): ResolvedIntent {
+  const typed = readyType(input, targetSurface, text);
+  return {
+    ...typed,
+    action_plan: {
+      ...typed.action_plan,
+      summary: `Open ${appName} and type dictated text`,
+      action_plan: [
+        { id: "step-1", kind: "launch_app", label: `Open ${appName}`, appName },
+        {
+          id: "step-2",
+          kind: "type_text",
+          label: "Type dictated text",
+          target: { surface: targetSurface, elementIndex: 0 },
+          text,
+        },
+      ],
+    },
+  };
+}
+
 describe("useVoiceCuaController", () => {
-  it("resolves final transcripts with head candidates through the local rule resolver by default", async () => {
+  it("resolves final transcripts with head candidates through auto intent resolution", async () => {
     const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
     const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
     const { result } = renderHook(() =>
@@ -85,7 +146,7 @@ describe("useVoiceCuaController", () => {
 
     await waitFor(() => expect(resolveIntent).toHaveBeenCalled());
     const [input, options] = resolveIntent.mock.calls[0]!;
-    expect(options).toMatchObject({ resolver: "rule", createdAt: NOW });
+    expect(options).toMatchObject({ resolver: "auto", createdAt: NOW });
     expect(input.pointingEvidence).toEqual([
       {
         source: "head",
@@ -188,4 +249,112 @@ describe("useVoiceCuaController", () => {
       "get_window_state",
     ]);
   });
+
+  it("runs a launch-and-type plan for the reported TextEdit command", async () => {
+    const textEdit = surface({
+      id: "textedit:1",
+      title: "Untitled",
+      app: "TextEdit",
+      pid: 99,
+      windowId: 100,
+    });
+    const driver = createFakeCuaDriver({
+      state: fakeCuaWindowState({ surface: textEdit }),
+      windows: [textEdit],
+    });
+    const resolveIntent = vi.fn(async (input: IntentInput) =>
+      readyLaunchAndType(input, "TextEdit", surfaceForApp("TextEdit"), "hello goodbye"),
+    );
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: null, candidates: [] },
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() =>
+      result.current.handleFinalTranscript({
+        ...finalTranscript,
+        text: "Open TextEdit and type hello goodbye",
+      }),
+    );
+    await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
+
+    await act(async () => result.current.approve());
+
+    expect(driver.calls().map((call) => call.kind)).toEqual([
+      "launch_app",
+      "get_window_state",
+      "type_text",
+      "get_window_state",
+    ]);
+    expect(driver.calls()).toContainEqual({
+      kind: "type_text",
+      target: expect.objectContaining({ surface: expect.objectContaining({ app: "TextEdit" }) }),
+      text: "hello goodbye",
+    });
+    expect(result.current.auditEvents.map((event) => event.kind)).toContain("cua_call");
+  });
+
+  it("runs an add-into-this-app transcript as a current-app type action", async () => {
+    const active = surface({ id: "codex:active", title: "Codex", app: "Codex" });
+    const driver = createFakeCuaDriver({
+      state: fakeCuaWindowState({ surface: active }),
+      windows: [active],
+    });
+    const resolveIntent = vi.fn(async (input: IntentInput) =>
+      readyType(input, currentAppSurface(), "hello hello goodbye"),
+    );
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: null, candidates: [] },
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() =>
+      result.current.handleFinalTranscript({
+        ...finalTranscript,
+        text: "Add hello hello goodbye into this app",
+      }),
+    );
+    await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
+
+    await act(async () => result.current.approve());
+
+    expect(result.current.runResult?.status).toBe("succeeded");
+    expect(driver.calls()).toContainEqual({
+      kind: "type_text",
+      target: expect.objectContaining({
+        surface: expect.objectContaining({ id: "active-window", app: "Current app" }),
+      }),
+      text: "hello hello goodbye",
+    });
+  });
 });
+
+function surfaceForApp(appName: string): SurfaceSnapshot {
+  return {
+    id: `app:${appName.toLowerCase()}`,
+    title: appName,
+    app: appName,
+    availability: "unknown",
+    accessStatus: "unknown",
+  };
+}
+
+function currentAppSurface(): SurfaceSnapshot {
+  return {
+    id: "active-window",
+    title: "Active window",
+    app: "Current app",
+    availability: "available",
+    accessStatus: "accessible",
+  };
+}

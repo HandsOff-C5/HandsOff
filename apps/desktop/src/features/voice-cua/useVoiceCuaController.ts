@@ -4,6 +4,7 @@ import {
   type FinalTranscript,
   type IntentInput,
   type ResolvedIntent,
+  type SupervisionAuditEvent,
 } from "@handsoff/contracts";
 import type { CuaDriver } from "@handsoff/cua";
 import { resolveIntent, type ResolveIntentOptions } from "@handsoff/intent";
@@ -27,6 +28,8 @@ function wait(ms: number): Promise<void> {
 
 function actionPortFor(driver: CuaDriver): CuaActionPort {
   return {
+    launchApp: ({ appName, bundleId }: Extract<CuaActionRequest, { kind: "launch_app" }>) =>
+      driver.launchApp({ appName, bundleId }),
     getWindowState: ({ target }: Extract<CuaActionRequest, { kind: "get_window_state" }>) =>
       driver.getWindowState(target),
     click: ({ target }: Extract<CuaActionRequest, { kind: "click" }>) => driver.click(target),
@@ -56,6 +59,7 @@ export function useVoiceCuaController(args: {
   const [intent, setIntent] = useState<ResolvedIntent | null>(null);
   const [runResult, setRunResult] = useState<PlanRunResult | null>(null);
   const [session, setSession] = useState<SupervisionSession | null>(null);
+  const [auditEvents, setAuditEvents] = useState<readonly SupervisionAuditEvent[]>([]);
   const audit = useRef(createActionAuditStore());
   const sessions = useRef(createSupervisionSessionStore());
   const headPointingRef = useRef(args.headPointing);
@@ -92,7 +96,7 @@ export function useVoiceCuaController(args: {
             ],
       surfaceCandidates: headCandidates.map((candidate) => candidate.surface),
     };
-    const next = await resolveIntentRef.current(input, { resolver: "rule", createdAt });
+    const next = await resolveIntentRef.current(input, { resolver: "auto", createdAt });
     const nextSession =
       next.status === "ready" ? started : sessions.current.finish(started.id, "blocked", createdAt);
     setSession(nextSession);
@@ -105,6 +109,7 @@ export function useVoiceCuaController(args: {
       recordedAt: createdAt,
       intent: next,
     });
+    setAuditEvents(audit.current.forSession(started.id));
   }
 
   async function approve() {
@@ -122,6 +127,7 @@ export function useVoiceCuaController(args: {
     });
     setSession(sessions.current.finish(session.id, terminal(result.status), timestamp()));
     setRunResult(result);
+    setAuditEvents(audit.current.forSession(session.id));
   }
 
   async function reject() {
@@ -137,12 +143,14 @@ export function useVoiceCuaController(args: {
     });
     setSession(sessions.current.finish(session.id, terminal(result.status), decidedAt));
     setRunResult(result);
+    setAuditEvents(audit.current.forSession(session.id));
   }
 
   return {
     intent,
     runResult,
     session,
+    auditEvents,
     approve,
     reject,
     handleFinalTranscript: (finalTranscript: FinalTranscript) => void createIntent(finalTranscript),

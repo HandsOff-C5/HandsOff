@@ -102,7 +102,7 @@ function clientWith(choice: OpenAiParsedChoice) {
 
 describe("resolveWithOpenAi", () => {
   it("returns a ready intent from a valid mocked structured completion", async () => {
-    const { client } = clientWith({
+    const { client, parse } = clientWith({
       finish_reason: "stop",
       message: { parsed: readyOutput() },
     });
@@ -119,6 +119,7 @@ describe("resolveWithOpenAi", () => {
       action_plan: { action_plan: [{ kind: "click_element" }] },
     });
     expect(resolvedIntentSchema.safeParse(resolved).success).toBe(true);
+    expect(parse).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-4o-mini" }));
   });
 
   it("derives approval from risk instead of trusting model output", async () => {
@@ -144,6 +145,48 @@ describe("resolveWithOpenAi", () => {
       action_plan: {
         risk_level: "mutating",
         requires_approval: true,
+      },
+    });
+  });
+
+  it("normalizes launch-app steps from structured SDK output", async () => {
+    const { client } = clientWith({
+      finish_reason: "stop",
+      message: {
+        parsed: readyOutput({
+          intent_type: "type_text",
+          action_plan: {
+            ...readyOutput().action_plan!,
+            summary: "Open TextEdit and type dictated text",
+            action_plan: [
+              {
+                id: "step-1",
+                kind: "launch_app",
+                label: "Open TextEdit",
+                appName: "TextEdit",
+                bundleId: null,
+              },
+              {
+                id: "step-2",
+                kind: "type_text",
+                label: "Type dictated text",
+                target: { surface: openAiSurface(), elementId: null, elementIndex: 0 },
+                text: "hello goodbye",
+                value: null,
+              },
+            ],
+          },
+        }),
+      },
+    });
+
+    await expect(resolveWithOpenAi(input(), { client })).resolves.toMatchObject({
+      status: "ready",
+      action_plan: {
+        action_plan: [
+          { kind: "launch_app", appName: "TextEdit" },
+          { kind: "type_text", text: "hello goodbye" },
+        ],
       },
     });
   });
@@ -193,10 +236,20 @@ describe("resolveWithOpenAi", () => {
     });
   });
 
-  it("requires clarification without calling OpenAI when there are no candidates", async () => {
+  it("still calls OpenAI when there are no candidates so app-launch commands can resolve", async () => {
     const { client, parse } = clientWith({
       finish_reason: "stop",
-      message: { parsed: readyOutput() },
+      message: {
+        parsed: readyOutput({
+          status: "clarification_required",
+          intent_type: null,
+          referent: null,
+          risk_level: null,
+          target_agent: "none",
+          action_plan: null,
+          reason: "No target surface was available",
+        }),
+      },
     });
 
     const resolved = await resolveWithOpenAi(
@@ -209,9 +262,9 @@ describe("resolveWithOpenAi", () => {
 
     expect(resolved).toMatchObject({
       status: "clarification_required",
-      reason: "No attention-region candidates were available",
+      reason: "No target surface was available",
     });
-    expect(parse).not.toHaveBeenCalled();
+    expect(parse).toHaveBeenCalled();
   });
 });
 

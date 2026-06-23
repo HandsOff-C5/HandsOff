@@ -12,24 +12,10 @@ use tauri_plugin_shell::{
 
 use self::candidates::{cua_attention_windows, rank_attention_candidates, DEFAULT_RADIUS};
 use self::event::{parse_head_event, take_stdout_lines, HeadPoint, HeadSidecarEvent};
+use super::storage::HeadPointerConfig;
 
 const EVENT_NAME: &str = "stt://head";
 const SIDECAR_NAME: &str = "head-track";
-
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HeadPointerConfig {
-    movement_mode: HeadPointerMovementMode,
-    speed: f64,
-    distance_to_edge: f64,
-}
-
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-enum HeadPointerMovementMode {
-    Edge,
-    Relative,
-}
 
 #[derive(Clone, Default)]
 pub struct HeadTrackState {
@@ -261,6 +247,7 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::storage::HeadPointerMovementMode;
     use super::*;
 
     fn head_pointer_config() -> HeadPointerConfig {

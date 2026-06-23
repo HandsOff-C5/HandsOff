@@ -50,6 +50,7 @@ fn main() {
             commands::cua::cua_permissions,
             commands::cua::cua_list_windows,
             commands::cua::cua_get_window_state,
+            commands::cua::cua_launch_app,
             commands::cua::cua_click,
             commands::cua::cua_type_text,
             commands::cua::cua_set_value,

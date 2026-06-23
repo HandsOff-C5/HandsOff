@@ -5,6 +5,7 @@ import type {
   IntentInput,
   PointingEvidence,
   ResolvedIntent,
+  SurfaceSnapshot,
 } from "@handsoff/contracts";
 
 import { requiresApproval, riskForIntent } from "./risk";
@@ -20,10 +21,16 @@ export type FuseIntentOptions = {
 export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}): ResolvedIntent {
   const createdAt = options.createdAt ?? new Date().toISOString();
   const id = options.intentId ?? "intent-1";
-  const evidence = bestEvidence(input.pointingEvidence);
-  const surface = evidence?.surface ?? input.surfaceCandidates[0];
+  const parsed = parseVoiceCommand(input.speech.finalTranscript.text);
+  if (parsed.status === "unsupported") {
+    return blockedIntent("blocked", input, id, createdAt, parsed.reason);
+  }
 
-  if (input.surfaceCandidates.length === 0) {
+  const evidence = bestEvidence(input.pointingEvidence);
+  const voiceTargetSurface = parsed.appName ? surfaceForApp(parsed.appName) : undefined;
+  const surface = voiceTargetSurface ?? evidence?.surface ?? input.surfaceCandidates[0];
+
+  if (!voiceTargetSurface && input.surfaceCandidates.length === 0) {
     return blockedIntent(
       "clarification_required",
       input,
@@ -32,7 +39,7 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
       "No attention-region candidates were available",
     );
   }
-  if (!evidence || evidence.confidence < (options.minConfidence ?? 0.5)) {
+  if (!voiceTargetSurface && (!evidence || evidence.confidence < (options.minConfidence ?? 0.5))) {
     return blockedIntent(
       "clarification_required",
       input,
@@ -41,7 +48,11 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
       "Pointing confidence is too low",
     );
   }
-  if (!surface || surface.availability !== "available" || surface.accessStatus !== "accessible") {
+  if (
+    !surface ||
+    (!voiceTargetSurface &&
+      (surface.availability !== "available" || surface.accessStatus !== "accessible"))
+  ) {
     return blockedIntent(
       "clarification_required",
       input,
@@ -49,11 +60,6 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
       createdAt,
       "No accessible target was found",
     );
-  }
-
-  const parsed = parseVoiceCommand(input.speech.finalTranscript.text);
-  if (parsed.status === "unsupported") {
-    return blockedIntent("blocked", input, id, createdAt, parsed.reason);
   }
 
   const risk_level = riskForIntent(parsed.intent_type);
@@ -67,6 +73,7 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
     value: parsed.value,
     risk_level,
     requires_approval,
+    appName: parsed.appName,
   });
 
   return {
@@ -74,13 +81,27 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
     id,
     input,
     intent_type: parsed.intent_type,
-    referent: { id: surface.id, source: "fusion", confidence: evidence.confidence },
+    referent: {
+      id: surface.id,
+      source: "fusion",
+      confidence: voiceTargetSurface ? 1 : (evidence?.confidence ?? 0),
+    },
     constraints: [],
     risk_level,
     requires_approval,
     target_agent: action_plan.target_agent,
     action_plan,
     createdAt,
+  };
+}
+
+function surfaceForApp(appName: string): SurfaceSnapshot {
+  return {
+    id: `app:${appName.toLowerCase()}`,
+    title: appName,
+    app: appName,
+    availability: "unknown",
+    accessStatus: "unknown",
   };
 }
 
@@ -115,12 +136,24 @@ function planFor(args: {
   value?: string;
   risk_level: ActionPlan["risk_level"];
   requires_approval: boolean;
+  appName?: string;
 }): ActionPlan {
+  const launchSteps: ActionStep[] = args.appName
+    ? [
+        {
+          id: "step-1",
+          kind: "launch_app",
+          label: `Open ${args.appName}`,
+          appName: args.appName,
+        },
+      ]
+    : [];
+  const actionStepId = args.appName ? "step-2" : "step-1";
   const steps: ActionStep[] =
     args.intentType === "inspect"
       ? [
           {
-            id: "step-1",
+            id: actionStepId,
             kind: "inspect_window_state",
             label: "Inspect selected window",
             target: args.target,
@@ -129,7 +162,7 @@ function planFor(args: {
       : args.intentType === "click"
         ? [
             {
-              id: "step-1",
+              id: actionStepId,
               kind: "click_element",
               label: "Click selected target",
               target: args.target,
@@ -138,7 +171,7 @@ function planFor(args: {
         : args.intentType === "type_text"
           ? [
               {
-                id: "step-1",
+                id: actionStepId,
                 kind: "type_text",
                 label: "Type dictated text",
                 target: args.target,
@@ -148,7 +181,7 @@ function planFor(args: {
           : args.intentType === "set_value"
             ? [
                 {
-                  id: "step-1",
+                  id: actionStepId,
                   kind: "set_value",
                   label: "Set selected value",
                   target: args.target,
@@ -162,8 +195,8 @@ function planFor(args: {
     summary: summaryFor(args.intentType),
     risk_level: args.risk_level,
     requires_approval: args.requires_approval,
-    target_agent: steps.length > 0 ? "cua-driver" : "none",
-    action_plan: steps,
+    target_agent: launchSteps.length + steps.length > 0 ? "cua-driver" : "none",
+    action_plan: [...launchSteps, ...steps],
   };
 }
 

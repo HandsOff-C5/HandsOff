@@ -58,16 +58,6 @@ export async function resolveWithOpenAi(
   const createdAt = options.createdAt ?? new Date().toISOString();
   const id = options.intentId ?? "intent-llm";
 
-  if (input.surfaceCandidates.length === 0) {
-    return blockedIntent(
-      "clarification_required",
-      input,
-      id,
-      createdAt,
-      "No attention-region candidates were available",
-    );
-  }
-
   try {
     const client = options.client ?? new OpenAI();
     const completion = await client.chat.completions.parse({
@@ -200,9 +190,20 @@ function normalizeActionPlan(plan: OpenAiResolvedIntent["action_plan"]): ActionP
 }
 
 type OpenAiActionStep = OpenAiActionPlan["action_plan"][number];
-type OpenAiSurface = OpenAiActionStep["target"]["surface"];
+type OpenAiTargetedActionStep = Extract<OpenAiActionStep, { target: unknown }>;
+type OpenAiSurface = OpenAiTargetedActionStep["target"]["surface"];
 
 function normalizeStep(step: OpenAiActionStep): ActionStep {
+  if (step.kind === "launch_app") {
+    return {
+      id: step.id,
+      kind: "launch_app",
+      label: step.label,
+      appName: step.appName,
+      ...(step.bundleId !== null && { bundleId: step.bundleId }),
+    };
+  }
+
   const target = {
     surface: normalizeSurface(step.target.surface),
     ...(step.target.elementId !== null && { elementId: step.target.elementId }),

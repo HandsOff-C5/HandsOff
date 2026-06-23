@@ -12,7 +12,7 @@ host_triple() {
 
 build_head_track() {
   local triple="$1"
-  local src="$here/head-track/main.swift"
+  local src_dir="$here/head-track"
   local plist="$here/head-track/Info.plist"
   local entitlements="$here/head-track/entitlements.plist"
   local out_dir="$here/../binaries"
@@ -20,7 +20,7 @@ build_head_track() {
 
   mkdir -p "$out_dir"
   echo "Building head-track sidecar for $triple"
-  swiftc -O -o "$out" "$src" \
+  swiftc -O -o "$out" "$src_dir"/*.swift \
     -framework AppKit \
     -framework AVFoundation \
     -framework CoreGraphics \

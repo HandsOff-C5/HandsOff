@@ -17,10 +17,12 @@ type Golden = {
     readonly target_agent: string;
     readonly requires_approval: boolean;
     readonly actionKinds: readonly string[];
+    readonly actionTexts: readonly string[];
   };
 };
 
 function input(golden: Golden): IntentInput {
+  const selected = golden.candidateSurfaces[0];
   return {
     sessionId: "session-1",
     speech: {
@@ -37,7 +39,7 @@ function input(golden: Golden): IntentInput {
         source: "head",
         confidence: 0.9,
         strategy: "head-neighborhood",
-        surface: golden.candidateSurfaces[0],
+        ...(selected && { surface: selected }),
       },
     ],
     surfaceCandidates: [...golden.candidateSurfaces],
@@ -45,14 +47,15 @@ function input(golden: Golden): IntentInput {
 }
 
 function project(intent: ResolvedIntent) {
+  const steps = "action_plan" in intent ? intent.action_plan.action_plan : [];
   return {
     status: intent.status,
     intent_type: "intent_type" in intent ? intent.intent_type : undefined,
     referentId: "referent" in intent ? intent.referent.id : undefined,
     target_agent: intent.target_agent,
     requires_approval: intent.requires_approval,
-    actionKinds:
-      "action_plan" in intent ? intent.action_plan.action_plan.map((step) => step.kind) : [],
+    actionKinds: steps.map((step) => step.kind),
+    actionTexts: steps.flatMap((step) => (step.kind === "type_text" ? [step.text] : [])),
   };
 }
 

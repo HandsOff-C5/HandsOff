@@ -59,7 +59,123 @@
       "referentId": "surface-1",
       "target_agent": "cua-driver",
       "requires_approval": true,
-      "actionKinds": ["click_element"]
+      "actionKinds": ["click_element"],
+      "actionTexts": []
+    }
+  },
+  {
+    "name": "open textedit and add transcript text",
+    "transcript": "Open TextEdit and add this transcript into the document\n0% · 0 ms",
+    "candidateSurfaces": [],
+    "completion": {
+      "status": "ready",
+      "id": "intent-llm",
+      "intent_type": "type_text",
+      "referent": { "id": "app:textedit", "source": "fusion", "confidence": 1 },
+      "constraints": [],
+      "risk_level": "mutating",
+      "requires_approval": true,
+      "target_agent": "cua-driver",
+      "action_plan": {
+        "id": "plan-llm",
+        "summary": "Open TextEdit and type dictated text",
+        "risk_level": "mutating",
+        "requires_approval": true,
+        "target_agent": "cua-driver",
+        "action_plan": [
+          {
+            "id": "step-1",
+            "kind": "launch_app",
+            "label": "Open TextEdit",
+            "appName": "TextEdit",
+            "bundleId": null
+          },
+          {
+            "id": "step-2",
+            "kind": "type_text",
+            "label": "Type dictated text",
+            "target": {
+              "surface": {
+                "id": "app:textedit",
+                "title": "TextEdit",
+                "app": "TextEdit",
+                "pid": null,
+                "windowId": null,
+                "availability": "unknown",
+                "accessStatus": "unknown"
+              },
+              "elementId": null,
+              "elementIndex": 0
+            },
+            "text": "this transcript",
+            "value": null
+          }
+        ]
+      },
+      "reason": null
+    },
+    "expected": {
+      "status": "ready",
+      "intent_type": "type_text",
+      "referentId": "app:textedit",
+      "target_agent": "cua-driver",
+      "requires_approval": true,
+      "actionKinds": ["launch_app", "type_text"],
+      "actionTexts": ["this transcript"]
+    }
+  },
+  {
+    "name": "add hello goodbye into current app",
+    "transcript": "Add hello hello goodbye into this app",
+    "candidateSurfaces": [],
+    "completion": {
+      "status": "ready",
+      "id": "intent-llm",
+      "intent_type": "type_text",
+      "referent": { "id": "active-window", "source": "fusion", "confidence": 1 },
+      "constraints": [],
+      "risk_level": "mutating",
+      "requires_approval": true,
+      "target_agent": "cua-driver",
+      "action_plan": {
+        "id": "plan-llm",
+        "summary": "Type dictated text into the current app",
+        "risk_level": "mutating",
+        "requires_approval": true,
+        "target_agent": "cua-driver",
+        "action_plan": [
+          {
+            "id": "step-1",
+            "kind": "type_text",
+            "label": "Type dictated text",
+            "target": {
+              "surface": {
+                "id": "active-window",
+                "title": "Active window",
+                "app": "Current app",
+                "pid": null,
+                "windowId": null,
+                "availability": "available",
+                "accessStatus": "accessible"
+              },
+              "elementId": null,
+              "elementIndex": 0
+            },
+            "text": "hello hello goodbye",
+            "value": null
+          }
+        ]
+      },
+      "reason": null
+    },
+    "expected": {
+      "status": "ready",
+      "intent_type": "type_text",
+      "referentId": "active-window",
+      "target_agent": "cua-driver",
+      "requires_approval": true,
+      "actionKinds": ["type_text"],
+      "actionTexts": ["hello hello goodbye"]
     }
   }
 ]

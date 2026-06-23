@@ -104,4 +104,20 @@ describe("PlanPreviewPanel", () => {
     expect(screen.getByText("Unsupported voice command")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
   });
+
+  it("shows blocked run details instead of status alone", () => {
+    render(
+      <PlanPreviewPanel
+        intent={intent()}
+        runResult={{
+          status: "blocked",
+          result: { status: "blocked", reason: "No accessible CUA window was found" },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "blocked: No accessible CUA window was found",
+    );
+  });
 });

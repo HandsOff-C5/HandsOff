@@ -47,6 +47,10 @@ function port(
   const result = options.result ?? fakeCuaActionResult();
   return {
     calls,
+    async launchApp(request) {
+      calls.push(request);
+      return result;
+    },
     async getWindowState(request) {
       calls.push(request);
       if (options.stateResults) return options.stateResults[stateIndex++] ?? state;
@@ -214,6 +218,49 @@ describe("approved plan runner", () => {
       { kind: "approval_decided", approval: { decision: "rejected" } },
       { kind: "execution_finished", status: "rejected" },
     ]);
+  });
+
+  it("runs app-launch steps before target actions", async () => {
+    const cua = port();
+    const audit = auditSink();
+    const target = fakeActionTarget({
+      surface: {
+        id: "app:textedit",
+        title: "TextEdit",
+        app: "TextEdit",
+        availability: "unknown",
+        accessStatus: "unknown",
+      },
+    });
+
+    const result = await runApprovedPlan({
+      sessionId: "session-1",
+      plan: plan({
+        action_plan: [
+          { id: "step-1", kind: "launch_app", label: "Open TextEdit", appName: "TextEdit" },
+          {
+            id: "step-2",
+            kind: "type_text",
+            label: "Type dictated text",
+            target,
+            text: "hello goodbye",
+          },
+        ],
+      }),
+      approval: { actionId: "plan-1", decision: "approved", decidedAt: "2026-06-22T12:00:00.000Z" },
+      cua,
+      audit,
+      recordedAt: "2026-06-22T12:00:00.000Z",
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(cua.calls.map((call) => call.kind)).toEqual([
+      "launch_app",
+      "get_window_state",
+      "type_text",
+      "get_window_state",
+    ]);
+    expect(audit.list().filter((event) => event.kind === "cua_call")).toHaveLength(2);
   });
 
   it("blocks before mutation when pre-action state capture is blocked", async () => {

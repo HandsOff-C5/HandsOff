@@ -93,7 +93,7 @@ export function Dashboard({
       : createUnavailableCuaDriver());
   const liveHeadPointing = useHeadPointing(hasTauriBackend() ? HEAD_POINTING_TAURI : undefined);
   const headPointing = injectedHeadPointing ?? liveHeadPointing;
-  const { intent, runResult, session, approve, reject, handleFinalTranscript } =
+  const { intent, runResult, session, auditEvents, approve, reject, handleFinalTranscript } =
     useVoiceCuaController({ driver, headPointing, now, resolveIntent, targetResolveDelayMs });
 
   return (
@@ -126,7 +126,7 @@ export function Dashboard({
           headPointer={config.headPointer}
           onFinalTranscript={handleFinalTranscript}
         />
-        <SessionsPanel session={session} />
+        <SessionsPanel session={session} auditEvents={auditEvents} />
         <PlanPreviewPanel
           intent={intent}
           runResult={runResult}
