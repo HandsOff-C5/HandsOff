@@ -824,6 +824,11 @@ body {
   color: #fff;
 }
 
+.onboarding__relaunch {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+
 .onboarding__actions button:disabled {
   opacity: 0.6;
   cursor: default;

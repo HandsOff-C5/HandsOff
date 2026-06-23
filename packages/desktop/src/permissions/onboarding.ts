@@ -29,6 +29,14 @@ export const ONBOARDING_PERMISSION_IDS = [
   ...MANUAL_PERMISSION_IDS,
 ] as const satisfies readonly CapabilityId[];
 
+// Capabilities macOS only applies to a NEW process — granting them needs an app
+// relaunch (Screen Recording always; a freshly-toggled grant in general). These
+// are kept out of the batched "Grant" action so a forced restart can't kill the
+// flow mid-sequence; each gets its own button plus a relaunch affordance.
+export const RESTART_REQUIRED_PERMISSION_IDS = [
+  "screen-recording",
+] as const satisfies readonly CapabilityId[];
+
 // How a pending capability gets granted: fire an OS prompt, or open Settings.
 export type PermissionAction = "request" | "open-settings";
 
@@ -37,12 +45,17 @@ export interface OnboardingStep {
   action: PermissionAction;
   // Already granted (level "ready") — shown as complete, not actionable.
   done: boolean;
+  // Granting this only takes effect after an app relaunch (macOS).
+  restartAfter: boolean;
 }
 
 export interface OnboardingPlan {
   steps: OnboardingStep[];
-  // Requestable capabilities still pending — the targets of a "Grant" action.
-  requestablePending: CapabilityId[];
+  // Requestable, no-restart capabilities still pending — the targets of the one
+  // batched "Grant" action (camera, microphone, speech).
+  batchRequestablePending: CapabilityId[];
+  // Requestable capabilities still pending that need a relaunch (screen recording).
+  restartRequiredPending: CapabilityId[];
   // Manual capabilities still pending — each needs a Settings deep-link + toggle.
   manualPending: CapabilityId[];
   // Every covered capability is granted.
@@ -54,6 +67,9 @@ export interface OnboardingPlan {
 const isRequestable = (id: CapabilityId): boolean =>
   (REQUESTABLE_PERMISSION_IDS as readonly CapabilityId[]).includes(id);
 
+const needsRestart = (id: CapabilityId): boolean =>
+  (RESTART_REQUIRED_PERMISSION_IDS as readonly CapabilityId[]).includes(id);
+
 export function planPermissionOnboarding(report: readonly CapabilityReadiness[]): OnboardingPlan {
   const byId = new Map(report.map((capability) => [capability.id, capability]));
   const steps: OnboardingStep[] = ONBOARDING_PERMISSION_IDS.flatMap((id) => {
@@ -64,6 +80,7 @@ export function planPermissionOnboarding(report: readonly CapabilityReadiness[])
         capability,
         action: isRequestable(id) ? "request" : "open-settings",
         done: capability.level === "ready",
+        restartAfter: needsRestart(id),
       },
     ];
   });
@@ -71,8 +88,11 @@ export function planPermissionOnboarding(report: readonly CapabilityReadiness[])
   const pending = steps.filter((step) => !step.done);
   return {
     steps,
-    requestablePending: pending
-      .filter((step) => step.action === "request")
+    batchRequestablePending: pending
+      .filter((step) => step.action === "request" && !step.restartAfter)
+      .map((step) => step.capability.id),
+    restartRequiredPending: pending
+      .filter((step) => step.restartAfter)
       .map((step) => step.capability.id),
     manualPending: pending
       .filter((step) => step.action === "open-settings")

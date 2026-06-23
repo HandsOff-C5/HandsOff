@@ -31,6 +31,7 @@ describe("PermissionsOnboarding", () => {
         onRequestMedia={asyncNoop}
         onRequestScreenRecording={asyncNoop}
         onRecheck={noop}
+        onRelaunch={noop}
         onOpenSettings={noop}
         onDismiss={noop}
       />,
@@ -70,13 +71,54 @@ describe("PermissionsOnboarding", () => {
         onRequestMedia={onRequestMedia}
         onRequestScreenRecording={onRequestScreenRecording}
         onRecheck={noop}
+        onRelaunch={noop}
         onOpenSettings={noop}
         onDismiss={noop}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /grant/i }));
-    await waitFor(() => expect(onRequestScreenRecording).toHaveBeenCalled());
-    expect(calls).toEqual(["camera", "media", "screen"]);
+    await waitFor(() => expect(onRequestMedia).toHaveBeenCalled());
+    // Screen recording forces a restart, so it's NOT part of the batch — its own button.
+    expect(calls).toEqual(["camera", "media"]);
+    expect(onRequestScreenRecording).not.toHaveBeenCalled();
+  });
+
+  it("enables screen recording from its own button (kept out of the batch)", () => {
+    const onRequestScreenRecording = vi.fn(() => Promise.resolve());
+    render(
+      <PermissionsOnboarding
+        report={report({})}
+        isChecking={false}
+        onRequestCamera={asyncNoop}
+        onRequestMedia={asyncNoop}
+        onRequestScreenRecording={onRequestScreenRecording}
+        onRecheck={noop}
+        onRelaunch={noop}
+        onOpenSettings={noop}
+        onDismiss={noop}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /enable \(needs relaunch\)/i }));
+    expect(onRequestScreenRecording).toHaveBeenCalled();
+  });
+
+  it("relaunches the app so a restart-required grant takes effect", () => {
+    const onRelaunch = vi.fn();
+    render(
+      <PermissionsOnboarding
+        report={report({})}
+        isChecking={false}
+        onRequestCamera={asyncNoop}
+        onRequestMedia={asyncNoop}
+        onRequestScreenRecording={asyncNoop}
+        onRecheck={noop}
+        onRelaunch={onRelaunch}
+        onOpenSettings={noop}
+        onDismiss={noop}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /relaunch handsoff/i }));
+    expect(onRelaunch).toHaveBeenCalled();
   });
 
   it("deep-links a manual capability to System Settings", () => {
@@ -89,6 +131,7 @@ describe("PermissionsOnboarding", () => {
         onRequestMedia={asyncNoop}
         onRequestScreenRecording={asyncNoop}
         onRecheck={noop}
+        onRelaunch={noop}
         onOpenSettings={onOpenSettings}
         onDismiss={noop}
       />,
@@ -113,6 +156,7 @@ describe("PermissionsOnboarding", () => {
         onRequestMedia={asyncNoop}
         onRequestScreenRecording={asyncNoop}
         onRecheck={noop}
+        onRelaunch={noop}
         onOpenSettings={noop}
         onDismiss={onDismiss}
       />,

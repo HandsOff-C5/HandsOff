@@ -135,6 +135,7 @@ export function Dashboard({
   };
   const openPrivacySettings = (pane: CapabilityId) =>
     void invoke("open_privacy_settings", { pane });
+  const relaunchApp = () => void invoke("restart_app");
 
   return (
     <main className="dashboard">
@@ -146,6 +147,7 @@ export function Dashboard({
           onRequestMedia={requestMedia}
           onRequestScreenRecording={requestScreenRecording}
           onRecheck={recheck}
+          onRelaunch={relaunchApp}
           onOpenSettings={openPrivacySettings}
           onDismiss={() => setOnboardingDismissed(true)}
         />

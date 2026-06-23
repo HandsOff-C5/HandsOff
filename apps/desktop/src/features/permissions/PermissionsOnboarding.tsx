@@ -15,16 +15,19 @@ interface PermissionsOnboardingProps {
   onRecheck: () => void;
   // Deep-link the System Settings pane for a manual-only capability.
   onOpenSettings: (id: CapabilityId) => void;
+  // Relaunch the app so a Screen Recording / Accessibility grant takes effect.
+  onRelaunch: () => void;
   // Close the onboarding (Continue when ready, or Skip for now).
   onDismiss: () => void;
 }
 
 // First-run permission onboarding (#18/#56). macOS won't grant several TCC
 // permissions in one prompt, so this walks the user through them in one guided
-// flow: a single "Grant permissions" fires the requestable prompts (camera, mic,
-// speech) back-to-back, and the manual-only grants (Accessibility, Screen
-// Recording) deep-link into System Settings with a re-check. No user has to hunt
-// for a scattered button per the friction Hirom hit testing the bundled app.
+// flow. A single "Grant permissions" fires the no-restart prompts (camera, mic,
+// speech) back-to-back. Screen Recording gets its own button because granting it
+// forces an app restart — kept out of the batch so it can't kill the flow mid-
+// way — and Accessibility deep-links to Settings (macOS has no programmatic
+// grant for it). A one-click Relaunch makes the required restart painless.
 export function PermissionsOnboarding({
   report,
   isChecking,
@@ -33,18 +36,20 @@ export function PermissionsOnboarding({
   onRequestScreenRecording,
   onRecheck,
   onOpenSettings,
+  onRelaunch,
   onDismiss,
 }: PermissionsOnboardingProps) {
   const plan = planPermissionOnboarding(report);
   const [isGranting, setIsGranting] = useState(false);
 
-  const grantRequestable = async () => {
+  const grantBatch = async () => {
     setIsGranting(true);
     try {
-      // Sequential so each OS prompt is answered before the next appears.
+      // Sequential so each OS prompt is answered before the next appears. Screen
+      // recording is intentionally excluded — it forces a restart and is granted
+      // from its own button.
       await onRequestCamera();
       await onRequestMedia();
-      await onRequestScreenRecording();
     } finally {
       setIsGranting(false);
       onRecheck();
@@ -61,7 +66,7 @@ export function PermissionsOnboarding({
         </p>
 
         <ul className="onboarding__steps">
-          {plan.steps.map(({ capability, action, done }) => (
+          {plan.steps.map(({ capability, action, done, restartAfter }) => (
             <li
               key={capability.id}
               className={`onboarding__step onboarding__step--${done ? "done" : "pending"}`}
@@ -80,16 +85,25 @@ export function PermissionsOnboarding({
                   Open System Settings
                 </button>
               )}
+              {!done && action === "request" && restartAfter && (
+                <button
+                  type="button"
+                  className="onboarding__step-action"
+                  onClick={() => void onRequestScreenRecording()}
+                >
+                  Enable (needs relaunch)
+                </button>
+              )}
             </li>
           ))}
         </ul>
 
         <div className="onboarding__actions">
-          {plan.requestablePending.length > 0 && (
+          {plan.batchRequestablePending.length > 0 && (
             <button
               type="button"
               className="onboarding__grant"
-              onClick={() => void grantRequestable()}
+              onClick={() => void grantBatch()}
               disabled={isGranting}
             >
               {isGranting ? "Requesting…" : "Grant permissions"}
@@ -103,6 +117,9 @@ export function PermissionsOnboarding({
           >
             {isChecking ? "Checking…" : "Re-check"}
           </button>
+          <button type="button" className="onboarding__relaunch" onClick={onRelaunch}>
+            Relaunch {APP_NAME}
+          </button>
           {plan.allReady ? (
             <button type="button" className="onboarding__continue" onClick={onDismiss}>
               All set — continue
@@ -114,10 +131,16 @@ export function PermissionsOnboarding({
           )}
         </div>
 
+        {plan.restartRequiredPending.length > 0 && (
+          <p className="onboarding__note">
+            Screen Recording only takes effect after a restart — Enable it, allow the macOS prompt,
+            then choose <strong>Relaunch {APP_NAME}</strong>.
+          </p>
+        )}
         {plan.manualPending.length > 0 && (
           <p className="onboarding__note">
-            Accessibility and Screen Recording can only be turned on in System Settings — open each,
-            switch {APP_NAME} on, then Re-check. (A signed release removes this step.)
+            Accessibility can only be turned on in System Settings — open it, switch {APP_NAME} on,
+            then Relaunch (a rebuild can reset it; a signed release removes this churn).
           </p>
         )}
       </section>

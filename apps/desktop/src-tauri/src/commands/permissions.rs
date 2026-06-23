@@ -22,6 +22,14 @@ pub async fn request_media_permissions(_app: AppHandle) -> Result<serde_json::Va
     Ok(request_app_media_permissions())
 }
 
+/// Relaunch HandsOff. Some macOS grants (Screen Recording especially, and a
+/// freshly-toggled Accessibility) only take effect for a new process, so the
+/// onboarding offers a one-click restart instead of a confusing forced quit.
+#[tauri::command]
+pub fn restart_app(app: AppHandle) {
+    app.restart();
+}
+
 #[cfg(target_os = "macos")]
 extern "C" {
     fn handsoff_request_speech_authorization() -> i32;
