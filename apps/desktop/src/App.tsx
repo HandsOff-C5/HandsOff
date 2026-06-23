@@ -1,4 +1,5 @@
 import { PointingOverlay } from "./features/overlay/PointingOverlay";
+import { tauriOverlayListen } from "./features/overlay/tauri-overlay";
 import { Dashboard } from "./screens/dashboard/Dashboard";
 
 // Both the dashboard and the full-screen pointing overlay load this same bundle;
@@ -21,5 +22,9 @@ function currentWindowLabel(): string {
 // Shell entry. The dashboard is the mission-control window (issue #15); the
 // overlay window draws the live pointer on the real desktop (#25 cursor seam).
 export function App() {
-  return currentWindowLabel() === "overlay" ? <PointingOverlay /> : <Dashboard />;
+  return currentWindowLabel() === "overlay" ? (
+    <PointingOverlay listen={tauriOverlayListen} />
+  ) : (
+    <Dashboard />
+  );
 }

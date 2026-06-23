@@ -874,18 +874,56 @@ body {
   box-shadow: 0 0 24px 10px rgba(56, 189, 248, 0.5);
 }
 
-.pointing-overlay__hint {
+/* Locked-target label, pinned just under the live marker. */
+.pointing-overlay__target {
+  position: absolute;
+  transform: translate(-50%, 18px);
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(15, 17, 23, 0.78);
+  color: #e7e9ee;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Voice engagement indicator (listening / heard / acting), pinned top-center. */
+.pointing-overlay__voice {
   position: absolute;
   top: 16px;
   left: 50%;
   transform: translateX(-50%);
   margin: 0;
-  padding: 6px 14px;
+  padding: 6px 16px;
   border-radius: 999px;
   background: rgba(15, 17, 23, 0.7);
   color: #e7e9ee;
   font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.02em;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.pointing-overlay__voice--idle {
+  opacity: 0.55;
+}
+
+.pointing-overlay__voice--listening {
+  background: rgba(56, 189, 248, 0.85);
+  color: #04121c;
+}
+
+.pointing-overlay__voice--heard {
+  background: rgba(132, 204, 22, 0.85);
+  color: #0c1402;
+}
+
+.pointing-overlay__voice--acting {
+  background: rgba(250, 204, 21, 0.9);
+  color: #1c1402;
 }
 
 .onboarding__actions button:disabled {

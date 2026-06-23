@@ -9,13 +9,19 @@ import {
 } from "@handsoff/contracts";
 import { createTauriCuaDriver, createUnavailableCuaDriver, type CuaDriver } from "@handsoff/cua";
 import { planPermissionOnboarding } from "@handsoff/desktop";
-import { createAssemblyAiStream, createOnDeviceSttStream } from "@handsoff/speech";
+import {
+  createAssemblyAiStream,
+  createOnDeviceSttStream,
+  type CaptureStatus,
+} from "@handsoff/speech";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { CameraPanel } from "../../features/camera/CameraPanel";
 import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
+import { deriveVoiceState } from "../../features/overlay/overlay-signal";
+import { emitOverlayPointer, emitOverlayVoice } from "../../features/overlay/tauri-overlay";
 import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnboarding";
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
@@ -130,6 +136,16 @@ export function Dashboard({
   const clarification =
     intent?.status === "clarification_required" ? (intent.clarification ?? null) : null;
 
+  // Voice engagement state for the screen overlay (#25): listening (mic open) → heard
+  // (intent resolved) → acting (plan running). Relayed to the overlay window on change.
+  const [captureStatus, setCaptureStatus] = useState<CaptureStatus>("idle");
+  const voiceState = deriveVoiceState({
+    captureStatus,
+    hasIntent: intent !== null,
+    running: runResult?.status === "running",
+  });
+  useEffect(() => emitOverlayVoice(voiceState), [voiceState]);
+
   // First-run permission onboarding (#18/#56). Show one guided flow on launch
   // until every permission HandsOff needs is granted (or the user skips it),
   // so nobody has to hunt for a per-permission button. Only in the real app.
@@ -202,6 +218,7 @@ export function Dashboard({
           onGestureEvidence={(evidence) => {
             gestureEvidence.current = evidence;
           }}
+          onOverlayPointer={emitOverlayPointer}
         />
         <ReadinessPanel report={report} />
         <PermissionsPanel
@@ -225,6 +242,7 @@ export function Dashboard({
           createStream={createStream}
           headPointer={config.headPointer}
           onFinalTranscript={handleFinalTranscript}
+          onStatusChange={setCaptureStatus}
         />
         <SessionsPanel session={session} auditEvents={auditEvents} />
         <ClarificationPanel request={clarification} />

@@ -18,6 +18,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { toGestureEvidence } from "../fusion/gestureEvidence";
+import { normalizeOverlayPoint, type OverlayPointerUpdate } from "../overlay/overlay-signal";
 import { CalibrationOverlay } from "./CalibrationOverlay";
 import { DEMO_SCREEN_BOUNDS, demoSurfaceSnapshot, demoSurfaces } from "./demo-surfaces";
 import { LandmarkOverlay } from "./LandmarkOverlay";
@@ -35,6 +36,9 @@ interface CameraPanelProps {
   // Live gesture referent out (#35): the locked point as intent PointingEvidence,
   // or null when nothing is locked. The dashboard feeds this into fuseIntent.
   onGestureEvidence?: (evidence: PointingEvidence | null) => void;
+  // Live pointer out for the screen overlay (#25): normalized point + confidence +
+  // locked target, every frame. The dashboard relays this to the overlay window.
+  onOverlayPointer?: (update: OverlayPointerUpdate) => void;
 }
 
 type Status = "idle" | "starting" | "live" | "error";
@@ -75,6 +79,7 @@ export function CameraPanel({
   createDetector = createHandLandmarker,
   listDevices = defaultListDevices,
   onGestureEvidence,
+  onOverlayPointer,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -259,6 +264,19 @@ export function CameraPanel({
       onGestureEvidence(null);
     }
   }, [phase, referent, candidate, onGestureEvidence]);
+
+  // Stream the live pointer to the screen-overlay window (#25): normalized point (same
+  // mapping as the in-app PointerCursor), confidence for the glow, and the locked target
+  // label. Emits point:null when no hand is shown so the overlay clears.
+  useEffect(() => {
+    if (!onOverlayPointer) return;
+    const bounds = calibration ? DEMO_SCREEN_BOUNDS : UNIT_BOUNDS;
+    const point = pointer
+      ? normalizeOverlayPoint(pointer, bounds, calibration ? false : mirrored)
+      : null;
+    const targetLabel = phase === "locked" && referent ? referent.targetId : null;
+    onOverlayPointer({ point, confidence, targetLabel });
+  }, [pointer, confidence, phase, referent, calibration, mirrored, onOverlayPointer]);
 
   // Tear down the camera + detector on unmount.
   useEffect(() => stop, [stop]);

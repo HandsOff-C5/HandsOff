@@ -5,9 +5,10 @@ import type {
   SttErrorKind,
   SttStream,
 } from "@handsoff/contracts";
+import type { CaptureStatus } from "@handsoff/speech";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   useCaptureHotkey,
@@ -37,6 +38,8 @@ interface TranscriptPanelProps {
   createStream?: () => SttStream;
   headPointer?: HeadPointerConfig;
   onFinalTranscript?: (utterance: FinalTranscript) => void;
+  // Mic capture status out, so the dashboard can show the overlay's voice state.
+  onStatusChange?: (status: CaptureStatus) => void;
 }
 
 const ERROR_COPY: Record<SttErrorKind, string> = {
@@ -80,6 +83,7 @@ export function TranscriptPanel({
   createStream,
   headPointer,
   onFinalTranscript,
+  onStatusChange,
 }: TranscriptPanelProps) {
   if (!createStream) {
     return (
@@ -94,6 +98,7 @@ export function TranscriptPanel({
       createStream={createStream}
       headPointer={headPointer}
       onFinalTranscript={onFinalTranscript}
+      onStatusChange={onStatusChange}
     />
   );
 }
@@ -102,15 +107,18 @@ function LiveTranscriptPanel({
   createStream,
   headPointer,
   onFinalTranscript,
+  onStatusChange,
 }: {
   createStream: () => SttStream;
   headPointer?: HeadPointerConfig;
   onFinalTranscript?: (utterance: FinalTranscript) => void;
+  onStatusChange?: (status: CaptureStatus) => void;
 }) {
   const { status, partial, utterances, error, press, release, cancel } = usePushToTalk(
     createStream,
     { onUtterance: onFinalTranscript },
   );
+  useEffect(() => onStatusChange?.(status), [status, onStatusChange]);
   const capturing = status === "capturing" || status === "finalizing";
   const tauri = hasTauriBackend();
 

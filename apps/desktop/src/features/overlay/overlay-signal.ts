@@ -49,6 +49,33 @@ export interface OverlayMarkerStyle {
   boxShadow: string;
 }
 
+// Camera-stage point → normalized overlay [0,1], matching the in-app PointerCursor math
+// (normalize against the calibration bounds, then mirror x for the un-calibrated selfie
+// signal). STRICT — the overlay dot must track the same way the camera-preview dot does.
+export function normalizeOverlayPoint(
+  point: readonly [number, number],
+  bounds: { x: number; y: number; w: number; h: number },
+  mirrored: boolean,
+): [number, number] {
+  const nx = (point[0] - bounds.x) / bounds.w;
+  const ny = (point[1] - bounds.y) / bounds.h;
+  return [mirrored ? 1 - nx : nx, ny];
+}
+
+// The voice engagement state shown on the overlay, derived from the capture + intent
+// lifecycle (STRICT). acting (a plan is running) wins over listening (mic open) wins
+// over heard (an intent is resolved) wins over idle.
+export function deriveVoiceState(args: {
+  captureStatus: "idle" | "capturing" | "finalizing" | "error";
+  hasIntent: boolean;
+  running: boolean;
+}): OverlayVoiceState {
+  if (args.running) return "acting";
+  if (args.captureStatus === "capturing" || args.captureStatus === "finalizing") return "listening";
+  if (args.hasIntent) return "heard";
+  return "idle";
+}
+
 // Presentational math (STRICT): normalized point + confidence → the marker's CSS. The
 // glow reuses the camera cursor's confidence→halo mapping so the on-screen dot reads
 // the same as the in-app one. Clamps the point into the visible [0,1] box.
