@@ -9,6 +9,10 @@ import { glowFromConfidence } from "../camera/cursor-glow";
 export const OVERLAY_POINTER_EVENT = "overlay://pointer";
 // Voice engagement state, emitted by the voice controller.
 export const OVERLAY_VOICE_EVENT = "overlay://voice";
+// Per-frame pointing evidence (hand + gaze + cursor), fused in the overlay into
+// the FusionHud's meters + drag. Carries the raw votes so the HUD's fusion stays
+// the single fuseEvidence call site.
+export const OVERLAY_FUSION_EVENT = "overlay://fusion";
 
 // listening = mic open, heard = final utterance in, acting = plan executing.
 export type OverlayVoiceState = "idle" | "listening" | "heard" | "acting";
