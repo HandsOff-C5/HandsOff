@@ -2,13 +2,29 @@ import type {
   ActionPlan,
   ActionStep,
   ActionTarget,
+  ClarificationReason,
+  ClarificationRequest,
   IntentInput,
   PointingEvidence,
   ResolvedIntent,
 } from "@handsoff/contracts";
 
+import {
+  decideClarification,
+  DEFAULT_CLARIFICATION_POLICY,
+  type ClarificationCandidate,
+} from "./clarification/decide";
 import { requiresApproval, riskForIntent } from "./risk";
 import { parseVoiceCommand } from "./voice-command-parser";
+
+// Reason → user-facing string. low_confidence keeps the original wording so the
+// existing contract/tests are unchanged; the structured prompt carries the rest
+// for the dashboard (#36).
+const CLARIFICATION_REASON_TEXT: Record<ClarificationReason, string> = {
+  low_confidence: "Pointing confidence is too low",
+  ambiguous: "Multiple targets matched — choose one",
+  no_target: "No target was found where you pointed",
+};
 
 export type FuseIntentOptions = {
   intentId?: string;
@@ -20,18 +36,22 @@ export type FuseIntentOptions = {
 export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}): ResolvedIntent {
   const createdAt = options.createdAt ?? new Date().toISOString();
   const id = options.intentId ?? "intent-1";
-  const evidence = bestEvidence(input.pointingEvidence);
-  const surface = evidence?.surface ?? input.surfaceCandidates[0];
 
-  if (!evidence || evidence.confidence < (options.minConfidence ?? 0.5)) {
-    return blocked(
-      "clarification_required",
-      input,
-      id,
-      createdAt,
-      "Pointing confidence is too low",
-    );
+  // The clarification policy (#36) decides whether the referent is bound well
+  // enough to act, or whether to ask. It runs on the calibrated-confidence (#100)
+  // candidates; the 0.5 floor is preserved as its minConfidence.
+  const candidates = clarificationCandidates(input);
+  const decision = decideClarification(candidates, {
+    minConfidence: options.minConfidence ?? 0.5,
+    ambiguityMargin: DEFAULT_CLARIFICATION_POLICY.ambiguityMargin,
+  });
+  if (decision.kind === "clarify") {
+    return clarificationRequired(input, id, createdAt, decision.request);
   }
+
+  const surface =
+    candidates.find((c) => c.targetId === decision.targetId)?.surface ?? input.surfaceCandidates[0];
+  const confidence = candidates.find((c) => c.targetId === decision.targetId)?.confidence ?? 0;
   if (!surface || surface.availability !== "available" || surface.accessStatus !== "accessible") {
     return blocked(
       "clarification_required",
@@ -65,7 +85,7 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
     id,
     input,
     intent_type: parsed.intent_type,
-    referent: { id: surface.id, source: "fusion", confidence: evidence.confidence },
+    referent: { id: surface.id, source: "fusion", confidence },
     constraints: [],
     risk_level,
     requires_approval,
@@ -77,6 +97,59 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
 
 function bestEvidence(evidence: readonly PointingEvidence[]): PointingEvidence | undefined {
   return [...evidence].sort((a, b) => b.confidence - a.confidence)[0];
+}
+
+// Map the pointing evidence to clarification candidates: prefer per-surface
+// evidence (the real multi-candidate case that surfaces ambiguity); if no
+// evidence carried a surface, pair the best confidence with the top surface
+// candidate so a single weak bind still reads as low_confidence (not no_target).
+function clarificationCandidates(input: IntentInput): ClarificationCandidate[] {
+  const withSurface = input.pointingEvidence.flatMap((e) =>
+    e.surface
+      ? [
+          {
+            targetId: e.surface.id,
+            label: `${e.surface.app} — ${e.surface.title}`,
+            confidence: e.confidence,
+            surface: e.surface,
+          },
+        ]
+      : [],
+  );
+  if (withSurface.length > 0) return withSurface;
+
+  const best = bestEvidence(input.pointingEvidence);
+  const surface = input.surfaceCandidates[0];
+  if (best && surface) {
+    return [
+      {
+        targetId: surface.id,
+        label: `${surface.app} — ${surface.title}`,
+        confidence: best.confidence,
+        surface,
+      },
+    ];
+  }
+  return [];
+}
+
+function clarificationRequired(
+  input: IntentInput,
+  id: string,
+  createdAt: string,
+  request: ClarificationRequest,
+): ResolvedIntent {
+  return {
+    status: "clarification_required",
+    id,
+    input,
+    constraints: [],
+    requires_approval: false,
+    target_agent: "none",
+    reason: CLARIFICATION_REASON_TEXT[request.reason],
+    clarification: request,
+    createdAt,
+  };
 }
 
 function blocked(
