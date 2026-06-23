@@ -80,10 +80,11 @@ function LiveTranscriptPanel({
     { onUtterance: onFinalTranscript },
   );
   const capturing = status === "capturing" || status === "finalizing";
+  const tauri = hasTauriBackend();
 
-  // Drive mic capture from the Right Option + ? hotkey (#95): hold = press, release.
+  // Drive mic capture from the Option + ? hotkey (#95): hold = press, release.
   useCaptureHotkey(
-    hasTauriBackend()
+    tauri
       ? {
           listen: (event, handler) => listen(event, ({ payload }) => handler({ payload })),
           invoke: (command) => invoke(command),
@@ -92,6 +93,28 @@ function LiveTranscriptPanel({
         }
       : undefined,
   );
+
+  // Full-capture test (#95): a button that fires the SAME downstream path as the
+  // hotkey — head tracking (golden cursor + camera) plus mic — so the core loop
+  // can be exercised independently of the global-shortcut press. Request camera
+  // (+ mic/speech) first so the head-track sidecar, spawned as a child of the app,
+  // inherits a real camera grant — without it the golden overlay never appears.
+  const startCapture = () => {
+    if (tauri) {
+      void invoke("request_media_permissions").finally(() => {
+        void invoke("head_track_start");
+      });
+    }
+    press();
+  };
+  const stopCapture = () => {
+    release();
+    if (tauri) void invoke("head_track_stop");
+  };
+  const cancelCapture = () => {
+    cancel();
+    if (tauri) void invoke("head_track_stop");
+  };
 
   return (
     <section className="panel transcript">
@@ -113,6 +136,21 @@ function LiveTranscriptPanel({
           {capturing ? "Release to send" : "Hold to talk"}
         </button>
       </div>
+
+      {/* Test the full capture path (head tracking + mic) without the hotkey (#95). */}
+      {tauri && (
+        <button
+          className="transcript__capture-test"
+          type="button"
+          aria-pressed={capturing}
+          onPointerDown={startCapture}
+          onPointerUp={stopCapture}
+          onPointerLeave={capturing ? cancelCapture : undefined}
+          onPointerCancel={cancelCapture}
+        >
+          {capturing ? "Release (head + voice)" : "Hold to capture (head + voice)"}
+        </button>
+      )}
 
       {capturing ? (
         <button className="transcript__cancel" type="button" onClick={cancel}>

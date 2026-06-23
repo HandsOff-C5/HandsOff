@@ -13,11 +13,13 @@ use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
 const EVENT_NAME: &str = "hotkey://capture";
 
-// Option (Alt) + Slash. `?` is Shift+`/`; macOS delivers the `/` key with the
-// Alt+Shift modifiers, so we match Alt+Shift+Slash. (Shift included so a bare
-// Option+/ — a real character — doesn't trigger capture.)
+// Command + ? — i.e. Command + Shift + Slash (`?` is Shift+`/`). One-handed and,
+// critically, Command is a non-Option/Shift modifier: macOS Sequoia silently
+// refuses to register global hotkeys whose only modifiers are Shift and/or Option
+// (anti-keylogger measure, error -9868), so Cmd is required for this to install.
+// `Modifiers::SUPER` is the Command key on macOS.
 pub fn capture_shortcut() -> Shortcut {
-    Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::Slash)
+    Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Slash)
 }
 
 // Plugin handler: map Pressed/Released to the capture phase the webview expects.
