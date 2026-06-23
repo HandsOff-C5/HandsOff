@@ -7,6 +7,8 @@
 // (partial) result, `true` is the finalized turn. We model only the fields the
 // provider consumes; unknown fields are ignored.
 
+import { isRecord } from "../json";
+
 // One recognized word inside a Turn. `start`/`end` are milliseconds from the
 // session start (the `Begin` message). `confidence` is in [0, 1].
 export interface AssemblyAiWord {
@@ -49,10 +51,6 @@ export type AssemblyAiServerMessage =
   | AssemblyAiBeginMessage
   | AssemblyAiTurnMessage
   | AssemblyAiTerminationMessage;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 function parseWords(raw: unknown): AssemblyAiWord[] {
   if (!Array.isArray(raw)) return [];

@@ -39,12 +39,10 @@ export function createOneEuroFilter(params: OneEuroParams = {}): OneEuroFilter {
   let xHat = 0;
   let dxHat = 0;
   let tPrevMs: number | null = null;
-  let initialized = false;
 
   return {
     filter(x: number, tMs: number): number {
-      if (!initialized || tPrevMs === null) {
-        initialized = true;
+      if (tPrevMs === null) {
         tPrevMs = tMs;
         xHat = x;
         dxHat = 0;

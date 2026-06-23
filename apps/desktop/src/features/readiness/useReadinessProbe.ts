@@ -3,13 +3,11 @@ import { safeParseReadinessProbe, type CapabilityReadiness } from "@handsoff/con
 import { buildReadinessReport } from "@handsoff/desktop";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { hasTauriBackend } from "../../lib/tauri";
+
 // Shown until the first probe resolves and whenever no native backend is
 // reachable (browser/jsdom), so the panel never blanks.
 const UNKNOWN_REPORT = buildReadinessReport({ capabilities: [] });
-
-function hasTauriBackend(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
 
 export interface ReadinessProbeState {
   report: CapabilityReadiness[];

@@ -1,6 +1,8 @@
 import type { PermissionState, SttError, SttErrorKind, SttStreamEvent } from "@handsoff/contracts";
 import { STT_ERROR_KINDS } from "@handsoff/contracts";
 
+import { isRecord } from "../json";
+
 // Maps native permission status integers to PermissionState.
 // SFSpeechRecognizerAuthorizationStatus: 0 notDetermined, 1 denied, 2 restricted, 3 authorized.
 // AVAuthorizationStatus: 0 notDetermined, 1 restricted, 2 denied, 3 authorized.
@@ -36,10 +38,6 @@ export interface OnDeviceEventContext {
   readonly startMs: number;
   // Arrival time of this event.
   readonly now: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function asString(value: unknown): string {

@@ -1,6 +1,6 @@
 import type { SurfaceBounds } from "@handsoff/contracts";
 
-import { type Point } from "../calibration/calibrate";
+import { distanceToBounds, type Point } from "../calibration/calibrate";
 
 // A3 — which-display arbitration. Given a calibrated screen-space point (global virtual-
 // desktop px; x may be negative) and the attached displays, decide which display the user
@@ -14,13 +14,6 @@ export interface Display {
   // Display rect in the same global virtual-desktop space as the calibration output.
   bounds: SurfaceBounds;
 }
-
-// Euclidean distance from a point to a rect; 0 when the point is inside.
-const distanceToBounds = ([x, y]: Point, b: SurfaceBounds): number => {
-  const dx = Math.max(b.x - x, 0, x - (b.x + b.w));
-  const dy = Math.max(b.y - y, 0, y - (b.y + b.h));
-  return Math.hypot(dx, dy);
-};
 
 // Is the point inside the rect grown by `margin` on every side?
 const insideExpanded = ([x, y]: Point, b: SurfaceBounds, margin: number): boolean =>

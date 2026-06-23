@@ -251,7 +251,7 @@ export const calibrationQualityFromResidual = (rmsPx: number): CalibrationQualit
 const CONFIDENCE_FALLOFF_PX = 200;
 
 // Euclidean distance from a point to a rectangle; 0 when the point is inside.
-const distanceToBounds = ([x, y]: Point, b: Surface["bounds"]): number => {
+export const distanceToBounds = ([x, y]: Point, b: Surface["bounds"]): number => {
   const dx = Math.max(b.x - x, 0, x - (b.x + b.w));
   const dy = Math.max(b.y - y, 0, y - (b.y + b.h));
   return Math.hypot(dx, dy);

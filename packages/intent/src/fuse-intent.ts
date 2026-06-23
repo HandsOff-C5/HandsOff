@@ -104,18 +104,16 @@ function bestEvidence(evidence: readonly PointingEvidence[]): PointingEvidence |
 // evidence carried a surface, pair the best confidence with the top surface
 // candidate so a single weak bind still reads as low_confidence (not no_target).
 function clarificationCandidates(input: IntentInput): ClarificationCandidate[] {
-  const withSurface = input.pointingEvidence.flatMap((e) =>
-    e.surface
-      ? [
-          {
-            targetId: e.surface.id,
-            label: `${e.surface.app} — ${e.surface.title}`,
-            confidence: e.confidence,
-            surface: e.surface,
-          },
-        ]
-      : [],
-  );
+  const withSurface: ClarificationCandidate[] = [];
+  for (const e of input.pointingEvidence) {
+    if (!e.surface) continue;
+    withSurface.push({
+      targetId: e.surface.id,
+      label: `${e.surface.app} — ${e.surface.title}`,
+      confidence: e.confidence,
+      surface: e.surface,
+    });
+  }
   if (withSurface.length > 0) return withSurface;
 
   const best = bestEvidence(input.pointingEvidence);
@@ -171,7 +169,7 @@ function blocked(
   };
 }
 
-function planFor(args: {
+interface PlanArgs {
   planId: string;
   intentType: ResolvedIntent["intent_type"];
   target: ActionTarget;
@@ -179,47 +177,51 @@ function planFor(args: {
   value?: string;
   risk_level: ActionPlan["risk_level"];
   requires_approval: boolean;
-}): ActionPlan {
-  const steps: ActionStep[] =
-    args.intentType === "inspect"
-      ? [
-          {
-            id: "step-1",
-            kind: "inspect_window_state",
-            label: "Inspect selected window",
-            target: args.target,
-          },
-        ]
-      : args.intentType === "click"
-        ? [
-            {
-              id: "step-1",
-              kind: "click_element",
-              label: "Click selected target",
-              target: args.target,
-            },
-          ]
-        : args.intentType === "type_text"
-          ? [
-              {
-                id: "step-1",
-                kind: "type_text",
-                label: "Type dictated text",
-                target: args.target,
-                text: args.text ?? "",
-              },
-            ]
-          : args.intentType === "set_value"
-            ? [
-                {
-                  id: "step-1",
-                  kind: "set_value",
-                  label: "Set selected value",
-                  target: args.target,
-                  value: args.value ?? "",
-                },
-              ]
-            : [];
+}
+
+type IntentType = NonNullable<ResolvedIntent["intent_type"]>;
+
+// The single step each actionable intent type expands to. Types absent here
+// (e.g. control intents) produce no steps and route to "none".
+const STEP_BUILDERS: Partial<Record<IntentType, (args: PlanArgs) => ActionStep>> = {
+  inspect: (a) => ({
+    id: "step-1",
+    kind: "inspect_window_state",
+    label: "Inspect selected window",
+    target: a.target,
+  }),
+  click: (a) => ({
+    id: "step-1",
+    kind: "click_element",
+    label: "Click selected target",
+    target: a.target,
+  }),
+  type_text: (a) => ({
+    id: "step-1",
+    kind: "type_text",
+    label: "Type dictated text",
+    target: a.target,
+    text: a.text ?? "",
+  }),
+  set_value: (a) => ({
+    id: "step-1",
+    kind: "set_value",
+    label: "Set selected value",
+    target: a.target,
+    value: a.value ?? "",
+  }),
+};
+
+const SUMMARIES: Partial<Record<IntentType, string>> = {
+  inspect: "Inspect the selected window",
+  click: "Click the selected target",
+  type_text: "Type dictated text into the selected target",
+  set_value: "Set the selected value",
+};
+
+function planFor(args: PlanArgs): ActionPlan {
+  const build = args.intentType ? STEP_BUILDERS[args.intentType] : undefined;
+  const steps: ActionStep[] = build ? [build(args)] : [];
 
   return {
     id: args.planId,
@@ -232,13 +234,5 @@ function planFor(args: {
 }
 
 function summaryFor(intentType: ResolvedIntent["intent_type"]): string {
-  return intentType === "inspect"
-    ? "Inspect the selected window"
-    : intentType === "click"
-      ? "Click the selected target"
-      : intentType === "type_text"
-        ? "Type dictated text into the selected target"
-        : intentType === "set_value"
-          ? "Set the selected value"
-          : "Control the current run";
+  return (intentType ? SUMMARIES[intentType] : undefined) ?? "Control the current run";
 }

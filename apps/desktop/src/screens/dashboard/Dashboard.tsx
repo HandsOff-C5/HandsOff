@@ -24,10 +24,7 @@ import { SettingsPanel } from "../../features/settings/SettingsPanel";
 import { useLocalConfig } from "../../features/settings/useLocalConfig";
 import { TranscriptPanel } from "../../features/transcript/TranscriptPanel";
 import { useVoiceCuaController } from "../../features/voice-cua/useVoiceCuaController";
-
-function hasTauriBackend(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
+import { hasTauriBackend } from "../../lib/tauri";
 
 // "Native" mode (#31, AD2): recognition runs in the app process via native
 // Objective-C (SFSpeechRecognizer + AVAudioEngine) driven by the `stt_ondevice_*`
