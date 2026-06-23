@@ -326,6 +326,31 @@ describe("approved plan runner", () => {
     expect(audit.list().at(-1)).toMatchObject({ kind: "execution_finished", status: "succeeded" });
   });
 
+  it("accepts a launch on the command's own result when the window list is unavailable (no daemon)", async () => {
+    const cua = port();
+    // No CUA daemon → listWindows can't be read; the launch command (open -a) succeeded.
+    cua.listWindows = async () => {
+      throw new Error("cua-driver failed to start");
+    };
+    const audit = auditSink();
+
+    const result = await runApprovedPlan({
+      sessionId: "session-1",
+      plan: plan({
+        risk_level: "reversible",
+        requires_approval: false,
+        action_plan: [
+          { id: "step-1", kind: "launch_app", label: "Open Cursor", appName: "Cursor" },
+        ],
+      }),
+      cua,
+      audit,
+      recordedAt: "2026-06-22T12:00:00.000Z",
+    });
+
+    expect(result.status).toBe("succeeded");
+  });
+
   it("fails a launch when the launched app never appears (not OS-verified)", async () => {
     const cua = port({ windows: [appWindow("Finder")] });
     const audit = auditSink();

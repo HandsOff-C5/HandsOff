@@ -216,11 +216,40 @@ pub fn cua_launch_app(
     app_name: String,
     bundle_id: Option<String>,
 ) -> Result<CuaActionResult, String> {
-    call_action_tool_json("launch_app", launch_app_input(app_name, bundle_id))?;
-    Ok(CuaActionResult {
-        status: "succeeded",
-        summary: "Launched requested app".to_string(),
-    })
+    // Prefer the CUA daemon when it's installed. If it isn't reachable, fall back to a
+    // native LaunchServices launch (`open -a`) so the golden flow ("open Cursor") works
+    // on a bare Mac with no external daemon. `open` exits non-zero if the app isn't
+    // found, which is itself an OS-level confirmation of whether the launch happened.
+    if call_action_tool_json("launch_app", launch_app_input(app_name.clone(), bundle_id)).is_ok() {
+        return Ok(CuaActionResult {
+            status: "succeeded",
+            summary: format!("Launched {app_name} via the CUA driver"),
+        });
+    }
+    launch_app_native(&app_name)
+}
+
+#[cfg(target_os = "macos")]
+fn launch_app_native(app_name: &str) -> Result<CuaActionResult, String> {
+    let status = std::process::Command::new("open")
+        .args(["-a", app_name])
+        .status()
+        .map_err(|error| format!("Could not run `open` to launch {app_name}: {error}"))?;
+    if status.success() {
+        Ok(CuaActionResult {
+            status: "succeeded",
+            summary: format!("Launched {app_name}"),
+        })
+    } else {
+        Err(format!(
+            "macOS could not launch \"{app_name}\" — check the app name and that it is installed"
+        ))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launch_app_native(_app_name: &str) -> Result<CuaActionResult, String> {
+    Err("Native app launch is only available on macOS".to_string())
 }
 
 #[tauri::command]

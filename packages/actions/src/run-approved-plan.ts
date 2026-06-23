@@ -109,15 +109,25 @@ export async function runApprovedPlan(args: {
         return { status: result.status, result };
       }
 
-      // SEMANTIC verification (DoD): don't trust the launch command's own "succeeded" —
-      // confirm the OS actually shows the app by polling the window list until it appears.
+      // SEMANTIC verification (DoD): don't just trust the launch report — confirm the OS
+      // shows the app by polling the window list until it appears. When the window list
+      // is unavailable (no CUA daemon), we rely on the launch command's own OS-level
+      // result (`open -a` only succeeds if LaunchServices launched the app) rather than
+      // failing a launch we can't independently observe.
       const appName = step.appName;
-      let verification = appWindowPresent(await args.cua.listWindows(), appName);
-      for (let left = verifyAttempts - 1; !verification.present && left > 0; left -= 1) {
-        await wait(verifyDelayMs);
-        verification = appWindowPresent(await args.cua.listWindows(), appName);
+      let verifiedByWindow = false;
+      let windowListAvailable = true;
+      try {
+        let verification = appWindowPresent(await args.cua.listWindows(), appName);
+        for (let left = verifyAttempts - 1; !verification.present && left > 0; left -= 1) {
+          await wait(verifyDelayMs);
+          verification = appWindowPresent(await args.cua.listWindows(), appName);
+        }
+        verifiedByWindow = verification.present;
+      } catch {
+        windowListAvailable = false;
       }
-      if (!verification.present) {
+      if (!verifiedByWindow && windowListAvailable) {
         const failure: CuaActionResult = {
           status: "failed",
           error: `Launched ${appName} but no ${appName} window appeared — launch not verified`,
