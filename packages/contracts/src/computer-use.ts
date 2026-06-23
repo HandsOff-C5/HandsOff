@@ -47,7 +47,10 @@ export type ComputerActionKind = (typeof COMPUTER_ACTION_KINDS)[number];
 // Click-family actions all target a coordinate and accept an optional modifier
 // key held during the click via the `text` field (e.g. "shift", "ctrl",
 // "alt", "super").
-const clickActionSchema = (kind: ComputerActionKind) =>
+// Generic over the literal so each click member keeps its narrow `action` type
+// (a non-generic `kind: ComputerActionKind` would widen z.literal to the whole
+// union and collapse the discriminated union, breaking narrowing downstream).
+const clickActionSchema = <K extends ComputerActionKind>(kind: K) =>
   z.object({
     action: z.literal(kind),
     coordinate: computerCoordinateSchema,
