@@ -15,18 +15,29 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+// The middle/ring/pinky FINGERTIPS (12/16/20). Folding these in toward the wrist
+// makes the synthetic hand a valid index-pointing pose (index extended, the others
+// curled) so it passes the runtime's pointing-pose gate — without disturbing the
+// wrist (0), index MCP (5), or index tip (8) other tests assert on.
+const CURLED_TIPS = new Set([12, 16, 20]);
+
 // 21 deterministic, distinct landmarks for a given hand/frame seed. Values stay
 // inside the contract ranges (x/y in [0,1], visibility in [0,1]).
-const hand = (seed, handedness, score, visibility) => ({
-  handedness,
-  score,
-  landmarks: Array.from({ length: 21 }, (_, i) => ({
+const hand = (seed, handedness, score, visibility) => {
+  const landmarks = Array.from({ length: 21 }, (_, i) => ({
     x: Number((((seed * 7 + i * 3) % 100) / 100).toFixed(3)),
     y: Number((((seed * 13 + i * 5) % 100) / 100).toFixed(3)),
     z: Number(((i - 10) / 100).toFixed(3)),
     visibility,
-  })),
-});
+  }));
+  // Curl: fold each non-index fingertip back onto the wrist so its tip sits closer
+  // to the wrist than its PIP joint (the definition the pose gate uses).
+  const wrist = landmarks[0];
+  for (const i of CURLED_TIPS) {
+    landmarks[i] = { ...landmarks[i], x: wrist.x, y: wrist.y };
+  }
+  return { handedness, score, landmarks };
+};
 
 // Each fixture is a named sequence of golden frames (10 fps → +100ms per frame).
 const frames = (...handsPerFrame) =>

@@ -16,6 +16,7 @@ import {
 import { createDwellDebounce, type DwellDebounceParams } from "../confidence/dwell";
 import { alphaFromCutoff, createOneEuroFilter, ema } from "../confidence/smoothing";
 import {
+  isPointingPose,
   pointingReliability,
   pointingSignal,
   type PointingSignalOptions,
@@ -112,13 +113,18 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
         reliability = pointingReliability(hand, pointing);
         const screenXY = applyTransform(transform, pointingSignal(hand, pointing));
         // Cursor uses the 1€-smoothed point; targeting/lock use the raw point (unchanged).
+        // The cursor tracks whenever a hand is visible, so the user always sees where
+        // they're aiming — but only a deliberate index point arms a candidate + confidence,
+        // so a hand merely raised in view (open palm, fist) never accumulates a lock.
         point = [
           smoothX.filter(screenXY[0], frame.timestampMs),
           smoothY.filter(screenXY[1], frame.timestampMs),
         ];
-        candidate = toCandidate(screenXY, surfaces, calibrationQuality);
-        // Overall referent confidence = detection score × how well it lands on a target.
-        confidence = hand.score * (candidate?.confidence ?? 0);
+        if (isPointingPose(hand)) {
+          candidate = toCandidate(screenXY, surfaces, calibrationQuality);
+          // Overall referent confidence = detection score × how well it lands on a target.
+          confidence = hand.score * (candidate?.confidence ?? 0);
+        }
       }
 
       // Smooth confidence across frames (#28) before it gates anything.

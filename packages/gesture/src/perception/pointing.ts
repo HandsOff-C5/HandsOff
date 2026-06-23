@@ -9,7 +9,10 @@ import { type Point } from "../calibration/calibrate";
 // MediaPipe hand-landmark indices (the standard 21-point topology).
 const WRIST = 0;
 const INDEX_FINGER_MCP = 5;
+const INDEX_FINGER_PIP = 6;
 const INDEX_FINGER_TIP = 8;
+const MIDDLE_FINGER_PIP = 10;
+const MIDDLE_FINGER_TIP = 12;
 
 export interface PointingSignalOptions {
   // Ray anchor: the wrist (whole-hand direction) or the index MCP (finger-only). The
@@ -47,6 +50,26 @@ export const pointingReliability = (hand: Hand, options: PointingSignalOptions =
   const tipVis = visibilityOf(hand, INDEX_FINGER_TIP);
   return hand.score * Math.min(anchorVis, tipVis);
 };
+
+const distToWrist = (hand: Hand, index: number): number => {
+  const [wx, wy] = xy(hand, WRIST);
+  const [px, py] = xy(hand, index);
+  return Math.hypot(px - wx, py - wy);
+};
+
+// A finger is extended when its tip reaches farther from the wrist than its PIP joint,
+// curled when the tip folds back toward the palm (tip closer than the PIP).
+const fingerExtended = (hand: Hand, tip: number, pip: number): boolean =>
+  distToWrist(hand, tip) > distToWrist(hand, pip);
+
+// Is the hand making a deliberate index-pointing gesture? Index extended AND middle
+// curled — this is what distinguishes a point from an open/raised hand (all fingers
+// extended) or a fist (none). The referent loop arms a lock only while this holds, so a
+// hand merely raised in view doesn't accumulate a lock (#25 perception gate). 2D only —
+// robust for a front-facing camera and unaffected by depth (z) noise.
+export const isPointingPose = (hand: Hand): boolean =>
+  fingerExtended(hand, INDEX_FINGER_TIP, INDEX_FINGER_PIP) &&
+  !fingerExtended(hand, MIDDLE_FINGER_TIP, MIDDLE_FINGER_PIP);
 
 // Derive the raw pointing signal from one hand.
 export const pointingSignal = (hand: Hand, options: PointingSignalOptions = {}): Point => {
