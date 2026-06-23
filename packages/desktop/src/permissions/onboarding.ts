@@ -1,0 +1,81 @@
+import type { CapabilityId, CapabilityReadiness } from "@handsoff/contracts";
+
+// First-run permission onboarding planner (#18/#56). macOS cannot grant several
+// TCC permissions in one prompt, so the dashboard walks the user through them in
+// one guided flow. This pure core decides the steps and what's still pending; the
+// hook fires the OS requests and the component renders the flow.
+//
+// REQUESTABLE = an in-app action triggers the OS prompt directly: camera via
+// getUserMedia, microphone + speech via the `request_media_permissions` command.
+// MANUAL = macOS only grants these via a System Settings toggle (no programmatic
+// grant exists), so onboarding deep-links there and re-checks.
+export const REQUESTABLE_PERMISSION_IDS = [
+  "camera",
+  "microphone",
+  "speech-recognition",
+] as const satisfies readonly CapabilityId[];
+
+export const MANUAL_PERMISSION_IDS = [
+  "accessibility",
+  "screen-recording",
+] as const satisfies readonly CapabilityId[];
+
+// The capabilities the onboarding covers, in display order (requestable first so
+// the user can clear them with one "Grant" action before the manual toggles).
+export const ONBOARDING_PERMISSION_IDS = [
+  ...REQUESTABLE_PERMISSION_IDS,
+  ...MANUAL_PERMISSION_IDS,
+] as const satisfies readonly CapabilityId[];
+
+// How a pending capability gets granted: fire an OS prompt, or open Settings.
+export type PermissionAction = "request" | "open-settings";
+
+export interface OnboardingStep {
+  capability: CapabilityReadiness;
+  action: PermissionAction;
+  // Already granted (level "ready") — shown as complete, not actionable.
+  done: boolean;
+}
+
+export interface OnboardingPlan {
+  steps: OnboardingStep[];
+  // Requestable capabilities still pending — the targets of a "Grant" action.
+  requestablePending: CapabilityId[];
+  // Manual capabilities still pending — each needs a Settings deep-link + toggle.
+  manualPending: CapabilityId[];
+  // Every covered capability is granted.
+  allReady: boolean;
+  // At least one covered capability is still pending — show the onboarding.
+  needsOnboarding: boolean;
+}
+
+const isRequestable = (id: CapabilityId): boolean =>
+  (REQUESTABLE_PERMISSION_IDS as readonly CapabilityId[]).includes(id);
+
+export function planPermissionOnboarding(report: readonly CapabilityReadiness[]): OnboardingPlan {
+  const byId = new Map(report.map((capability) => [capability.id, capability]));
+  const steps: OnboardingStep[] = ONBOARDING_PERMISSION_IDS.flatMap((id) => {
+    const capability = byId.get(id);
+    if (!capability) return [];
+    return [
+      {
+        capability,
+        action: isRequestable(id) ? "request" : "open-settings",
+        done: capability.level === "ready",
+      },
+    ];
+  });
+
+  const pending = steps.filter((step) => !step.done);
+  return {
+    steps,
+    requestablePending: pending
+      .filter((step) => step.action === "request")
+      .map((step) => step.capability.id),
+    manualPending: pending
+      .filter((step) => step.action === "open-settings")
+      .map((step) => step.capability.id),
+    allReady: steps.length > 0 && pending.length === 0,
+    needsOnboarding: pending.length > 0,
+  };
+}
