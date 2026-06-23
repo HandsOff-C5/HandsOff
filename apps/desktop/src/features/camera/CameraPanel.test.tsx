@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { CameraPanel } from "./CameraPanel";
+import type { DisplayInfo, GestureOverlay } from "./useGestureOverlay";
 
 // jsdom has no media pipeline; the panel calls video.play() (and catches its failure).
 // Stub it so the suite output stays clean.
@@ -16,6 +17,23 @@ const fakeDetector = () => ({
 });
 
 const fakeStream = () => ({ getTracks: () => [] }) as unknown as MediaStream;
+
+// A stand-in overlay that reports a single 1920×1080 display without touching Tauri, so the
+// camera panel can reach a calibrated-capable live state in jsdom.
+const fakeOverlay = (): GestureOverlay => {
+  const noop = () => {};
+  const displays: DisplayInfo[] = [
+    { id: "1", isMain: true, x: 0, y: 0, width: 1920, height: 1080 },
+  ];
+  return {
+    start: () => Promise.resolve(displays),
+    stop: () => Promise.resolve(),
+    move: noop,
+    target: noop,
+    untarget: noop,
+    clear: noop,
+  };
+};
 
 const startCamera = () => fireEvent.click(screen.getByRole("button", { name: /start camera/i }));
 
@@ -112,16 +130,17 @@ describe("CameraPanel", () => {
     expect(screen.getByRole("button", { name: /dump frames/i })).toBeInTheDocument();
   });
 
-  it("enters 9-point calibration when Calibrate is pressed", async () => {
+  it("enters per-display calibration when Calibrate is pressed", async () => {
     render(
       <CameraPanel
         getStream={() => Promise.resolve(fakeStream())}
         createDetector={() => Promise.resolve(fakeDetector())}
+        overlay={fakeOverlay()}
       />,
     );
     startCamera();
     fireEvent.click(await screen.findByRole("button", { name: /calibrate/i }));
-    expect(screen.getByTestId("calibration-target")).toBeInTheDocument();
     expect(screen.getByText(/0\s*\/\s*9/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /capture/i })).toBeInTheDocument();
   });
 });

@@ -20,3 +20,12 @@ export {
   type CalibrationSession,
   type GridSpec,
 } from "./capture";
+export {
+  fitMultiMonitor,
+  multiMonitorTargets,
+  predictMultiMonitor,
+  type CalibrationTarget,
+  type MultiCalibrationPair,
+  type MultiMonitorCalibration,
+  type PerDisplayFit,
+} from "./multi-monitor";
