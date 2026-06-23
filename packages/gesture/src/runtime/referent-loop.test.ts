@@ -47,6 +47,22 @@ describe("createReferentLoop", () => {
     expect(out.active).toBe(false);
   });
 
+  it("exposes a 1€-smoothed screen point that attenuates a single jitter spike (A1)", () => {
+    const l = loop();
+    const steady = handAt(0.5, 0.5, 0.95);
+    let out = l.process(frame(steady, 0), 50);
+    for (let i = 1; i < 5; i++) out = l.process(frame(steady, i * 50), 50);
+    // Settled on the steady fingertip (identity transform → screen point == signal).
+    expect(out.point[0]).toBeCloseTo(0.5, 2);
+    expect(out.point[1]).toBeCloseTo(0.5, 2);
+    // A single spiked frame must NOT snap the point to the spike — 1€ smoothing attenuates it.
+    out = l.process(frame(handAt(0.9, 0.1, 0.95), 250), 50);
+    expect(out.point[0]).toBeGreaterThan(0.5);
+    expect(out.point[0]).toBeLessThan(0.9);
+    expect(out.point[1]).toBeLessThan(0.5);
+    expect(out.point[1]).toBeGreaterThan(0.1);
+  });
+
   it("engages and produces a candidate after a few frames of steady pointing", () => {
     const l = loop();
     const hand = handAt(0.5, 0.5, 0.95);

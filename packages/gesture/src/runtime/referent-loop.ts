@@ -7,9 +7,14 @@ import type {
   Surface,
 } from "@handsoff/contracts";
 
-import { applyTransform, toCandidate, type AffineTransform } from "../calibration/calibrate";
+import {
+  applyTransform,
+  toCandidate,
+  type AffineTransform,
+  type Point,
+} from "../calibration/calibrate";
 import { createDwellDebounce, type DwellDebounceParams } from "../confidence/dwell";
-import { alphaFromCutoff, ema } from "../confidence/smoothing";
+import { alphaFromCutoff, createOneEuroFilter, ema } from "../confidence/smoothing";
 import { pointingSignal, type PointingSignalOptions } from "../perception/pointing";
 import { initialState, reduce, type GestureMachineState } from "../state-machine/machine";
 
@@ -44,6 +49,9 @@ export interface ReferentLoopResult {
   confidence: number;
   // Dwell engaged — surface for the low-confidence / clarification UI.
   active: boolean;
+  // 1€-smoothed screen-space pointer position — the signal for the visible cursor and a
+  // steadier feel. Targeting/lock still use the RAW calibrated point; this is display-only.
+  point: Point;
   // FSM side-effect this frame (a referent locked, or an interrupt raised).
   emit?: LockedReferent | InterruptIntent;
 }
@@ -68,6 +76,13 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
   // Confidence is EMA-smoothed across frames (#28) before the dwell sees it, so a single
   // spurious frame can't swing engagement.
   let smoothedConfidence = 0;
+  // 1€-smooth the screen-space pointer position (x and y independently): steady when the
+  // hand holds, low-lag when it moves (research: 1€ > Kalman > EMA for cursor feel). This
+  // drives the visible cursor only — targeting/lock stay on the raw point. Held across
+  // frames so the cursor doesn't jump when the hand briefly drops out.
+  const smoothX = createOneEuroFilter({ minCutoff: 1, beta: 0.007 });
+  const smoothY = createOneEuroFilter({ minCutoff: 1, beta: 0.007 });
+  let point: Point = [0, 0];
   let state = initialState();
 
   const pickHand = (frame: LandmarkFrame) =>
@@ -83,6 +98,11 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
       let confidence = 0;
       if (hand) {
         const screenXY = applyTransform(transform, pointingSignal(hand, pointing));
+        // Cursor uses the 1€-smoothed point; targeting/lock use the raw point (unchanged).
+        point = [
+          smoothX.filter(screenXY[0], frame.timestampMs),
+          smoothY.filter(screenXY[1], frame.timestampMs),
+        ];
         candidate = toCandidate(screenXY, surfaces, calibrationQuality);
         // Overall referent confidence = detection score × how well it lands on a target.
         confidence = hand.score * (candidate?.confidence ?? 0);
@@ -123,7 +143,7 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
         state = reduce(state, { type: "lost" }).state;
       }
 
-      return { state, candidate, confidence: smoothedConfidence, active, emit };
+      return { state, candidate, confidence: smoothedConfidence, active, emit, point };
     },
   };
 };
