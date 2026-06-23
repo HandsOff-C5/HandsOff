@@ -562,6 +562,18 @@ body {
   font-size: 13px;
 }
 
+/* The smoothed pointing cursor (A1.3) — a glowing dot the user watches track the finger. */
+.camera-panel__cursor {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background: rgba(56, 189, 248, 0.9);
+  box-shadow: 0 0 10px 3px rgba(56, 189, 248, 0.6);
+  pointer-events: none;
+}
+
 /* Landmark debug overlay */
 .landmark-overlay,
 .calibration-overlay {

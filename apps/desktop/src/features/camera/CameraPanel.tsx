@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CalibrationOverlay } from "./CalibrationOverlay";
 import { DEMO_SCREEN_BOUNDS, demoSurfaces } from "./demo-surfaces";
 import { LandmarkOverlay } from "./LandmarkOverlay";
+import { PointerCursor } from "./PointerCursor";
 
 // #25/#24 camera shell — owns the webcam + the rAF detection loop, runs the live
 // perception→referent loop, and renders the debug overlay + a camera picker, mirror
@@ -43,6 +44,9 @@ const DWELL = { enter: 0.6, exit: 0.4, dwellMs: 600, cooldownMs: 800 };
 const POINTING = { anchor: "wrist", extend: 1.5 } as const;
 const FRAME_BUFFER = 150;
 const CALIB_KEY = "handsoff.calibration";
+// Coordinate space of the smoothed pointer before calibration (identity transform → the
+// raw [0,1] pointing signal); after calibration it's DEMO_SCREEN_BOUNDS.
+const UNIT_BOUNDS = { x: 0, y: 0, w: 1, h: 1 };
 
 const defaultGetStream = (deviceId?: string) =>
   navigator.mediaDevices.getUserMedia({
@@ -78,6 +82,7 @@ export function CameraPanel({
   const [referent, setReferent] = useState<LockedReferent | null>(null);
   const [phase, setPhase] = useState<GestureState>("idle");
   const [active, setActive] = useState(false);
+  const [pointer, setPointer] = useState<Point | null>(null);
 
   const resources = useRef<Resources>({ raf: 0, handle: null, stream: null, cancelled: false });
   // Live pointing signal this frame — read by the calibration overlay's Capture.
@@ -113,6 +118,7 @@ export function CameraPanel({
     setCandidate(null);
     setPhase("idle");
     setActive(false);
+    setPointer(null);
   }, []);
 
   // Restore a saved calibration so pointing works immediately after a restart.
@@ -189,6 +195,7 @@ export function CameraPanel({
             setCandidate(out.candidate);
             setActive(out.active);
             setPhase(out.state.phase);
+            setPointer(f.hands.length ? out.point : null);
             if (out.emit && "targetId" in out.emit) setReferent(out.emit);
           },
           onError: (e) => setError(e instanceof Error ? e.message : String(e)),
@@ -301,6 +308,13 @@ export function CameraPanel({
           aria-label="webcam"
         />
         <LandmarkOverlay frame={frame} fps={fps} mirrored={mirrored} />
+        {mode === "live" && (
+          <PointerCursor
+            point={pointer}
+            bounds={calibration ? DEMO_SCREEN_BOUNDS : UNIT_BOUNDS}
+            mirrored={mirrored}
+          />
+        )}
 
         {mode === "live" && locked && (
           <div className="camera-panel__candidate camera-panel__candidate--locked">
