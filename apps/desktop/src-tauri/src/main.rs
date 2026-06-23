@@ -29,7 +29,9 @@ fn main() {
             commands::permissions::request_media_permissions,
             commands::permissions::request_screen_recording,
             commands::permissions::restart_app,
-            commands::permissions::open_privacy_settings
+            commands::permissions::open_privacy_settings,
+            commands::overlay::show_overlay,
+            commands::overlay::hide_overlay
         ])
         .run(tauri::generate_context!())
         .expect("error while running the HandsOff application");

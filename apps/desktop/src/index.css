@@ -34,8 +34,25 @@ body {
 }
 
 .dashboard__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 20px;
+}
+
+.dashboard__overlay-toggle {
+  flex: none;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 9px 16px;
 }
 
 .dashboard__brand {
@@ -827,6 +844,40 @@ body {
 .onboarding__relaunch {
   border-color: #f59e0b;
   color: #f59e0b;
+}
+
+/* Full-screen pointing overlay window (#25) — transparent, click-through layer. */
+.pointing-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.pointing-overlay__marker {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  background: rgba(56, 189, 248, 0.9);
+  box-shadow: 0 0 24px 10px rgba(56, 189, 248, 0.5);
+}
+
+.pointing-overlay__hint {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(15, 17, 23, 0.7);
+  color: #e7e9ee;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .onboarding__actions button:disabled {

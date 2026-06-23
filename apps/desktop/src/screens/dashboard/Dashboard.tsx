@@ -137,6 +137,13 @@ export function Dashboard({
     void invoke("open_privacy_settings", { pane });
   const relaunchApp = () => void invoke("restart_app");
 
+  // Toggle the full-screen pointing overlay over the real desktop (#25).
+  const [overlayShown, setOverlayShown] = useState(false);
+  const toggleOverlay = () => {
+    void invoke(overlayShown ? "hide_overlay" : "show_overlay");
+    setOverlayShown((shown) => !shown);
+  };
+
   return (
     <main className="dashboard">
       {showOnboarding && (
@@ -153,8 +160,13 @@ export function Dashboard({
         />
       )}
       <header className="dashboard__header">
-        <h1 className="dashboard__brand">{APP_NAME}</h1>
-        <p className="dashboard__tagline">Point. Speak. Supervise your agents.</p>
+        <div>
+          <h1 className="dashboard__brand">{APP_NAME}</h1>
+          <p className="dashboard__tagline">Point. Speak. Supervise your agents.</p>
+        </div>
+        <button type="button" className="dashboard__overlay-toggle" onClick={toggleOverlay}>
+          {overlayShown ? "Hide screen overlay" : "Show on screen"}
+        </button>
       </header>
       <div className="dashboard__panels">
         <CameraPanel
