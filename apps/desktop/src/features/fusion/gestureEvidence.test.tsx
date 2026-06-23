@@ -11,7 +11,11 @@ const surface: SurfaceSnapshot = {
   availability: "available",
   accessStatus: "accessible",
 };
-const candidate: PointingCandidate = { targetId: "win-1", confidence: 0.8, calibrationQuality: "good" };
+const candidate: PointingCandidate = {
+  targetId: "win-1",
+  confidence: 0.8,
+  calibrationQuality: "good",
+};
 
 describe("toGestureEvidence", () => {
   it("maps a pointing candidate + surface to gesture PointingEvidence", () => {
