@@ -7,7 +7,6 @@
 
 use std::os::raw::c_longlong;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
@@ -87,7 +86,7 @@ type HotkeyCallback = extern "C" fn(i32, c_longlong, u64);
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn handsoff_hotkey_request_permissions();
-    fn handsoff_hotkey_install(callback: HotkeyCallback) -> i32;
+    fn handsoff_hotkey_install(callback: HotkeyCallback);
 }
 
 // Called from the ObjC tap for every flagsChanged / keyDown event.
@@ -120,19 +119,17 @@ pub fn arm(app: AppHandle) {
     *app_slot().lock().expect("hotkey app poisoned") = Some(app.clone());
     #[cfg(target_os = "macos")]
     {
-        unsafe { handsoff_hotkey_request_permissions() };
-        std::thread::spawn(move || loop {
-            let installed = unsafe { handsoff_hotkey_install(on_native_event) };
-            if installed == 1 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(1500));
-        });
+        // Request the TCC prompts, then install the tap. The ObjC side hops to the
+        // main run loop and retries every 1.5s until macOS lets it through, so a
+        // grant after launch arms the hotkey without a relaunch.
+        unsafe {
+            handsoff_hotkey_request_permissions();
+            handsoff_hotkey_install(on_native_event);
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
         let _ = app;
-        let _ = Duration::from_millis(0);
     }
 }
 

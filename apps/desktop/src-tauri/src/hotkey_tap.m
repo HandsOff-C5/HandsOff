@@ -11,6 +11,7 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
 #import <IOKit/hidsystem/IOHIDLib.h>
+#import <dispatch/dispatch.h>
 
 // kind: 0 = flagsChanged, 1 = keyDown. Rust decides start/stop from (kind, keyCode, flags).
 typedef void (*HandsOffHotkeyCallback)(int kind, long long key_code, unsigned long long flags);
@@ -59,14 +60,12 @@ void handsoff_hotkey_request_permissions(void) {
   AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
 }
 
-// Attempt to install the session event tap. Returns 1 on success, 0 if blocked
-// (permissions not yet granted). Idempotent: a second successful call is a no-op.
-int handsoff_hotkey_install(HandsOffHotkeyCallback callback) {
-  g_callback = callback;
+// Try to install the tap once. Must run on the main thread (the CFMachPort source
+// is added to the main run loop, which Cocoa keeps running). Returns 1 on success.
+static int hotkey_try_install_main_thread(void) {
   if (g_tap != NULL) {
     return 1;
   }
-
   CGEventMask mask = CGEventMaskBit(kCGEventFlagsChanged) | CGEventMaskBit(kCGEventKeyDown);
   CFMachPortRef tap = CGEventTapCreate(kCGSessionEventTap,
                                        kCGHeadInsertEventTap,
@@ -75,14 +74,41 @@ int handsoff_hotkey_install(HandsOffHotkeyCallback callback) {
                                        hotkey_tap_callback,
                                        NULL);
   if (tap == NULL) {
+    fputs("handsoff-hotkey: CGEventTapCreate failed (Accessibility/Input Monitoring not granted yet)\n", stderr);
     return 0;
   }
-
   g_tap = tap;
   g_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0);
   if (g_source != NULL) {
     CFRunLoopAddSource(CFRunLoopGetMain(), g_source, kCFRunLoopCommonModes);
   }
   CGEventTapEnable(tap, true);
+  fputs("handsoff-hotkey: armed Right Option + ? tap\n", stderr);
   return 1;
+}
+
+// Install the event tap, retrying on the MAIN run loop every 1.5s until macOS
+// lets it through (so granting Accessibility/Input Monitoring after launch arms
+// without a relaunch). Safe to call from any thread; work is hopped to main.
+void handsoff_hotkey_install(HandsOffHotkeyCallback callback) {
+  g_callback = callback;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (hotkey_try_install_main_thread() == 1) {
+      return;
+    }
+    // Retry on the main run loop until it arms.
+    __block CFRunLoopTimerRef timer = NULL;
+    timer = CFRunLoopTimerCreateWithHandler(
+        kCFAllocatorDefault,
+        CFAbsoluteTimeGetCurrent() + 1.5,
+        1.5,
+        0,
+        0,
+        ^(CFRunLoopTimerRef t) {
+          if (hotkey_try_install_main_thread() == 1) {
+            CFRunLoopTimerInvalidate(t);
+          }
+        });
+    CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
+  });
 }

@@ -308,6 +308,36 @@ int handsoff_request_microphone_authorization(void) {
   return -1;
 }
 
+int handsoff_camera_authorization_status(void) {
+  if (@available(macOS 10.14, *)) {
+    return (int)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+  }
+  return -1;
+}
+
+// Request camera from the APP process (com.handsoff.desktop) so the prompt fires
+// and the grant registers under the app's TCC identity in System Settings. The
+// head-track sidecar runs as a child of the app and is covered by this grant
+// (responsible-process model) — it no longer needs its own camera prompt.
+int handsoff_request_camera_authorization(void) {
+  if (@available(macOS 10.14, *)) {
+    __block int result = handsoff_camera_authorization_status();
+    if (result != AVAuthorizationStatusNotDetermined) {
+      return result;
+    }
+
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo
+                             completionHandler:^(BOOL granted) {
+                               result = granted ? AVAuthorizationStatusAuthorized : AVAuthorizationStatusDenied;
+                               dispatch_semaphore_signal(semaphore);
+                             }];
+    wait_for(semaphore);
+    return result;
+  }
+  return -1;
+}
+
 int handsoff_stt_start(HandsOffSttEventCallback callback) {
   if (@available(macOS 10.15, *)) {
     if (callback == NULL) {
