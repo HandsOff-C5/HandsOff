@@ -28,6 +28,7 @@ private func handsoffEmitSttError(
 @available(macOS 26.0, *)
 private enum HandsOffSpeechAnalyzerError: LocalizedError {
     case noInputChannels
+    case noAudioFormat
     case localeNotSupported(String)
     case localeNotInstalled(String)
     case converterUnavailable
@@ -37,6 +38,8 @@ private enum HandsOffSpeechAnalyzerError: LocalizedError {
         switch self {
         case .noInputChannels:
             return "no microphone input channels available"
+        case .noAudioFormat:
+            return "no compatible audio format available for the transcriber"
         case let .localeNotSupported(locale):
             return "SpeechAnalyzer does not support \(locale)"
         case let .localeNotInstalled(locale):
@@ -95,11 +98,13 @@ private final class HandsOffSpeechAnalyzerSession: @unchecked Sendable {
     private func run() async {
         do {
             let locale = Locale.current
-            let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveLiveTranscription)
+            let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
             try await ensureInstalledModel(for: transcriber, locale: locale)
 
             let analyzer = SpeechAnalyzer(modules: [transcriber])
-            let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
+            guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+                throw HandsOffSpeechAnalyzerError.noAudioFormat
+            }
             let (inputSequence, inputBuilder) = AsyncStream<AnalyzerInput>.makeStream()
             self.analyzer = analyzer
             self.inputContinuation = inputBuilder
