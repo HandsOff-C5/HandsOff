@@ -7,6 +7,7 @@ import type {
   IntentInput,
   PointingEvidence,
   ResolvedIntent,
+  SurfaceSnapshot,
 } from "@handsoff/contracts";
 
 import {
@@ -37,34 +38,49 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
   const createdAt = options.createdAt ?? new Date().toISOString();
   const id = options.intentId ?? "intent-1";
 
-  // The clarification policy (#36) decides whether the referent is bound well
-  // enough to act, or whether to ask. It runs on the calibrated-confidence (#100)
-  // candidates; the 0.5 floor is preserved as its minConfidence.
-  const candidates = clarificationCandidates(input);
-  const decision = decideClarification(candidates, {
-    minConfidence: options.minConfidence ?? 0.5,
-    ambiguityMargin: DEFAULT_CLARIFICATION_POLICY.ambiguityMargin,
-  });
-  if (decision.kind === "clarify") {
-    return clarificationRequired(input, id, createdAt, decision.request);
+  const parsed = parseVoiceCommand(input.speech.finalTranscript.text);
+  if (parsed.status === "unsupported") {
+    return blockedIntent("blocked", input, id, createdAt, parsed.reason);
   }
 
-  const surface =
-    candidates.find((c) => c.targetId === decision.targetId)?.surface ?? input.surfaceCandidates[0];
-  const confidence = candidates.find((c) => c.targetId === decision.targetId)?.confidence ?? 0;
-  if (!surface || surface.availability !== "available" || surface.accessStatus !== "accessible") {
-    return blocked(
+  // When the voice names an app ("open Cursor", "open TextEdit and type …") that
+  // surface IS the target — pointing only needs to agree, not disambiguate. With no
+  // named app, the clarification policy (#36) decides whether the gesture/head
+  // pointing bound a referent well enough to act, or whether to ask. It runs on the
+  // calibrated-confidence (#100) candidates; the 0.5 floor is its minConfidence.
+  const voiceTargetSurface = parsed.appName ? surfaceForApp(parsed.appName) : undefined;
+
+  let surface: SurfaceSnapshot | undefined;
+  let confidence: number;
+  if (voiceTargetSurface) {
+    surface = voiceTargetSurface;
+    confidence = 1;
+  } else {
+    const candidates = clarificationCandidates(input);
+    const decision = decideClarification(candidates, {
+      minConfidence: options.minConfidence ?? 0.5,
+      ambiguityMargin: DEFAULT_CLARIFICATION_POLICY.ambiguityMargin,
+    });
+    if (decision.kind === "clarify") {
+      return clarificationRequired(input, id, createdAt, decision.request);
+    }
+    const chosen = candidates.find((c) => c.targetId === decision.targetId);
+    surface = chosen?.surface ?? input.surfaceCandidates[0];
+    confidence = chosen?.confidence ?? 0;
+  }
+
+  if (
+    !surface ||
+    (!voiceTargetSurface &&
+      (surface.availability !== "available" || surface.accessStatus !== "accessible"))
+  ) {
+    return blockedIntent(
       "clarification_required",
       input,
       id,
       createdAt,
       "No accessible target was found",
     );
-  }
-
-  const parsed = parseVoiceCommand(input.speech.finalTranscript.text);
-  if (parsed.status === "unsupported") {
-    return blocked("blocked", input, id, createdAt, parsed.reason);
   }
 
   const risk_level = riskForIntent(parsed.intent_type);
@@ -78,6 +94,7 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
     value: parsed.value,
     risk_level,
     requires_approval,
+    appName: parsed.appName,
   });
 
   return {
@@ -92,6 +109,16 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
     target_agent: action_plan.target_agent,
     action_plan,
     createdAt,
+  };
+}
+
+function surfaceForApp(appName: string): SurfaceSnapshot {
+  return {
+    id: `app:${appName.toLowerCase()}`,
+    title: appName,
+    app: appName,
+    availability: "unknown",
+    accessStatus: "unknown",
   };
 }
 
@@ -150,7 +177,7 @@ function clarificationRequired(
   };
 }
 
-function blocked(
+export function blockedIntent(
   status: "blocked" | "clarification_required",
   input: IntentInput,
   id: string,
@@ -177,34 +204,36 @@ interface PlanArgs {
   value?: string;
   risk_level: ActionPlan["risk_level"];
   requires_approval: boolean;
+  appName?: string;
 }
 
 type IntentType = NonNullable<ResolvedIntent["intent_type"]>;
 
 // The single step each actionable intent type expands to. Types absent here
-// (e.g. control intents) produce no steps and route to "none".
-const STEP_BUILDERS: Partial<Record<IntentType, (args: PlanArgs) => ActionStep>> = {
-  inspect: (a) => ({
-    id: "step-1",
+// (e.g. control intents) produce no steps and route to "none". stepId differs
+// when an app launch precedes the action (then the action becomes step-2).
+const STEP_BUILDERS: Partial<Record<IntentType, (args: PlanArgs, stepId: string) => ActionStep>> = {
+  inspect: (a, stepId) => ({
+    id: stepId,
     kind: "inspect_window_state",
     label: "Inspect selected window",
     target: a.target,
   }),
-  click: (a) => ({
-    id: "step-1",
+  click: (a, stepId) => ({
+    id: stepId,
     kind: "click_element",
     label: "Click selected target",
     target: a.target,
   }),
-  type_text: (a) => ({
-    id: "step-1",
+  type_text: (a, stepId) => ({
+    id: stepId,
     kind: "type_text",
     label: "Type dictated text",
     target: a.target,
     text: a.text ?? "",
   }),
-  set_value: (a) => ({
-    id: "step-1",
+  set_value: (a, stepId) => ({
+    id: stepId,
     kind: "set_value",
     label: "Set selected value",
     target: a.target,
@@ -220,16 +249,28 @@ const SUMMARIES: Partial<Record<IntentType, string>> = {
 };
 
 function planFor(args: PlanArgs): ActionPlan {
+  // A voice-named app launches first; the action then targets it as the next step.
+  const launchSteps: ActionStep[] = args.appName
+    ? [
+        {
+          id: "step-1",
+          kind: "launch_app",
+          label: `Open ${args.appName}`,
+          appName: args.appName,
+        },
+      ]
+    : [];
+  const actionStepId = args.appName ? "step-2" : "step-1";
   const build = args.intentType ? STEP_BUILDERS[args.intentType] : undefined;
-  const steps: ActionStep[] = build ? [build(args)] : [];
+  const steps: ActionStep[] = build ? [build(args, actionStepId)] : [];
 
   return {
     id: args.planId,
     summary: summaryFor(args.intentType),
     risk_level: args.risk_level,
     requires_approval: args.requires_approval,
-    target_agent: steps.length > 0 ? "cua-driver" : "none",
-    action_plan: steps,
+    target_agent: launchSteps.length + steps.length > 0 ? "cua-driver" : "none",
+    action_plan: [...launchSteps, ...steps],
   };
 }
 

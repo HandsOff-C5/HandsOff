@@ -14,6 +14,6 @@
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>HandsOff transcribes your speech on this device to turn spoken commands into agent tasks. Audio is processed on-device and is not sent to a server.</string>
     <key>NSCameraUsageDescription</key>
-    <string>HandsOff uses the camera to read hand gestures for pointing at on-screen surfaces.</string>
+    <string>HandsOff uses the camera to read hand gestures and head pointing for selecting on-screen surfaces. Camera frames stay on this Mac.</string>
   </dict>
 </plist>

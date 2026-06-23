@@ -10,6 +10,19 @@ type PlanPreviewPanelProps = {
   onReject?: () => void;
 };
 
+function runSummary(runResult: PlanRunResult): string {
+  if (runResult.result?.status === "blocked")
+    return `${runResult.status}: ${runResult.result.reason}`;
+  if (runResult.result?.status === "failed")
+    return `${runResult.status}: ${runResult.result.error}`;
+  return runResult.status;
+}
+
+function targetTitle(intent: Extract<ResolvedIntent, { status: "ready" }>): string {
+  const targeted = intent.action_plan.action_plan.find((step) => "target" in step);
+  return targeted?.target.surface.title ?? intent.referent.id;
+}
+
 export function PlanPreviewPanel({
   intent,
   runResult,
@@ -44,7 +57,7 @@ export function PlanPreviewPanel({
         </div>
         <div>
           <dt>Target</dt>
-          <dd>{intent.action_plan.action_plan[0]?.target.surface.title ?? intent.referent.id}</dd>
+          <dd>{targetTitle(intent)}</dd>
         </div>
         <div>
           <dt>Risk</dt>
@@ -58,7 +71,7 @@ export function PlanPreviewPanel({
       </ol>
       {runResult ? (
         <p className="plan-preview__status" role="status">
-          {runResult.status}
+          {runSummary(runResult)}
         </p>
       ) : null}
       {intent.requires_approval && !runResult ? (

@@ -55,6 +55,21 @@ corepack pnpm --filter @handsoff/desktop-app tauri dev
 Without both values, `stt_mint_token` returns a recoverable provider setup error
 when Realtime is selected — expected when using the on-device default.
 
+## LLM intent resolver
+
+Voice-to-CUA intent uses an OpenAI-backed Cloudflare Worker so the provider key
+never reaches the webview. The Rust host reads the Worker endpoint and app-auth
+credential from process env and proxies only model/messages:
+
+```bash
+export HANDSOFF_INTENT_WORKER_URL="https://<worker-host>/v1/resolve-intent"
+export HANDSOFF_INTENT_APP_AUTH_TOKEN="<launch-cohort app token>"
+corepack pnpm --filter @handsoff/desktop-app tauri dev
+```
+
+Without both values, free-form LLM intent resolution returns a recoverable setup
+error; the explicit rule resolver remains available for tests and fallback.
+
 ## Layout
 
 - `src/` — React frontend (`main.tsx` → `App` → `screens/dashboard/Dashboard`).

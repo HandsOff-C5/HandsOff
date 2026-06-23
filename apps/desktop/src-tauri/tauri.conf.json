@@ -44,6 +44,7 @@
     "macOS": {
       "entitlements": "entitlements.plist",
       "signingIdentity": "-"
-    }
+    },
+    "externalBin": ["binaries/head-track"]
   }
 }

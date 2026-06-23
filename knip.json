@@ -14,7 +14,8 @@
         "src-tauri/**",
         "scripts/**"
       ],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
+      "ignoreDependencies": ["@tauri-apps/plugin-global-shortcut"]
     }
   }
 }

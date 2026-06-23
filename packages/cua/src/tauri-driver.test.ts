@@ -46,6 +46,17 @@ const unresolvedTarget = {
   elementIndex: 2,
 };
 
+const textEditTarget = {
+  surface: {
+    id: "app:textedit",
+    title: "TextEdit",
+    app: "TextEdit",
+    availability: "unknown" as const,
+    accessStatus: "unknown" as const,
+  },
+  elementIndex: 0,
+};
+
 describe("Tauri CUA driver", () => {
   it("resolves an implicit target to the first usable non-driver window", async () => {
     const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
@@ -114,6 +125,46 @@ describe("Tauri CUA driver", () => {
     expect(calls.at(-1)).toEqual({
       command: "cua_click",
       args: { pid: 3, windowId: 30, elementIndex: 2 },
+    });
+  });
+
+  it("launches apps through the native CUA command", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const invoke: CuaInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (command === "cua_launch_app") return { status: "succeeded", summary: "Launched" } as T;
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const result = await createTauriCuaDriver(invoke).launchApp({ appName: "TextEdit" });
+
+    expect(result).toEqual({ status: "succeeded", summary: "Launched" });
+    expect(calls).toEqual([{ command: "cua_launch_app", args: { appName: "TextEdit" } }]);
+  });
+
+  it("prefers a named app window over the focused fallback", async () => {
+    const textEditWindow: CuaWindow = {
+      id: "textedit:4",
+      title: "Untitled",
+      app: "TextEdit",
+      pid: 4,
+      windowId: 40,
+      availability: "available",
+      accessStatus: "accessible",
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const invoke: CuaInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (command === "cua_list_windows") return [focusedWorkWindow, textEditWindow] as T;
+      if (command === "cua_type_text") return { status: "succeeded", summary: "Typed" } as T;
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await createTauriCuaDriver(invoke).typeText(textEditTarget, "hello goodbye");
+
+    expect(calls.at(-1)).toEqual({
+      command: "cua_type_text",
+      args: { pid: 4, windowId: 40, elementIndex: 0, text: "hello goodbye" },
     });
   });
 

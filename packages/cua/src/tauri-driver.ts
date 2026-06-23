@@ -32,6 +32,11 @@ function isResolvedTarget(target: ActionTarget | null): target is ResolvedAction
   return target?.surface.pid !== undefined && target.surface.windowId !== undefined;
 }
 
+function targetAppName(target: ActionTarget): string | null {
+  const app = target.surface.app.trim();
+  return app && app !== "Current app" ? app.toLowerCase() : null;
+}
+
 function parsePermissions(input: unknown): CuaPermissionReport {
   const parsed = cuaPermissionReportSchema.safeParse(input);
   return parsed.success
@@ -59,7 +64,14 @@ export function createTauriCuaDriver(invoke: CuaInvoke): CuaDriver {
       return target;
     }
     const windows = await listWindows();
+    const appName = targetAppName(target);
+    const namedWindow = appName
+      ? windows.find(
+          (candidate) => isUsableWindow(candidate) && candidate.app.toLowerCase() === appName,
+        )
+      : undefined;
     const window =
+      namedWindow ??
       windows.find((candidate) => isUsableWindow(candidate) && candidate.focused) ??
       windows.find(isUsableWindow);
     return window ? { ...target, surface: window } : null;
@@ -109,6 +121,11 @@ export function createTauriCuaDriver(invoke: CuaInvoke): CuaDriver {
       return [];
     },
     listWindows,
+    async launchApp({ appName, bundleId }) {
+      return normalizeCuaActionResult(
+        await invoke("cua_launch_app", { appName, ...(bundleId && { bundleId }) }),
+      );
+    },
     getWindowState,
     async click(target) {
       return withResolvedTarget(target, (resolved) =>

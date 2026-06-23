@@ -33,21 +33,24 @@ pub fn show_overlay(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    let window = WebviewWindowBuilder::new(&app, OVERLAY_LABEL, WebviewUrl::App("index.html".into()))
-        .title("HandsOff overlay")
-        .transparent(true)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .shadow(false)
-        .focused(false)
-        .visible(false)
-        .build()
-        .map_err(|e| e.to_string())?;
+    let window =
+        WebviewWindowBuilder::new(&app, OVERLAY_LABEL, WebviewUrl::App("index.html".into()))
+            .title("HandsOff overlay")
+            .transparent(true)
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .shadow(false)
+            .focused(false)
+            .visible(false)
+            .build()
+            .map_err(|e| e.to_string())?;
 
     position_over_primary_screen(&window);
     // Clicks pass straight through to whatever is underneath.
-    window.set_ignore_cursor_events(true).map_err(|e| e.to_string())?;
+    window
+        .set_ignore_cursor_events(true)
+        .map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
     Ok(())
 }

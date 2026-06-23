@@ -1,11 +1,21 @@
 import { APP_NAME } from "@handsoff/contracts";
 import type { CapabilityId, CapabilityReadiness, PermissionGuidance } from "@handsoff/contracts";
 
-// The macOS TCC grants that gate computer-use actions, in display order (issue
-// #18). camera/microphone and the CUA daemon are owned by other lanes.
-export const EDUCATED_PERMISSION_IDS = ["accessibility", "screen-recording"] as const;
+// The macOS TCC grants that gate head pointing and computer-use actions, in display order.
+export const EDUCATED_PERMISSION_IDS = ["camera", "accessibility", "screen-recording"] as const;
 
 const GUIDANCE: Record<(typeof EDUCATED_PERMISSION_IDS)[number], PermissionGuidance> = {
+  camera: {
+    reason:
+      "Head pointing needs Camera access so the bundled head tracker can read face pose on-device. Without it, looking at a target cannot produce candidates.",
+    settingsPath: "System Settings → Privacy & Security → Camera",
+    steps: [
+      "Open System Settings → Privacy & Security → Camera.",
+      `Find ${APP_NAME} in the list (use the + button to add it if it isn't there).`,
+      `Turn the switch next to ${APP_NAME} on.`,
+      `Quit and reopen ${APP_NAME} if macOS asks, then choose Re-check.`,
+    ],
+  },
   accessibility: {
     reason:
       "The computer-use agent needs Accessibility to act for you — move the pointer, click, and type in other apps. Without it, approved plans can't run.",

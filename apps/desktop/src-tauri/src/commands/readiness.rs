@@ -4,10 +4,9 @@
 //   { "capabilities": [ { "id", "kind", "state" }, ... ] }
 // The frontend validates it (zod) and maps it to green/yellow/red, so this side
 // stays a thin, honest reporter: it returns real macOS permission state where a
-// dependency-free system call exists (Accessibility, Screen Recording) and
-// `unknown` for capabilities whose probes belong to other lanes — camera and
-// microphone authorization land with the capture/STT lanes, and the CUA daemon
-// health check lands with the CUA lane.
+// dependency-free system call exists (Camera, Microphone, Speech, Accessibility,
+// Screen Recording) and `unknown` for capabilities whose probes belong to other
+// lanes — the CUA daemon health check lands with the CUA lane.
 //
 // All permission states are read via native FFI functions that query the app
 // bundle's TCC identity directly — there is no sidecar permission path anymore.
@@ -88,11 +87,11 @@ fn speech_recognition_state() -> &'static str {
     }
 }
 
-// Fallback microphone authorization (#31), read without prompting via
-// `AVCaptureDevice.authorizationStatusForMediaType:` with the `AVMediaTypeAudio`
-// constant. Note the AVAuthorizationStatus ordering differs from Speech's.
+// Camera/microphone authorization (#31, #95), read without prompting via
+// `AVCaptureDevice.authorizationStatusForMediaType:`. Note the AVAuthorizationStatus
+// ordering differs from Speech's.
 #[cfg(target_os = "macos")]
-fn microphone_state() -> &'static str {
+fn av_capture_state(media_type: *const std::ffi::c_void) -> &'static str {
     use std::ffi::{c_char, c_void};
 
     #[link(name = "objc")]
@@ -102,10 +101,7 @@ fn microphone_state() -> &'static str {
         fn objc_msgSend();
     }
     #[link(name = "AVFoundation", kind = "framework")]
-    extern "C" {
-        // NSString * media-type constant exported by AVFoundation.
-        static AVMediaTypeAudio: *const c_void;
-    }
+    extern "C" {}
 
     // Safety: `AVCaptureDevice` responds to `authorizationStatusForMediaType:`
     // taking an NSString and returning an NSInteger. We reinterpret `objc_msgSend`
@@ -119,7 +115,7 @@ fn microphone_state() -> &'static str {
         let selector = sel_registerName(c"authorizationStatusForMediaType:".as_ptr());
         let msg_send: extern "C" fn(*const c_void, *const c_void, *const c_void) -> isize =
             std::mem::transmute(objc_msgSend as *const c_void);
-        msg_send(class, selector, AVMediaTypeAudio)
+        msg_send(class, selector, media_type)
     };
 
     // AVAuthorizationStatus: 0 notDetermined, 1 restricted, 2 denied, 3 authorized.
@@ -132,43 +128,37 @@ fn microphone_state() -> &'static str {
     }
 }
 
-// Camera authorization (#25), read without prompting via
-// `AVCaptureDevice.authorizationStatusForMediaType:` with `AVMediaTypeVideo`.
-// Same AVAuthorizationStatus ordering as the microphone probe above.
 #[cfg(target_os = "macos")]
 fn camera_state() -> &'static str {
-    use std::ffi::{c_char, c_void};
+    use std::ffi::c_void;
 
-    #[link(name = "objc")]
-    extern "C" {
-        fn objc_getClass(name: *const c_char) -> *const c_void;
-        fn sel_registerName(name: *const c_char) -> *const c_void;
-        fn objc_msgSend();
-    }
     #[link(name = "AVFoundation", kind = "framework")]
     extern "C" {
+        // NSString * media-type constant exported by AVFoundation.
         static AVMediaTypeVideo: *const c_void;
     }
 
-    // Safety: identical contract to `microphone_state`, with the video media type.
-    let status = unsafe {
-        let class = objc_getClass(c"AVCaptureDevice".as_ptr());
-        if class.is_null() {
-            return "unknown";
-        }
-        let selector = sel_registerName(c"authorizationStatusForMediaType:".as_ptr());
-        let msg_send: extern "C" fn(*const c_void, *const c_void, *const c_void) -> isize =
-            std::mem::transmute(objc_msgSend as *const c_void);
-        msg_send(class, selector, AVMediaTypeVideo)
-    };
+    // Safety: AVFoundation exports a stable NSString constant for camera media.
+    av_capture_state(unsafe { AVMediaTypeVideo })
+}
 
-    match status {
-        0 => "not-determined",
-        1 => "restricted",
-        2 => "denied",
-        3 => "granted",
-        _ => "unknown",
+#[cfg(target_os = "macos")]
+fn microphone_state() -> &'static str {
+    use std::ffi::c_void;
+
+    #[link(name = "AVFoundation", kind = "framework")]
+    extern "C" {
+        // NSString * media-type constant exported by AVFoundation.
+        static AVMediaTypeAudio: *const c_void;
     }
+
+    // Safety: AVFoundation exports a stable NSString constant for audio media.
+    av_capture_state(unsafe { AVMediaTypeAudio })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn camera_state() -> &'static str {
+    "unknown"
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -178,11 +168,6 @@ fn accessibility_state() -> &'static str {
 
 #[cfg(not(target_os = "macos"))]
 fn microphone_state() -> &'static str {
-    "unknown"
-}
-
-#[cfg(not(target_os = "macos"))]
-fn camera_state() -> &'static str {
     "unknown"
 }
 
@@ -230,6 +215,14 @@ mod tests {
         #[cfg(target_os = "macos")]
         {
             let _state = microphone_state();
+        }
+    }
+
+    #[test]
+    fn camera_state_returns_valid_states() {
+        #[cfg(target_os = "macos")]
+        {
+            let _state = camera_state();
         }
     }
 }

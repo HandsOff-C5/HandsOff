@@ -1,7 +1,9 @@
 import {
   APP_NAME,
   type CapabilityId,
+  type IntentInput,
   type PointingEvidence,
+  type ResolvedIntent,
   type SttProvider,
   type SttStream,
 } from "@handsoff/contracts";
@@ -21,10 +23,19 @@ import { ReadinessPanel } from "../../features/readiness/ReadinessPanel";
 import { useReadinessProbe } from "../../features/readiness/useReadinessProbe";
 import { SessionsPanel } from "../../features/sessions/SessionsPanel";
 import { SettingsPanel } from "../../features/settings/SettingsPanel";
+import {
+  useHeadPointing,
+  type HeadPointingSnapshot,
+  type HeadPointingListen,
+} from "../../features/head-pointing/useHeadPointing";
 import { useLocalConfig } from "../../features/settings/useLocalConfig";
 import { TranscriptPanel } from "../../features/transcript/TranscriptPanel";
-import { useVoiceCuaController } from "../../features/voice-cua/useVoiceCuaController";
+import {
+  createIntentWorkerResolver,
+  useVoiceCuaController,
+} from "../../features/voice-cua/useVoiceCuaController";
 import { hasTauriBackend } from "../../lib/tauri";
+import type { ResolveIntentOptions } from "@handsoff/intent";
 
 // "Native" mode (#31, AD2): recognition runs in the app process via native
 // Objective-C (SFSpeechRecognizer + AVAudioEngine) driven by the `stt_ondevice_*`
@@ -48,6 +59,12 @@ function createRealtimeStream(): SttStream {
   });
 }
 
+const HEAD_POINTING_TAURI = {
+  invoke: (command: string) => invoke(command),
+  listen: ((event, handler) =>
+    listen(event, ({ payload }) => handler({ payload }))) satisfies HeadPointingListen,
+};
+
 // The transcription mode the user picked in Settings decides which provider the
 // transcript panel speaks to. Both satisfy the same `SttStream` seam, so the
 // panel and intent engine are unchanged.
@@ -58,6 +75,8 @@ function streamFactoryFor(provider: SttProvider): () => SttStream {
 interface DashboardProps {
   createStream?: () => SttStream;
   cuaDriver?: CuaDriver;
+  headPointing?: HeadPointingSnapshot;
+  resolveIntent?: (input: IntentInput, options: ResolveIntentOptions) => Promise<ResolvedIntent>;
   now?: () => string;
   targetResolveDelayMs?: number;
 }
@@ -70,6 +89,8 @@ interface DashboardProps {
 export function Dashboard({
   createStream: injectedStream,
   cuaDriver,
+  headPointing: injectedHeadPointing,
+  resolveIntent,
   now,
   targetResolveDelayMs,
 }: DashboardProps = {}) {
@@ -86,10 +107,21 @@ export function Dashboard({
   // the controller reads it at intent time so "point + speak" binds to the pointed
   // surface. A ref (not state) avoids re-rendering the dashboard on every lock.
   const gestureEvidence = useRef<PointingEvidence | null>(null);
-  const { intent, runResult, session, approve, reject, handleFinalTranscript } =
+  // Head/gaze attention (#95): the worker-proxied LLM resolver + the live head-pointing
+  // stream, folded into the same controller so gesture, head, and voice fuse together.
+  const intentResolver =
+    resolveIntent ??
+    (hasTauriBackend()
+      ? createIntentWorkerResolver((command, args) => invoke(command, args))
+      : undefined);
+  const liveHeadPointing = useHeadPointing(hasTauriBackend() ? HEAD_POINTING_TAURI : undefined);
+  const headPointing = injectedHeadPointing ?? liveHeadPointing;
+  const { intent, runResult, session, auditEvents, approve, reject, handleFinalTranscript } =
     useVoiceCuaController({
       driver,
+      headPointing,
       now,
+      resolveIntent: intentResolver,
       targetResolveDelayMs,
       getGestureEvidence: () => gestureEvidence.current,
     });
@@ -177,7 +209,7 @@ export function Dashboard({
           isChecking={isChecking}
           onRecheck={recheck}
           onRequestMedia={() => {
-            // Fire the OS mic + speech prompts, then re-probe so the panel
+            // Fire the OS camera + mic + speech prompts, then re-probe so the panel
             // reflects the new grants.
             void invoke("request_media_permissions").finally(() => recheck());
           }}
@@ -189,8 +221,12 @@ export function Dashboard({
           updateConfig={updateConfig}
           resetConfig={resetConfig}
         />
-        <TranscriptPanel createStream={createStream} onFinalTranscript={handleFinalTranscript} />
-        <SessionsPanel session={session} />
+        <TranscriptPanel
+          createStream={createStream}
+          headPointer={config.headPointer}
+          onFinalTranscript={handleFinalTranscript}
+        />
+        <SessionsPanel session={session} auditEvents={auditEvents} />
         <ClarificationPanel request={clarification} />
         <PlanPreviewPanel
           intent={intent}

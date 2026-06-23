@@ -1,6 +1,9 @@
 import type { ActionPlan, ActionStep, CuaActionRequest } from "@handsoff/contracts";
 
 export function translateStep(step: ActionStep): CuaActionRequest {
+  if (step.kind === "launch_app") {
+    return { kind: "launch_app", appName: step.appName, bundleId: step.bundleId };
+  }
   if (step.kind === "inspect_window_state") {
     return { kind: "get_window_state", target: step.target };
   }
