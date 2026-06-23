@@ -26,3 +26,6 @@ Thumbs.db
 
 # Compound-engineering docs (plans, brainstorms, solutions) stay local-only
 docs/
+
+# Local tooling
+.gstack/
