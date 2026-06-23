@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { CameraPanel } from "../../features/camera/CameraPanel";
 import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
+import { DiagnosticsScreen } from "../../features/diagnostics/DiagnosticsScreen";
 import { deriveVoiceState } from "../../features/overlay/overlay-signal";
 import { emitOverlayPointer, emitOverlayVoice } from "../../features/overlay/tauri-overlay";
 import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnboarding";
@@ -63,6 +64,28 @@ function createRealtimeStream(): SttStream {
       return result.token;
     },
   });
+}
+
+// Assemble the per-frame pointing evidence for the diagnostics board from the live
+// signals the dashboard holds: the locked gesture referent (#35) and the head/gaze
+// candidates (#95) — the same shape the controller fuses. (Continuous per-frame emit
+// is a follow-up; this reflects the latest gesture lock + head stream.)
+function buildDiagnosticsEvidence(
+  gesture: PointingEvidence | null,
+  headPointing: HeadPointingSnapshot | undefined,
+): PointingEvidence[] {
+  const evidence: PointingEvidence[] = [];
+  if (gesture) evidence.push(gesture);
+  for (const candidate of headPointing?.candidates ?? []) {
+    evidence.push({
+      source: "head",
+      confidence: candidate.score,
+      strategy: "head-neighborhood",
+      surface: candidate.surface,
+      ...(headPointing?.point ? { cursor: headPointing.point } : {}),
+    });
+  }
+  return evidence;
 }
 
 const HEAD_POINTING_TAURI = {
@@ -189,6 +212,11 @@ export function Dashboard({
     setOverlayShown((shown) => !shown);
   };
 
+  // Toggle the diagnostics mixing board: every model's signal separately (camera +
+  // meter + solo/mute) AND fused (the master bus + the drag), to spot the noise source.
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const diagnosticsEvidence = buildDiagnosticsEvidence(gestureEvidence.current, headPointing);
+
   return (
     <main className="dashboard">
       {showOnboarding && (
@@ -209,10 +237,20 @@ export function Dashboard({
           <h1 className="dashboard__brand">{APP_NAME}</h1>
           <p className="dashboard__tagline">Point. Speak. Supervise your agents.</p>
         </div>
-        <button type="button" className="dashboard__overlay-toggle" onClick={toggleOverlay}>
-          {overlayShown ? "Hide screen overlay" : "Show on screen"}
-        </button>
+        <div className="dashboard__header-actions">
+          <button
+            type="button"
+            className="dashboard__diagnostics-toggle"
+            onClick={() => setShowDiagnostics((shown) => !shown)}
+          >
+            {showDiagnostics ? "Hide diagnostics" : "Diagnostics"}
+          </button>
+          <button type="button" className="dashboard__overlay-toggle" onClick={toggleOverlay}>
+            {overlayShown ? "Hide screen overlay" : "Show on screen"}
+          </button>
+        </div>
       </header>
+      {showDiagnostics && <DiagnosticsScreen evidence={diagnosticsEvidence} />}
       <div className="dashboard__panels">
         <CameraPanel
           onGestureEvidence={(evidence) => {
