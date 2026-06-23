@@ -33,18 +33,22 @@ export function ClarificationPanel({ request, onPick, onCancel }: ClarificationP
               <span className="clarification__confidence">
                 {Math.round(option.confidence * 100)}%
               </span>
-              <button type="button" onClick={() => onPick?.(option.targetId)}>
-                Pick
-              </button>
+              {onPick ? (
+                <button type="button" onClick={() => onPick(option.targetId)}>
+                  Pick
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
       ) : null}
-      <div className="clarification__actions">
-        <button type="button" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
+      {onCancel ? (
+        <div className="clarification__actions">
+          <button type="button" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

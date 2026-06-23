@@ -4,6 +4,7 @@ import { createAssemblyAiStream, createOnDeviceSttStream } from "@handsoff/speec
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
 import { ReadinessPanel } from "../../features/readiness/ReadinessPanel";
@@ -76,6 +77,10 @@ export function Dashboard({
       : createUnavailableCuaDriver());
   const { intent, runResult, session, approve, reject, handleFinalTranscript } =
     useVoiceCuaController({ driver, now, targetResolveDelayMs });
+  // The structured clarification prompt (#36) when the engine won't act blind.
+  // Display-first; interactive pick→re-resolve needs a controller round-trip (follow-up).
+  const clarification =
+    intent?.status === "clarification_required" ? (intent.clarification ?? null) : null;
 
   return (
     <main className="dashboard">
@@ -104,6 +109,7 @@ export function Dashboard({
         />
         <TranscriptPanel createStream={createStream} onFinalTranscript={handleFinalTranscript} />
         <SessionsPanel session={session} />
+        <ClarificationPanel request={clarification} />
         <PlanPreviewPanel
           intent={intent}
           runResult={runResult}

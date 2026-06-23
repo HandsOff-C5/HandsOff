@@ -54,4 +54,11 @@ describe("ClarificationPanel", () => {
     expect(screen.getByText(/no target found/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pick" })).not.toBeInTheDocument();
   });
+
+  it("is display-only when no handlers are provided (Pick/Cancel hidden)", () => {
+    render(<ClarificationPanel request={ambiguous} />);
+    expect(screen.getByText("Slack — #general")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pick" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
 });
