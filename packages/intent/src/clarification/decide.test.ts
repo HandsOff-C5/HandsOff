@@ -7,11 +7,11 @@ import {
   type ClarificationCandidate,
 } from "./decide";
 
-const cand = (
-  targetId: string,
-  confidence: number,
-  label = targetId,
-): ClarificationCandidate => ({ targetId, label, confidence });
+const cand = (targetId: string, confidence: number, label = targetId): ClarificationCandidate => ({
+  targetId,
+  label,
+  confidence,
+});
 
 const policy = { minConfidence: 0.6, ambiguityMargin: 0.1 };
 
