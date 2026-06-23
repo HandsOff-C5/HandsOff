@@ -26,8 +26,8 @@ describe("planPermissionOnboarding", () => {
       ["camera", "request"],
       ["microphone", "request"],
       ["speech-recognition", "request"],
+      ["screen-recording", "request"],
       ["accessibility", "open-settings"],
-      ["screen-recording", "open-settings"],
     ]);
   });
 
@@ -35,8 +35,13 @@ describe("planPermissionOnboarding", () => {
     const plan = planPermissionOnboarding(report({}));
     expect(plan.needsOnboarding).toBe(true);
     expect(plan.allReady).toBe(false);
-    expect(plan.requestablePending).toEqual(["camera", "microphone", "speech-recognition"]);
-    expect(plan.manualPending).toEqual(["accessibility", "screen-recording"]);
+    expect(plan.requestablePending).toEqual([
+      "camera",
+      "microphone",
+      "speech-recognition",
+      "screen-recording",
+    ]);
+    expect(plan.manualPending).toEqual(["accessibility"]);
   });
 
   it("is fully ready when every onboarding permission is granted", () => {
@@ -58,7 +63,11 @@ describe("planPermissionOnboarding", () => {
   it("drops a granted capability from pending and marks its step done", () => {
     const plan = planPermissionOnboarding(report({ camera: "granted" }));
     expect(plan.steps.find((s) => s.capability.id === "camera")?.done).toBe(true);
-    expect(plan.requestablePending).toEqual(["microphone", "speech-recognition"]);
+    expect(plan.requestablePending).toEqual([
+      "microphone",
+      "speech-recognition",
+      "screen-recording",
+    ]);
     expect(plan.needsOnboarding).toBe(true);
   });
 });

@@ -124,6 +124,15 @@ export function Dashboard({
       // Backend unavailable — re-check keeps the last good state.
     }
   };
+  const requestScreenRecording = async () => {
+    try {
+      // Prompts AND registers HandsOff in the Screen Recording list so it's
+      // toggleable (granting screen recording usually needs an app relaunch).
+      await invoke("request_screen_recording");
+    } catch {
+      // Backend unavailable — re-check keeps the last good state.
+    }
+  };
   const openPrivacySettings = (pane: CapabilityId) =>
     void invoke("open_privacy_settings", { pane });
 
@@ -135,6 +144,7 @@ export function Dashboard({
           isChecking={isChecking}
           onRequestCamera={requestCamera}
           onRequestMedia={requestMedia}
+          onRequestScreenRecording={requestScreenRecording}
           onRecheck={recheck}
           onOpenSettings={openPrivacySettings}
           onDismiss={() => setOnboardingDismissed(true)}

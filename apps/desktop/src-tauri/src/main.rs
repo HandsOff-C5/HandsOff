@@ -27,6 +27,7 @@ fn main() {
             commands::cua::cua_type_text,
             commands::cua::cua_set_value,
             commands::permissions::request_media_permissions,
+            commands::permissions::request_screen_recording,
             commands::permissions::open_privacy_settings
         ])
         .run(tauri::generate_context!())

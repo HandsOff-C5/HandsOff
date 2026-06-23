@@ -29,6 +29,7 @@ describe("PermissionsOnboarding", () => {
         isChecking={false}
         onRequestCamera={asyncNoop}
         onRequestMedia={asyncNoop}
+        onRequestScreenRecording={asyncNoop}
         onRecheck={noop}
         onOpenSettings={noop}
         onDismiss={noop}
@@ -42,8 +43,8 @@ describe("PermissionsOnboarding", () => {
       "Camera",
       "Microphone",
       "Speech Recognition",
-      "Accessibility",
       "Screen Recording",
+      "Accessibility",
     ]);
   });
 
@@ -57,21 +58,25 @@ describe("PermissionsOnboarding", () => {
       calls.push("media");
       return Promise.resolve();
     });
+    const onRequestScreenRecording = vi.fn(() => {
+      calls.push("screen");
+      return Promise.resolve();
+    });
     render(
       <PermissionsOnboarding
         report={report({})}
         isChecking={false}
         onRequestCamera={onRequestCamera}
         onRequestMedia={onRequestMedia}
+        onRequestScreenRecording={onRequestScreenRecording}
         onRecheck={noop}
         onOpenSettings={noop}
         onDismiss={noop}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /grant/i }));
-    await waitFor(() => expect(onRequestMedia).toHaveBeenCalled());
-    expect(onRequestCamera).toHaveBeenCalled();
-    expect(calls).toEqual(["camera", "media"]);
+    await waitFor(() => expect(onRequestScreenRecording).toHaveBeenCalled());
+    expect(calls).toEqual(["camera", "media", "screen"]);
   });
 
   it("deep-links a manual capability to System Settings", () => {
@@ -82,6 +87,7 @@ describe("PermissionsOnboarding", () => {
         isChecking={false}
         onRequestCamera={asyncNoop}
         onRequestMedia={asyncNoop}
+        onRequestScreenRecording={asyncNoop}
         onRecheck={noop}
         onOpenSettings={onOpenSettings}
         onDismiss={noop}
@@ -105,6 +111,7 @@ describe("PermissionsOnboarding", () => {
         isChecking={false}
         onRequestCamera={asyncNoop}
         onRequestMedia={asyncNoop}
+        onRequestScreenRecording={asyncNoop}
         onRecheck={noop}
         onOpenSettings={noop}
         onDismiss={onDismiss}

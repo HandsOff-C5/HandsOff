@@ -13,12 +13,14 @@ export const REQUESTABLE_PERMISSION_IDS = [
   "camera",
   "microphone",
   "speech-recognition",
-] as const satisfies readonly CapabilityId[];
-
-export const MANUAL_PERMISSION_IDS = [
-  "accessibility",
   "screen-recording",
 ] as const satisfies readonly CapabilityId[];
+
+// Accessibility is the only grant macOS won't prompt for programmatically — it
+// must be toggled in System Settings (an app can't request it), so onboarding
+// deep-links there and re-checks. Screen Recording IS requestable
+// (CGRequestScreenCaptureAccess), which also registers the app in its list.
+export const MANUAL_PERMISSION_IDS = ["accessibility"] as const satisfies readonly CapabilityId[];
 
 // The capabilities the onboarding covers, in display order (requestable first so
 // the user can clear them with one "Grant" action before the manual toggles).

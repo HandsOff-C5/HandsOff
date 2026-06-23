@@ -104,6 +104,31 @@ mod tests {
     }
 }
 
+/// Trigger the macOS Screen Recording prompt (#25/#22). Unlike the read-only
+/// `CGPreflightScreenCaptureAccess` the readiness probe uses, this REQUESTS access:
+/// the first call shows the system prompt AND registers HandsOff in the Screen
+/// Recording list so the user can toggle it on (granting screen recording then
+/// usually needs an app relaunch). Returns whether access is already granted.
+#[tauri::command]
+pub async fn request_screen_recording(_app: AppHandle) -> Result<bool, String> {
+    Ok(request_screen_capture_access())
+}
+
+#[cfg(target_os = "macos")]
+fn request_screen_capture_access() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGRequestScreenCaptureAccess() -> bool;
+    }
+    // Safety: no arguments; returns a C bool. Available on macOS 10.15+.
+    unsafe { CGRequestScreenCaptureAccess() }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn request_screen_capture_access() -> bool {
+    false
+}
+
 /// Open the System Settings privacy pane for a capability so the user can grant
 /// or revoke it. The only reliable cross-version path is the `x-apple` URL.
 #[tauri::command]

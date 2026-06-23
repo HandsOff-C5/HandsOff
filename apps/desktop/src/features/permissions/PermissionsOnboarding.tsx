@@ -9,6 +9,8 @@ interface PermissionsOnboardingProps {
   onRequestCamera: () => Promise<void>;
   // Fire the OS microphone + speech-recognition prompts (one app command).
   onRequestMedia: () => Promise<void>;
+  // Fire the OS Screen Recording prompt (also registers the app in its list).
+  onRequestScreenRecording: () => Promise<void>;
   // Re-probe permission state after the user grants something.
   onRecheck: () => void;
   // Deep-link the System Settings pane for a manual-only capability.
@@ -28,6 +30,7 @@ export function PermissionsOnboarding({
   isChecking,
   onRequestCamera,
   onRequestMedia,
+  onRequestScreenRecording,
   onRecheck,
   onOpenSettings,
   onDismiss,
@@ -41,6 +44,7 @@ export function PermissionsOnboarding({
       // Sequential so each OS prompt is answered before the next appears.
       await onRequestCamera();
       await onRequestMedia();
+      await onRequestScreenRecording();
     } finally {
       setIsGranting(false);
       onRecheck();

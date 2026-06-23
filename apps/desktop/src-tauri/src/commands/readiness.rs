@@ -132,6 +132,45 @@ fn microphone_state() -> &'static str {
     }
 }
 
+// Camera authorization (#25), read without prompting via
+// `AVCaptureDevice.authorizationStatusForMediaType:` with `AVMediaTypeVideo`.
+// Same AVAuthorizationStatus ordering as the microphone probe above.
+#[cfg(target_os = "macos")]
+fn camera_state() -> &'static str {
+    use std::ffi::{c_char, c_void};
+
+    #[link(name = "objc")]
+    extern "C" {
+        fn objc_getClass(name: *const c_char) -> *const c_void;
+        fn sel_registerName(name: *const c_char) -> *const c_void;
+        fn objc_msgSend();
+    }
+    #[link(name = "AVFoundation", kind = "framework")]
+    extern "C" {
+        static AVMediaTypeVideo: *const c_void;
+    }
+
+    // Safety: identical contract to `microphone_state`, with the video media type.
+    let status = unsafe {
+        let class = objc_getClass(c"AVCaptureDevice".as_ptr());
+        if class.is_null() {
+            return "unknown";
+        }
+        let selector = sel_registerName(c"authorizationStatusForMediaType:".as_ptr());
+        let msg_send: extern "C" fn(*const c_void, *const c_void, *const c_void) -> isize =
+            std::mem::transmute(objc_msgSend as *const c_void);
+        msg_send(class, selector, AVMediaTypeVideo)
+    };
+
+    match status {
+        0 => "not-determined",
+        1 => "restricted",
+        2 => "denied",
+        3 => "granted",
+        _ => "unknown",
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 fn accessibility_state() -> &'static str {
     "unknown"
@@ -139,6 +178,11 @@ fn accessibility_state() -> &'static str {
 
 #[cfg(not(target_os = "macos"))]
 fn microphone_state() -> &'static str {
+    "unknown"
+}
+
+#[cfg(not(target_os = "macos"))]
+fn camera_state() -> &'static str {
     "unknown"
 }
 
@@ -157,7 +201,7 @@ fn speech_recognition_state() -> &'static str {
 pub async fn readiness_probe(_app: AppHandle) -> Value {
     json!({
         "capabilities": [
-            { "id": "camera", "kind": "permission", "state": "unknown" },
+            { "id": "camera", "kind": "permission", "state": camera_state() },
             { "id": "microphone", "kind": "permission", "state": microphone_state() },
             { "id": "speech-recognition", "kind": "permission", "state": speech_recognition_state() },
             { "id": "cua", "kind": "daemon", "state": "unknown" },
