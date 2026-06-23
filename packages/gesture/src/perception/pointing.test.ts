@@ -5,7 +5,12 @@ import { fileURLToPath } from "node:url";
 import { type Hand, type LandmarkFrame } from "@handsoff/contracts";
 import { describe, expect, it } from "vitest";
 
-import { pointingReliability, pointingSignal, pointingSignalFromFrame } from "./pointing";
+import {
+  isPointingPose,
+  pointingReliability,
+  pointingSignal,
+  pointingSignalFromFrame,
+} from "./pointing";
 
 // A hand whose only meaningful points are wrist (0), index MCP (5), index tip (8);
 // the rest are filler so the contract's 21-landmark length holds.
@@ -68,6 +73,38 @@ describe("pointingReliability (single-camera occlusion seam → fusion weight)",
     const hand = handPointing();
     hand.score = 0.3;
     expect(pointingReliability(hand)).toBeCloseTo(0.3, 6);
+  });
+});
+
+describe("isPointingPose (only a deliberate index point should arm a lock, #25)", () => {
+  // Fingers point up from a wrist at the bottom; a landmark is "extended" when its tip
+  // is farther from the wrist than its PIP joint, "curled" when it folds back closer.
+  // Only the index (6→8) and middle (10→12) finger joints are read; the rest are filler.
+  const hand = (
+    indexTipY: number,
+    indexPipY: number,
+    middleTipY: number,
+    middlePipY: number,
+  ): Hand => {
+    const landmarks = Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }));
+    landmarks[0] = { x: 0.5, y: 0.9, z: 0, visibility: 1 }; // wrist (bottom)
+    landmarks[6] = { x: 0.5, y: indexPipY, z: 0, visibility: 1 }; // index PIP
+    landmarks[8] = { x: 0.5, y: indexTipY, z: 0, visibility: 1 }; // index TIP
+    landmarks[10] = { x: 0.5, y: middlePipY, z: 0, visibility: 1 }; // middle PIP
+    landmarks[12] = { x: 0.5, y: middleTipY, z: 0, visibility: 1 }; // middle TIP
+    return { landmarks, handedness: "Right", score: 0.9 };
+  };
+
+  it("is true for an index point: index extended, middle curled", () => {
+    expect(isPointingPose(hand(0.4, 0.6, 0.7, 0.55))).toBe(true);
+  });
+
+  it("is false for an open palm: index AND middle extended", () => {
+    expect(isPointingPose(hand(0.4, 0.6, 0.35, 0.55))).toBe(false);
+  });
+
+  it("is false for a fist: index curled", () => {
+    expect(isPointingPose(hand(0.7, 0.6, 0.7, 0.55))).toBe(false);
   });
 });
 
