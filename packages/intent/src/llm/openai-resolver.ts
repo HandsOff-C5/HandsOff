@@ -44,6 +44,12 @@ export interface OpenAiIntentResolverOptions {
 
 const DEFAULT_MODEL = "gpt-4o-mini";
 
+interface NormalizedParsedIntent {
+  readonly status: OpenAiResolvedIntent["status"];
+  readonly action_plan?: unknown;
+  readonly [key: string]: unknown;
+}
+
 export async function resolveWithOpenAi(
   input: IntentInput,
   options: OpenAiIntentResolverOptions = {},
@@ -117,10 +123,7 @@ function validateParsedIntent(
   input: IntentInput,
   createdAt: string,
 ): ResolvedIntent {
-  const normalized = normalizeParsedIntent(parsed, input, createdAt) as {
-    readonly status?: unknown;
-    readonly action_plan?: unknown;
-  };
+  const normalized = normalizeParsedIntent(parsed, input, createdAt);
   if (
     normalized.status === "ready" &&
     !actionPlanSchema.safeParse(normalized.action_plan).success
@@ -151,7 +154,7 @@ function normalizeParsedIntent(
   parsed: OpenAiResolvedIntent,
   input: IntentInput,
   createdAt: string,
-): unknown {
+): NormalizedParsedIntent {
   if (parsed.status !== "ready") {
     return {
       status: parsed.status,
@@ -191,7 +194,7 @@ function normalizeActionPlan(plan: OpenAiResolvedIntent["action_plan"]): ActionP
     requires_approval: plan.requires_approval,
     target_agent: plan.target_agent,
     action_plan: plan.action_plan.map(normalizeStep),
-  } as ActionPlan;
+  };
 }
 
 type OpenAiActionStep = OpenAiActionPlan["action_plan"][number];

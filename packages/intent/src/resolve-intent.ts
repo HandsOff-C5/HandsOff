@@ -14,7 +14,7 @@ export async function resolveIntent(
   input: IntentInput,
   options: ResolveIntentOptions = {},
 ): Promise<ResolvedIntent> {
-  return options.resolver === "rule"
-    ? fuseIntent(input, options)
-    : resolveWithOpenAi(input, options);
+  return options.resolver === "llm"
+    ? resolveWithOpenAi(input, options)
+    : fuseIntent(input, options);
 }

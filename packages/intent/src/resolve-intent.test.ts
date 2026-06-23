@@ -55,7 +55,21 @@ describe("resolveIntent", () => {
     });
   });
 
-  it("defaults to the llm resolver seam", async () => {
+  it("defaults to the rule resolver so LLM calls stay explicit", async () => {
+    await expect(
+      resolveIntent(input(), {
+        intentId: "intent-rule",
+        planId: "plan-rule",
+        createdAt: "2026-06-22T12:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      status: "ready",
+      id: "intent-rule",
+      action_plan: { id: "plan-rule", action_plan: [{ kind: "click_element" }] },
+    });
+  });
+
+  it("routes to the llm resolver seam when requested", async () => {
     const client: OpenAiIntentClient = {
       chat: {
         completions: {
@@ -86,7 +100,7 @@ describe("resolveIntent", () => {
       },
     };
 
-    await expect(resolveIntent(input(), { client })).resolves.toMatchObject({
+    await expect(resolveIntent(input(), { resolver: "llm", client })).resolves.toMatchObject({
       status: "blocked",
       reason: "Need a clearer target",
     });

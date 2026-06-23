@@ -122,6 +122,54 @@
     ]
   },
   {
+    "name": "cua driver windows are excluded from stored candidate output",
+    "point": { "x": 10, "y": 10 },
+    "radius": 200,
+    "windows": [
+      {
+        "surface": {
+          "id": "driver:1",
+          "title": "CUA Driver Overlay",
+          "app": "CUA Driver",
+          "pid": 10,
+          "windowId": 1,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 0, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 10
+      },
+      {
+        "surface": {
+          "id": "codex:2",
+          "title": "Codex",
+          "app": "Codex",
+          "pid": 11,
+          "windowId": 2,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "bounds": { "x": 120, "y": 0, "width": 100, "height": 100 },
+        "zIndex": 1
+      }
+    ],
+    "expected": [
+      {
+        "surface": {
+          "id": "codex:2",
+          "title": "Codex",
+          "app": "Codex",
+          "pid": 11,
+          "windowId": 2,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "score": 0.45,
+        "distance": 110
+      }
+    ]
+  },
+  {
     "name": "empty window list returns no candidates",
     "point": { "x": 0, "y": 0 },
     "radius": 240,
