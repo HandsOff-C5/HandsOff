@@ -1,8 +1,10 @@
 import AppKit
+import ApplicationServices
 import AVFoundation
 import CoreGraphics
 import Foundation
 import ImageIO
+import IOKit.hid
 import QuartzCore
 import Vision
 
@@ -38,6 +40,64 @@ private enum HotkeyDecision: Equatable {
     case none
     case start
     case stop
+}
+
+private struct HotkeyTapRetryState: Equatable {
+    var armed = false
+    var retryScheduled = false
+}
+
+private enum HotkeyTapRetryAction: Equatable {
+    case none
+    case armed
+    case blocked(scheduleRetry: Bool)
+}
+
+private func decideHotkeyTapRetry(
+    installed: Bool,
+    state: HotkeyTapRetryState
+) -> (HotkeyTapRetryState, HotkeyTapRetryAction) {
+    guard !state.armed else { return (state, .none) }
+    if installed {
+        return (HotkeyTapRetryState(armed: true, retryScheduled: false), .armed)
+    }
+    var next = state
+    let shouldSchedule = !next.retryScheduled
+    next.retryScheduled = true
+    return (next, .blocked(scheduleRetry: shouldSchedule))
+}
+
+private struct HotkeyTapPermissionSnapshot {
+    let inputMonitoringGranted: Bool
+    let accessibilityGranted: Bool
+}
+
+private func requestHotkeyTapPermissions() -> HotkeyTapPermissionSnapshot {
+    let inputMonitoringGranted = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+    let accessibilityGranted = AXIsProcessTrustedWithOptions(options)
+    return HotkeyTapPermissionSnapshot(
+        inputMonitoringGranted: inputMonitoringGranted,
+        accessibilityGranted: accessibilityGranted
+    )
+}
+
+private func currentHotkeyTapPermissions() -> HotkeyTapPermissionSnapshot {
+    HotkeyTapPermissionSnapshot(
+        inputMonitoringGranted: IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted,
+        accessibilityGranted: AXIsProcessTrusted()
+    )
+}
+
+private func permissionStatus(_ granted: Bool) -> String {
+    granted ? "granted" : "pending"
+}
+
+private func logHotkeyTapPermissions(_ permissions: HotkeyTapPermissionSnapshot) {
+    fputs(
+        "head-track: permissions: Input Monitoring \(permissionStatus(permissions.inputMonitoringGranted)), Accessibility \(permissionStatus(permissions.accessibilityGranted))\n",
+        stderr
+    )
 }
 
 private func clamp(_ value: Double, _ range: ClosedRange<Double>) -> Double {
@@ -509,6 +569,56 @@ private final class HotkeyTap {
     }
 }
 
+private final class HotkeyTapSupervisor {
+    private let hotkeyTap: HotkeyTap
+    private let writer: EventWriter
+    private let retryInterval: TimeInterval = 1.5
+    private var retryState = HotkeyTapRetryState()
+    private var retryTimer: Timer?
+
+    init(hotkeyTap: HotkeyTap, writer: EventWriter) {
+        self.hotkeyTap = hotkeyTap
+        self.writer = writer
+    }
+
+    func start() {
+        logHotkeyTapPermissions(requestHotkeyTapPermissions())
+        attemptInstall()
+    }
+
+    private func attemptInstall() {
+        guard !retryState.armed else { return }
+        let result = decideHotkeyTapRetry(installed: hotkeyTap.start(), state: retryState)
+        retryState = result.0
+
+        switch result.1 {
+        case .armed:
+            retryTimer?.invalidate()
+            retryTimer = nil
+            fputs("head-track: armed Right Option + ? trigger\n", stderr)
+        case .blocked(let scheduleRetry):
+            reportBlocked()
+            if scheduleRetry {
+                retryTimer = Timer.scheduledTimer(withTimeInterval: retryInterval, repeats: true) { [weak self] _ in
+                    self?.attemptInstall()
+                }
+            }
+        case .none:
+            break
+        }
+    }
+
+    private func reportBlocked() {
+        let permissions = currentHotkeyTapPermissions()
+        let message = "Unable to install CGEventTap; grant Accessibility and Input Monitoring permissions"
+        writer.error(message)
+        fputs(
+            "head-track: \(message) (Input Monitoring \(permissionStatus(permissions.inputMonitoringGranted)), Accessibility \(permissionStatus(permissions.accessibilityGranted)))\n",
+            stderr
+        )
+    }
+}
+
 private func eventMask(_ types: [CGEventType]) -> CGEventMask {
     types.reduce(CGEventMask(0)) { partial, type in
         partial | (CGEventMask(1) << Int(type.rawValue))
@@ -567,6 +677,15 @@ private func runSelfTest() {
     )
     expect(questionWithoutRightOption.1 == .none, "question mark without right option does not start")
 
+    var retryState = HotkeyTapRetryState()
+    var retryAction: HotkeyTapRetryAction
+    (retryState, retryAction) = decideHotkeyTapRetry(installed: false, state: retryState)
+    expect(retryAction == .blocked(scheduleRetry: true), "blocked tap keeps process alive and schedules retry")
+    (retryState, retryAction) = decideHotkeyTapRetry(installed: false, state: retryState)
+    expect(retryAction == .blocked(scheduleRetry: false), "repeated blocked tap emits recoverable error without duplicate timer")
+    (retryState, retryAction) = decideHotkeyTapRetry(installed: true, state: retryState)
+    expect(retryAction == .armed, "later successful tap install arms without relaunch")
+
     expectEvent(startEvent(ts: 123), kind: "start", keys: ["kind", "ts"])
     expectEvent(stopEvent(ts: 123), kind: "stop", keys: ["kind", "ts"])
     expectEvent(errorEvent(message: "boom", ts: 123), kind: "error", keys: ["kind", "message", "ts"])
@@ -587,15 +706,8 @@ if CommandLine.arguments.contains("--selftest") {
 private let writer = EventWriter()
 private let tracker = HeadTracker(writer: writer)
 private let hotkeyTap = HotkeyTap(tracker: tracker)
+private let hotkeySupervisor = HotkeyTapSupervisor(hotkeyTap: hotkeyTap, writer: writer)
 
 NSApplication.shared.setActivationPolicy(.accessory)
-
-if !hotkeyTap.start() {
-    let message = "Unable to install CGEventTap; grant Accessibility and Input Monitoring permissions"
-    writer.error(message)
-    fputs("head-track: \(message)\n", stderr)
-    exit(2)
-}
-
-fputs("head-track: armed Right Option + ? trigger\n", stderr)
+hotkeySupervisor.start()
 RunLoop.main.run()
