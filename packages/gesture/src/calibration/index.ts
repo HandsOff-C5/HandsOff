@@ -1,11 +1,15 @@
 export {
+  applyHomography,
   applyTransform,
   calibrationQualityFromResidual,
   calibrationResidual,
   fitAffine,
+  fitHomography,
+  homographyResidual,
   toCandidate,
   type AffineTransform,
   type CalibrationPair,
+  type Homography,
   type Point,
 } from "./calibrate";
 export {

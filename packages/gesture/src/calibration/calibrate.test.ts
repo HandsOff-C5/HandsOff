@@ -6,12 +6,16 @@ import { type CalibrationQuality, PointingCandidate, type Surface } from "@hands
 import { describe, expect, it } from "vitest";
 
 import {
+  applyHomography,
   applyTransform,
   type AffineTransform,
   calibrationQualityFromResidual,
   calibrationResidual,
   type CalibrationPair,
   fitAffine,
+  fitHomography,
+  type Homography,
+  homographyResidual,
   type Point,
   toCandidate,
 } from "./calibrate";
@@ -55,6 +59,51 @@ describe("affine calibration fit", () => {
 
   it("throws below the affine minimum of 3 correspondences", () => {
     expect(() => fitAffine(exactPairs().slice(0, 2))).toThrow();
+  });
+});
+
+// A known homography with a real perspective term (h6/h7 ≠ 0) — the warp an affine map
+// CANNOT represent, so it's the case that justifies the upgrade. Last entry h8 fixed to 1.
+const KNOWN_H: Homography = [1.2, -0.3, 40, 0.25, 0.9, -15, 0.0005, -0.0003, 1];
+
+const applyH = (h: Homography, [x, y]: Point): Point => {
+  const w = h[6] * x + h[7] * y + h[8];
+  return [(h[0] * x + h[1] * y + h[2]) / w, (h[3] * x + h[4] * y + h[5]) / w];
+};
+
+const exactHomographyPairs = (): CalibrationPair[] =>
+  RAW.map((raw) => ({ raw, target: applyH(KNOWN_H, raw) }));
+
+describe("homography calibration fit (perspective upgrade, A2)", () => {
+  it("maps a point through the homography exactly (applyHomography)", () => {
+    // Matches the perspective-divide reference, including the projective w-divide.
+    expect(applyHomography(KNOWN_H, [10, 20])).toEqual(applyH(KNOWN_H, [10, 20]));
+  });
+
+  it("recovers a KNOWN homography (up to scale) from exact correspondences", () => {
+    const fit = fitHomography(exactHomographyPairs());
+    // The DLT is scale-free; we pin h8=1, so the recovered entries match KNOWN_H directly.
+    for (let i = 0; i < 9; i++) {
+      expect(fit[i]).toBeCloseTo(KNOWN_H[i], 6);
+    }
+  });
+
+  it("fits a perspective warp an affine model cannot, with near-zero residual", () => {
+    const pairs = exactHomographyPairs();
+    const h = fitHomography(pairs);
+    // Homography nails the perspective points; the best affine fit leaves real residual.
+    expect(homographyResidual(h, pairs)).toBeCloseTo(0, 6);
+    expect(calibrationResidual(fitAffine(pairs), pairs)).toBeGreaterThan(1);
+  });
+
+  it("reports a positive residual when a target is perturbed off the fit", () => {
+    const pairs = exactHomographyPairs();
+    pairs[2] = { raw: pairs[2].raw, target: [pairs[2].target[0] + 30, pairs[2].target[1] - 30] };
+    expect(homographyResidual(fitHomography(pairs), pairs)).toBeGreaterThan(0);
+  });
+
+  it("throws below the homography minimum of 4 correspondences", () => {
+    expect(() => fitHomography(exactHomographyPairs().slice(0, 3))).toThrow();
   });
 });
 
