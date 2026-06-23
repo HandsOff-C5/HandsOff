@@ -5,6 +5,7 @@ export {
   type RawCategory,
 } from "./perception/parse";
 export {
+  pointingReliability,
   pointingSignal,
   pointingSignalFromFrame,
   type PointingSignalOptions,

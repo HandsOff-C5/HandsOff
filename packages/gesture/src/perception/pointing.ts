@@ -29,6 +29,25 @@ const xy = (hand: Hand, index: number): Point => {
   return [l.x, l.y];
 };
 
+const visibilityOf = (hand: Hand, index: number): number => {
+  const l = hand.landmarks[index];
+  if (!l) throw new Error(`pointingReliability: missing landmark ${index}`);
+  return l.visibility;
+};
+
+// How trustworthy this frame's pointing ray is, in [0,1] — the gesture lane's own
+// reliability, the weight a downstream sensor-fusion stage should give the hand channel
+// (the seam to gaze/voice; FINAL_PLANNING late-fusion A = w_g·G + w_e·E). It is the
+// detection score scaled by the LEAST-visible of the ray's two endpoints (anchor + index
+// tip): with one camera, an occluded endpoint makes the ray DIRECTION unreliable even
+// when the hand is detected confidently, so the weight must fall and fusion lean elsewhere.
+export const pointingReliability = (hand: Hand, options: PointingSignalOptions = {}): number => {
+  const { anchor = "wrist" } = options;
+  const anchorVis = visibilityOf(hand, anchor === "wrist" ? WRIST : INDEX_FINGER_MCP);
+  const tipVis = visibilityOf(hand, INDEX_FINGER_TIP);
+  return hand.score * Math.min(anchorVis, tipVis);
+};
+
 // Derive the raw pointing signal from one hand.
 export const pointingSignal = (hand: Hand, options: PointingSignalOptions = {}): Point => {
   const { anchor = "wrist", extend = 0 } = options;

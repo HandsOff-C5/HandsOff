@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { type Hand, type LandmarkFrame } from "@handsoff/contracts";
 import { describe, expect, it } from "vitest";
 
-import { pointingSignal, pointingSignalFromFrame } from "./pointing";
+import { pointingReliability, pointingSignal, pointingSignalFromFrame } from "./pointing";
 
 // A hand whose only meaningful points are wrist (0), index MCP (5), index tip (8);
 // the rest are filler so the contract's 21-landmark length holds.
@@ -34,6 +34,40 @@ describe("pointingSignal", () => {
     const [x, y] = pointingSignal(handPointing(), { anchor: "indexMcp", extend: 1 });
     expect(x).toBeCloseTo(0.6, 6);
     expect(y).toBeCloseTo(0.4, 6);
+  });
+});
+
+describe("pointingReliability (single-camera occlusion seam → fusion weight)", () => {
+  it("is the detection score when the ray endpoints are fully visible", () => {
+    // score 0.9, wrist + tip visibility 1 → 0.9.
+    expect(pointingReliability(handPointing())).toBeCloseTo(0.9, 6);
+  });
+
+  it("falls when the index tip is occluded, even at high detection score", () => {
+    const hand = handPointing();
+    hand.landmarks[8] = { ...hand.landmarks[8]!, visibility: 0.2 };
+    // 0.9 × min(1 wrist, 0.2 tip) = 0.18.
+    expect(pointingReliability(hand)).toBeCloseTo(0.18, 6);
+  });
+
+  it("falls when the anchor is occluded — the ray is only as good as its worst endpoint", () => {
+    const hand = handPointing();
+    hand.landmarks[0] = { ...hand.landmarks[0]!, visibility: 0.1 }; // wrist occluded
+    expect(pointingReliability(hand, { anchor: "wrist" })).toBeCloseTo(0.09, 6);
+  });
+
+  it("reads the index-MCP visibility when that is the chosen anchor", () => {
+    const hand = handPointing();
+    hand.landmarks[0] = { ...hand.landmarks[0]!, visibility: 0.1 }; // wrist occluded but unused
+    hand.landmarks[5] = { ...hand.landmarks[5]!, visibility: 0.5 }; // MCP partially occluded
+    // anchor=indexMcp ignores the wrist: 0.9 × min(0.5 mcp, 1 tip) = 0.45.
+    expect(pointingReliability(hand, { anchor: "indexMcp" })).toBeCloseTo(0.45, 6);
+  });
+
+  it("is capped by a low detection score even with full visibility", () => {
+    const hand = handPointing();
+    hand.score = 0.3;
+    expect(pointingReliability(hand)).toBeCloseTo(0.3, 6);
   });
 });
 
