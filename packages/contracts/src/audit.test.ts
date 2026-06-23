@@ -117,4 +117,57 @@ describe("supervision audit event contract", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("round-trips a CUA agent action event (pixel-level, no screenshot in the trail)", () => {
+    const event = {
+      kind: "cua_agent_action",
+      sessionId: "session-1",
+      actionId: "action-1",
+      stepId: "cua-step-1",
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      action: { action: "left_click", coordinate: [12, 34] },
+      risk: "mutating",
+      status: "ran",
+    };
+
+    const result = safeParseSupervisionAuditEvent(event);
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data).toEqual(event);
+  });
+
+  it("accepts a blocked agent action with a reason detail", () => {
+    const result = safeParseSupervisionAuditEvent({
+      kind: "cua_agent_action",
+      sessionId: "session-1",
+      actionId: "action-1",
+      stepId: "cua-step-2",
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      action: { action: "type", text: "secret" },
+      risk: "mutating",
+      status: "blocked",
+      detail: "pending approval",
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an agent action event carrying a screenshot (binary stays out of the trail)", () => {
+    const result = safeParseSupervisionAuditEvent({
+      kind: "cua_agent_action",
+      sessionId: "session-1",
+      actionId: "action-1",
+      stepId: "cua-step-3",
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      action: { action: "screenshot" },
+      risk: "read_only",
+      status: "ran",
+      screenshot: "BASE64",
+    });
+
+    // Unknown keys are stripped by zod, so this still parses — but the parsed
+    // result must NOT carry the screenshot field.
+    expect(result.success).toBe(true);
+    expect(result.success && "screenshot" in result.data).toBe(false);
+  });
 });
