@@ -42,6 +42,7 @@ fn main() {
             commands::storage::update_local_config,
             commands::storage::reset_local_config,
             commands::intent::intent_resolve,
+            commands::cua_brain::cua_brain_step,
             commands::stt::stt_mint_token,
             commands::head_track::head_track_start,
             commands::head_track::head_track_stop,
