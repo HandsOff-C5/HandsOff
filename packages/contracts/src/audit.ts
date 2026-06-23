@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { approvalDecisionSchema, executionStatusSchema } from "./action-plan";
+import { approvalDecisionSchema, executionStatusSchema, riskLevelSchema } from "./action-plan";
+import { computerActionSchema } from "./computer-use";
 import { cuaActionRequestSchema, cuaActionResultSchema, cuaWindowStateSchema } from "./cua";
 import { resolvedIntentSchema } from "./intent";
 import { selectedReferentSchema } from "./referent";
@@ -63,6 +64,20 @@ export const supervisionAuditEventSchema = z.discriminatedUnion("kind", [
     stepId: z.string().min(1),
     request: cuaActionRequestSchema,
     result: cuaActionResultSchema,
+  }),
+  // One pixel-level action taken by the computer-use agent loop. Distinct from
+  // `cua_call` (which records the high-level element-based planned path): the
+  // agent acts in `computer_20251124` actions, so the trail stores the action,
+  // its blast-radius tier, and whether it ran / was blocked by the gate /
+  // failed. Screenshots are deliberately NOT stored here (binary retention is a
+  // separate concern, #23) — only the action metadata.
+  auditEventBaseSchema.extend({
+    kind: z.literal("cua_agent_action"),
+    stepId: z.string().min(1),
+    action: computerActionSchema,
+    risk: riskLevelSchema,
+    status: z.enum(["ran", "blocked", "failed"]),
+    detail: z.string().min(1).optional(),
   }),
   auditEventBaseSchema.extend({
     kind: z.literal("execution_finished"),

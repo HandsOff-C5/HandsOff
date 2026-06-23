@@ -30,6 +30,10 @@ function eventSummary(event: SupervisionAuditEvent): string {
           : "";
     return `Finished: ${event.status}${detail}`;
   }
+  if (event.kind === "cua_agent_action") {
+    const detail = event.detail ? ` — ${event.detail}` : "";
+    return `CUA ${event.action.action}: ${event.status}${detail}`;
+  }
   return `${event.phase === "pre" ? "Before" : "After"} state captured`;
 }
 
