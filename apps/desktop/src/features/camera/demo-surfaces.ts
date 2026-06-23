@@ -1,4 +1,4 @@
-import type { Surface } from "@handsoff/contracts";
+import type { Surface, SurfaceSnapshot } from "@handsoff/contracts";
 
 // DEMO STAND-IN for the live surfaces the desktop host will provide (area:desktop —
 // Naama; the provisional Surface contract still needs her sign-off). Two halves of a
@@ -20,3 +20,18 @@ export const demoSurfaces: Surface[] = [
     title: "Right",
   },
 ];
+
+// Bridge a demo pointing target (Surface geometry) into the audit/intent
+// SurfaceSnapshot the fusion engine consumes (#35). Until the desktop host
+// supplies real app/window snapshots, a demo target is synthesized as an
+// available, accessible "Demo" surface so "point + speak" resolves end-to-end.
+export function demoSurfaceSnapshot(targetId: string): SurfaceSnapshot {
+  const surface = demoSurfaces.find((s) => s.id === targetId);
+  return {
+    id: targetId,
+    title: surface?.title ?? targetId,
+    app: "Demo",
+    availability: "available",
+    accessStatus: "accessible",
+  };
+}

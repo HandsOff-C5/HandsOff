@@ -2,6 +2,7 @@ import { runApprovedPlan, type CuaActionPort, type PlanRunResult } from "@handso
 import {
   type CuaActionRequest,
   type FinalTranscript,
+  type PointingEvidence,
   type SurfaceSnapshot,
 } from "@handsoff/contracts";
 import type { CuaDriver } from "@handsoff/cua";
@@ -56,6 +57,9 @@ export function useVoiceCuaController(args: {
   driver: CuaDriver;
   now?: () => string;
   targetResolveDelayMs?: number;
+  // The live gesture referent (#35): when the camera has a locked point at intent
+  // time it returns gesture `PointingEvidence`; null when nothing is locked.
+  getGestureEvidence?: () => PointingEvidence | null;
 }) {
   const [intent, setIntent] = useState<ReturnType<typeof fuseIntent> | null>(null);
   const [runResult, setRunResult] = useState<PlanRunResult | null>(null);
@@ -64,32 +68,42 @@ export function useVoiceCuaController(args: {
   const sessions = useRef(createSupervisionSessionStore());
   const timestamp = () => args.now?.() ?? new Date().toISOString();
 
+  // Cursor fallback: probe the active window via the CUA driver, degrading the
+  // surface to "unknown" availability/access when the probe doesn't succeed.
+  async function resolveActiveWindowSurface(): Promise<SurfaceSnapshot> {
+    const resolved = await args.driver.getWindowState({ surface: ACTIVE_WINDOW_SURFACE });
+    return resolved.status === "succeeded" && resolved.state
+      ? resolved.state.surface
+      : {
+          ...ACTIVE_WINDOW_SURFACE,
+          availability: "unknown" as const,
+          accessStatus: "unknown" as const,
+        };
+  }
+
   async function createIntent(finalTranscript: FinalTranscript) {
     await wait(args.targetResolveDelayMs ?? DEFAULT_TARGET_RESOLVE_DELAY_MS);
     const createdAt = timestamp();
     const started = sessions.current.start(createdAt);
-    const resolved = await args.driver.getWindowState({ surface: ACTIVE_WINDOW_SURFACE });
-    const surface =
-      resolved.status === "succeeded" && resolved.state
-        ? resolved.state.surface
-        : {
-            ...ACTIVE_WINDOW_SURFACE,
-            availability: "unknown" as const,
-            accessStatus: "unknown" as const,
-          };
-    const next = fuseIntent(
-      {
-        sessionId: started.id,
-        speech: { finalTranscript },
-        pointingEvidence: [
+    // Prefer the live gesture referent (#35) — what the user actually pointed at.
+    // Only when nothing is locked do we fall back to the active-window cursor probe.
+    const gesture = args.getGestureEvidence?.() ?? null;
+    const pointingEvidence: PointingEvidence[] = gesture?.surface
+      ? [gesture]
+      : [
           {
             source: "cursor",
             confidence: 1,
             strategy: "active-window-current-cursor",
-            surface,
+            surface: await resolveActiveWindowSurface(),
           },
-        ],
-        surfaceCandidates: [surface],
+        ];
+    const next = fuseIntent(
+      {
+        sessionId: started.id,
+        speech: { finalTranscript },
+        pointingEvidence,
+        surfaceCandidates: pointingEvidence.flatMap((e) => (e.surface ? [e.surface] : [])),
       },
       { createdAt },
     );

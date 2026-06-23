@@ -1,8 +1,14 @@
-import { APP_NAME, type SttProvider, type SttStream } from "@handsoff/contracts";
+import {
+  APP_NAME,
+  type PointingEvidence,
+  type SttProvider,
+  type SttStream,
+} from "@handsoff/contracts";
 import { createTauriCuaDriver, createUnavailableCuaDriver, type CuaDriver } from "@handsoff/cua";
 import { createAssemblyAiStream, createOnDeviceSttStream } from "@handsoff/speech";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useRef } from "react";
 
 import { CameraPanel } from "../../features/camera/CameraPanel";
 import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
@@ -76,8 +82,17 @@ export function Dashboard({
     (hasTauriBackend()
       ? createTauriCuaDriver((command, args) => invoke(command, args))
       : createUnavailableCuaDriver());
+  // Latest locked gesture referent (#35). The CameraPanel writes it on lock/unlock;
+  // the controller reads it at intent time so "point + speak" binds to the pointed
+  // surface. A ref (not state) avoids re-rendering the dashboard on every lock.
+  const gestureEvidence = useRef<PointingEvidence | null>(null);
   const { intent, runResult, session, approve, reject, handleFinalTranscript } =
-    useVoiceCuaController({ driver, now, targetResolveDelayMs });
+    useVoiceCuaController({
+      driver,
+      now,
+      targetResolveDelayMs,
+      getGestureEvidence: () => gestureEvidence.current,
+    });
   // The structured clarification prompt (#36) when the engine won't act blind.
   // Display-first; interactive pick→re-resolve needs a controller round-trip (follow-up).
   const clarification =
@@ -90,7 +105,11 @@ export function Dashboard({
         <p className="dashboard__tagline">Point. Speak. Supervise your agents.</p>
       </header>
       <div className="dashboard__panels">
-        <CameraPanel />
+        <CameraPanel
+          onGestureEvidence={(evidence) => {
+            gestureEvidence.current = evidence;
+          }}
+        />
         <ReadinessPanel report={report} />
         <PermissionsPanel
           report={report}

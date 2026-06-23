@@ -3,6 +3,7 @@ import type {
   LandmarkFrame,
   LockedReferent,
   PointingCandidate,
+  PointingEvidence,
 } from "@handsoff/contracts";
 import {
   createHandLandmarker,
@@ -16,8 +17,9 @@ import {
 } from "@handsoff/gesture";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { toGestureEvidence } from "../fusion/gestureEvidence";
 import { CalibrationOverlay } from "./CalibrationOverlay";
-import { DEMO_SCREEN_BOUNDS, demoSurfaces } from "./demo-surfaces";
+import { DEMO_SCREEN_BOUNDS, demoSurfaceSnapshot, demoSurfaces } from "./demo-surfaces";
 import { LandmarkOverlay } from "./LandmarkOverlay";
 import { PointerCursor } from "./PointerCursor";
 
@@ -30,6 +32,9 @@ interface CameraPanelProps {
   getStream?: (deviceId?: string) => Promise<MediaStream>;
   createDetector?: () => Promise<HandLandmarkerHandle>;
   listDevices?: () => Promise<MediaDeviceInfo[]>;
+  // Live gesture referent out (#35): the locked point as intent PointingEvidence,
+  // or null when nothing is locked. The dashboard feeds this into fuseIntent.
+  onGestureEvidence?: (evidence: PointingEvidence | null) => void;
 }
 
 type Status = "idle" | "starting" | "live" | "error";
@@ -69,6 +74,7 @@ export function CameraPanel({
   getStream = defaultGetStream,
   createDetector = createHandLandmarker,
   listDevices = defaultListDevices,
+  onGestureEvidence,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -241,6 +247,18 @@ export function CameraPanel({
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // Publish the locked gesture referent as intent evidence (#35). Emits when a
+  // candidate is locked, and clears (null) the moment it unlocks, so the intent
+  // engine only sees a gesture referent while the user is actively pointing.
+  useEffect(() => {
+    if (!onGestureEvidence) return;
+    if (phase === "locked" && referent && candidate) {
+      onGestureEvidence(toGestureEvidence(candidate, demoSurfaceSnapshot(candidate.targetId)));
+    } else {
+      onGestureEvidence(null);
+    }
+  }, [phase, referent, candidate, onGestureEvidence]);
 
   // Tear down the camera + detector on unmount.
   useEffect(() => stop, [stop]);
