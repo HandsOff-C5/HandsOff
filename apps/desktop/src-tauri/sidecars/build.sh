@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Compiles the on-device STT Swift sidecar (#31, AD2) into the location Tauri's
-# `externalBin` resolver expects: `binaries/stt-ondevice-<target-triple>`.
-#
-# No network, no API key — the sidecar runs Apple's on-device speech recognition.
+# Compiles Swift sidecars into the location Tauri's `externalBin` resolver
+# expects: `binaries/<sidecar>-<target-triple>`.
 # Run from anywhere; paths are resolved relative to this script.
 set -euo pipefail
 

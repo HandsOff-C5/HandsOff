@@ -516,10 +516,17 @@ private func eventMask(_ types: [CGEventType]) -> CGEventMask {
 }
 
 private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
-    assert(condition(), message)
-    if !condition() {
+    let passed = condition()
+    assert(passed, message)
+    if !passed {
         fatalError(message)
     }
+}
+
+private func expectEvent(_ event: [String: Any], kind: String, keys: Set<String>) {
+    expect(Set(event.keys) == keys, "\(kind) event has exact wire fields")
+    expect(event["kind"] as? String == kind, "\(kind) event kind is stable")
+    expect(JSONSerialization.isValidJSONObject(event), "\(kind) event is JSON serializable")
 }
 
 private func runSelfTest() {
@@ -560,15 +567,14 @@ private func runSelfTest() {
     )
     expect(questionWithoutRightOption.1 == .none, "question mark without right option does not start")
 
+    expectEvent(startEvent(ts: 123), kind: "start", keys: ["kind", "ts"])
+    expectEvent(stopEvent(ts: 123), kind: "stop", keys: ["kind", "ts"])
+    expectEvent(errorEvent(message: "boom", ts: 123), kind: "error", keys: ["kind", "message", "ts"])
+
     let event = pointEvent(x: 1, y: 2, yaw: nil, pitch: 0.1, confidence: 2, ts: 123)
-    expect(
-        Set(event.keys) == ["kind", "x", "y", "yaw", "pitch", "confidence", "ts"],
-        "point event has exact wire fields"
-    )
-    expect(event["kind"] as? String == "point", "point event kind is stable")
+    expectEvent(event, kind: "point", keys: ["kind", "x", "y", "yaw", "pitch", "confidence", "ts"])
     expect(event["yaw"] is NSNull, "nil yaw serializes as null")
     expect(event["confidence"] as? Double == 1, "confidence is clamped to wire range")
-    expect(JSONSerialization.isValidJSONObject(event), "point event is JSON serializable")
 
     print("head-track selftest ok")
 }
