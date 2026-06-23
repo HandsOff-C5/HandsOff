@@ -63,6 +63,18 @@ export function useHeadPointing(options?: {
         } else if (event.kind === "stop") {
           setState((prev) => ({ ...prev, status: "idle", error: null }));
         } else if (event.kind === "candidates") {
+          // Diagnostic: the ranked candidates the Rust host emits on capture
+          // release. Empty here means the head-track log (Rust) will show why.
+          console.info("[handsoff] head candidates", {
+            point: event.point,
+            count: event.candidates.length,
+            surfaces: event.candidates.map((c) => ({
+              id: c.surface.id,
+              app: c.surface.app,
+              score: c.score,
+              distance: c.distance,
+            })),
+          });
           setState((prev) => ({
             ...prev,
             point: event.point,

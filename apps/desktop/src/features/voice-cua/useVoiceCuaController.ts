@@ -117,7 +117,31 @@ export function useVoiceCuaController(args: {
             ],
       surfaceCandidates: headCandidates.map((candidate) => candidate.surface),
     };
+    // Diagnostic: the exact transcript + head evidence handed to the intent engine.
+    // `surfaceCandidates: []` here is the "No attention-region candidates" path.
+    console.info("[handsoff] intent input", {
+      transcript: finalTranscript.text,
+      headPoint: headPointing?.point ?? null,
+      surfaceCandidates: input.surfaceCandidates.map((s) => ({
+        id: s.id,
+        app: s.app,
+        title: s.title,
+      })),
+      pointingEvidence: input.pointingEvidence.map((p) => ({
+        source: p.source,
+        confidence: p.confidence,
+        strategy: p.strategy,
+        surfaceId: "surface" in p ? p.surface?.id : undefined,
+      })),
+    });
     const next = await resolveIntentRef.current(input, { resolver: "auto", createdAt });
+    console.info("[handsoff] intent result", {
+      status: next.status,
+      reason: "reason" in next ? next.reason : undefined,
+      referent: "referent" in next ? next.referent : undefined,
+      planSteps:
+        "action_plan" in next ? next.action_plan.action_plan.map((s) => s.kind) : undefined,
+    });
     const nextSession =
       next.status === "ready" ? started : sessions.current.finish(started.id, "blocked", createdAt);
     setSession(nextSession);

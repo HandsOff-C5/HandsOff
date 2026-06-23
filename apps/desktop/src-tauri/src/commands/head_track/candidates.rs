@@ -155,6 +155,32 @@ fn is_rankable(window: &AttentionWindow) -> bool {
         && window.bounds.height > 0.0
 }
 
+// Diagnostic: one line per window showing its bounds, distance to the head point,
+// and whether it survives the rankability + radius gate. Mirrors the exact checks
+// in `rank_attention_candidates` so the head-track log explains why each window
+// was kept or dropped (the empty-candidate symptom is usually every line `drop`).
+pub(super) fn distance_report(point: HeadPoint, windows: &[AttentionWindow], radius: f64) -> Vec<String> {
+    windows
+        .iter()
+        .map(|window| {
+            let distance = round3(distance_to_bounds(point, window.bounds));
+            let kept = is_rankable(window) && distance <= radius;
+            format!(
+                "  {app} [{id}] bounds=({x:.0},{y:.0},{w:.0},{h:.0}) dist={distance:.0} avail={avail}/{access} {verdict}",
+                app = window.surface.app,
+                id = window.surface.id,
+                x = window.bounds.x,
+                y = window.bounds.y,
+                w = window.bounds.width,
+                h = window.bounds.height,
+                avail = window.surface.availability,
+                access = window.surface.access_status,
+                verdict = if kept { "KEEP" } else { "drop" },
+            )
+        })
+        .collect()
+}
+
 fn distance_to_bounds(point: HeadPoint, bounds: WindowBounds) -> f64 {
     let nearest_x = clamp(point.x, bounds.x, bounds.x + bounds.width);
     let nearest_y = clamp(point.y, bounds.y, bounds.y + bounds.height);

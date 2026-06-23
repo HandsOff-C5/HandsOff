@@ -199,6 +199,26 @@ func testControlCommandParsing() {
     expect(fastCommand == .config(HeadPointerConfig(movementMode: .edge, speed: 30, distanceToEdge: 0.2)), "config speed clamps to expanded max")
 }
 
+func testAppKitToGlobalTopLeftFlip() {
+    let primary = CGRect(x: 0, y: 0, width: 1512, height: 982)
+
+    // Bottom of the primary screen (AppKit y = 0) maps to the bottom in CG (y = height).
+    let bottom = appKitToGlobalTopLeft(CGPoint(x: 200, y: 0), screens: [primary])
+    expectClose(bottom.x, 200, tolerance: 0.001, "x is preserved by the top-left flip")
+    expectClose(bottom.y, 982, tolerance: 0.001, "AppKit bottom maps to CG bottom edge")
+
+    // Top of the primary screen (AppKit y = height) maps to the CG origin (y = 0):
+    // this is the case that was silently failing — a head point near the visual top.
+    let top = appKitToGlobalTopLeft(CGPoint(x: 200, y: 982), screens: [primary])
+    expectClose(top.y, 0, tolerance: 0.001, "AppKit top maps to CG top origin")
+
+    // The flip pivots on the PRIMARY display's height even for a screen stacked
+    // above it; a point above the primary's top yields a negative CG y.
+    let stacked = [primary, CGRect(x: 0, y: 982, width: 1512, height: 800)]
+    let above = appKitToGlobalTopLeft(CGPoint(x: 10, y: 1500), screens: stacked)
+    expectClose(above.y, -518, tolerance: 0.001, "point above the primary maps to negative CG y")
+}
+
 func runSelfTest() {
     let primary = CGRect(x: 0, y: 0, width: 100, height: 100)
     let secondary = CGRect(x: 200, y: 0, width: 100, height: 100)
@@ -211,6 +231,7 @@ func runSelfTest() {
     testPeriodicRecenterOnlyWhileStable()
     testModelRecoversAfterNoFaceGap()
     testControlCommandParsing()
+    testAppKitToGlobalTopLeftFlip()
 
     expectEvent(startEvent(ts: 123), kind: "start", keys: ["kind", "ts"])
     expectEvent(stopEvent(ts: 123), kind: "stop", keys: ["kind", "ts"])

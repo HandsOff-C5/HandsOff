@@ -73,3 +73,24 @@ func intersectionOverUnion(_ a: CGRect, _ b: CGRect) -> Double {
     return area(intersection) / union
 }
 
+// The head point is computed in AppKit global coordinates (bottom-left origin,
+// y increasing upward) so the golden overlay — an NSPanel positioned with
+// `setFrame` — lands where the user is looking. But cua-driver reports window
+// bounds in CoreGraphics global display coordinates (top-left origin, y
+// increasing downward). Attention-region ranking compares the emitted point
+// against those window bounds, so the point must be flipped into the same
+// top-left space first. Without this, a point near the visual top of the screen
+// (large AppKit y) is compared against top-edge windows (small CG y), landing a
+// full screen-height away and falling outside the neighborhood radius — every
+// window is rejected and the intent engine sees zero candidates.
+//
+// The flip is about the PRIMARY display's height: both systems share the x axis
+// and the origin column, and differ only by `cg.y = primaryHeight - appKit.y`.
+// That formula holds for points on secondary displays too (a display above the
+// primary yields a negative CG y, matching CoreGraphics global coordinates).
+func appKitToGlobalTopLeft(_ point: CGPoint, screens: [CGRect]) -> CGPoint {
+    let primaryHeight =
+        screens.first(where: { $0.origin == .zero })?.height ?? screens.first?.height ?? 0
+    return CGPoint(x: point.x, y: primaryHeight - point.y)
+}
+

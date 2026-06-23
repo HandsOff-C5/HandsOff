@@ -192,8 +192,14 @@ final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
             return
         }
 
+        // The overlay draws in AppKit space (bottom-left); the wire point is
+        // flipped to CoreGraphics top-left so it shares cua-driver's window-bounds
+        // coordinate space for attention-region ranking (see appKitToGlobalTopLeft).
         DispatchQueue.main.async { [overlay] in overlay.show(at: point) }
-        writer.point(x: point.x, y: point.y, yaw: signal.yaw, pitch: signal.pitch, confidence: signal.confidence)
+        let wirePoint = appKitToGlobalTopLeft(point, screens: screens)
+        writer.point(
+            x: wirePoint.x, y: wirePoint.y, yaw: signal.yaw, pitch: signal.pitch,
+            confidence: signal.confidence)
     }
 
     private func requestStart() -> Bool {

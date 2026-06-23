@@ -10,7 +10,9 @@ use tauri_plugin_shell::{
     ShellExt,
 };
 
-use self::candidates::{cua_attention_windows, rank_attention_candidates, DEFAULT_RADIUS};
+use self::candidates::{
+    cua_attention_windows, distance_report, rank_attention_candidates, DEFAULT_RADIUS,
+};
 use self::event::{parse_head_event, take_stdout_lines, HeadPoint, HeadSidecarEvent};
 use super::storage::HeadPointerConfig;
 
@@ -203,11 +205,22 @@ fn emit_candidates_for_latest_point(app: &AppHandle, state: &HeadTrackState, ts:
         .lock()
         .expect("head-track point lock poisoned");
     let Some(point) = point else {
+        eprintln!("[handsoff head-track] candidates: no latest head point (ts={ts})");
         return;
     };
     match cua_attention_windows() {
         Ok(windows) => {
             let candidates = rank_attention_candidates(point, &windows, DEFAULT_RADIUS);
+            eprintln!(
+                "[handsoff head-track] candidates: point=({px:.0},{py:.0}) radius={DEFAULT_RADIUS:.0} windows={win} kept={kept}",
+                px = point.x,
+                py = point.y,
+                win = windows.len(),
+                kept = candidates.len(),
+            );
+            for line in distance_report(point, &windows, DEFAULT_RADIUS) {
+                eprintln!("[handsoff head-track]{line}");
+            }
             let _ = app.emit(
                 EVENT_NAME,
                 json!({
@@ -218,7 +231,10 @@ fn emit_candidates_for_latest_point(app: &AppHandle, state: &HeadTrackState, ts:
                 }),
             );
         }
-        Err(message) => emit_error(app, message),
+        Err(message) => {
+            eprintln!("[handsoff head-track] candidates: cua-driver error: {message}");
+            emit_error(app, message);
+        }
     }
 }
 
