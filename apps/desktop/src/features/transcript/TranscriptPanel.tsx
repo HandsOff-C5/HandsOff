@@ -1,6 +1,7 @@
 import type { FinalTranscript, SttError, SttErrorKind, SttStream } from "@handsoff/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useState } from "react";
 
 import { useCaptureHotkey } from "../head-pointing/useCaptureHotkey";
 import { usePushToTalk } from "./usePushToTalk";
@@ -94,24 +95,57 @@ function LiveTranscriptPanel({
       : undefined,
   );
 
-  // Full-capture test (#95): a button that fires the SAME downstream path as the
-  // hotkey — head tracking (golden cursor + camera) plus mic — so the core loop
-  // can be exercised independently of the global-shortcut press. Request camera
-  // (+ mic/speech) first so the head-track sidecar, spawned as a child of the app,
-  // inherits a real camera grant — without it the golden overlay never appears.
+  // Full-capture test (#95): exercises the SAME downstream path as the hotkey —
+  // head tracking (golden cursor + camera) plus mic — independently of the global
+  // shortcut. Distinct from "Hold to talk": that's mic-only; this also drives the
+  // camera/head tracker, and it REFUSES to start until camera + mic + speech are
+  // all granted (so you never get a half-capture with no golden cursor).
+  const [headCapturing, setHeadCapturing] = useState(false);
+  const [headNotice, setHeadNotice] = useState<string | null>(null);
+
   const startCapture = () => {
-    if (tauri) {
-      void invoke("request_media_permissions").finally(() => {
-        void invoke("head_track_start");
-      });
+    if (!tauri) {
+      press();
+      setHeadCapturing(true);
+      return;
     }
-    press();
+    setHeadNotice("Checking camera, microphone, and speech permissions…");
+    // request_media_permissions triggers the OS prompts and returns the resulting
+    // states. Only start once all three are granted; otherwise tell the user what
+    // is still missing and do NOT start a partial capture.
+    void invoke<{ speech: string; microphone: string; camera: string }>(
+      "request_media_permissions",
+    ).then((perms) => {
+      const missing = (
+        [
+          ["Camera", perms.camera],
+          ["Microphone", perms.microphone],
+          ["Speech Recognition", perms.speech],
+        ] as const
+      )
+        .filter(([, state]) => state !== "granted")
+        .map(([name]) => name);
+      if (missing.length > 0) {
+        setHeadNotice(
+          `Grant ${missing.join(", ")} in System Settings → Privacy & Security, then try again.`,
+        );
+        return;
+      }
+      setHeadNotice(null);
+      setHeadCapturing(true);
+      void invoke("head_track_start");
+      press();
+    });
   };
   const stopCapture = () => {
+    if (!headCapturing) return;
+    setHeadCapturing(false);
     release();
     if (tauri) void invoke("head_track_stop");
   };
   const cancelCapture = () => {
+    if (!headCapturing) return;
+    setHeadCapturing(false);
     cancel();
     if (tauri) void invoke("head_track_stop");
   };
@@ -139,17 +173,20 @@ function LiveTranscriptPanel({
 
       {/* Test the full capture path (head tracking + mic) without the hotkey (#95). */}
       {tauri && (
-        <button
-          className="transcript__capture-test"
-          type="button"
-          aria-pressed={capturing}
-          onPointerDown={startCapture}
-          onPointerUp={stopCapture}
-          onPointerLeave={capturing ? cancelCapture : undefined}
-          onPointerCancel={cancelCapture}
-        >
-          {capturing ? "Release (head + voice)" : "Hold to capture (head + voice)"}
-        </button>
+        <>
+          <button
+            className="transcript__capture-test"
+            type="button"
+            aria-pressed={headCapturing}
+            onPointerDown={startCapture}
+            onPointerUp={stopCapture}
+            onPointerLeave={headCapturing ? cancelCapture : undefined}
+            onPointerCancel={cancelCapture}
+          >
+            {headCapturing ? "Release (head + voice)" : "Hold to capture (head + voice)"}
+          </button>
+          {headNotice && <p className="transcript__notice">{headNotice}</p>}
+        </>
       )}
 
       {capturing ? (
