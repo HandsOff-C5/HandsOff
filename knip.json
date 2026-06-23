@@ -7,7 +7,13 @@
       "project": "src/**/*.ts"
     },
     "apps/desktop": {
-      "entry": ["src/main.tsx!", "vite.config.ts", "vitest.config.ts", "src-tauri/**"],
+      "entry": [
+        "src/main.tsx!",
+        "vite.config.ts",
+        "vitest.config.ts",
+        "src-tauri/**",
+        "scripts/**"
+      ],
       "project": "src/**/*.{ts,tsx}"
     }
   }
