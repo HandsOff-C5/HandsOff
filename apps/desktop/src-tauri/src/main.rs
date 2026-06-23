@@ -11,11 +11,23 @@ mod commands;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        // Option + ? capture hotkey (#95) via the global-shortcut plugin — no
+        // Accessibility/Input Monitoring permission needed. Pressed/Released drive
+        // capture start/stop through `hotkey://capture`.
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    commands::hotkey::handle_event(app, event.state());
+                })
+                .build(),
+        )
         .manage(commands::head_track::HeadTrackState::default())
         .manage(commands::stt_ondevice::OnDeviceSttState::default())
         .setup(|app| {
-            // Arm the Right Option + ? capture hotkey in the app process (#95).
-            commands::hotkey::arm(app.handle().clone());
+            // Register the capture hotkey once the app is up.
+            use tauri_plugin_global_shortcut::GlobalShortcutExt;
+            app.global_shortcut()
+                .register(commands::hotkey::capture_shortcut())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
