@@ -11,10 +11,7 @@ const validOption = {
 const validRequest = {
   reason: "ambiguous",
   question: "Which window did you mean?",
-  options: [
-    validOption,
-    { targetId: "win-2", label: "Chrome — GitHub #88", confidence: 0.65 },
-  ],
+  options: [validOption, { targetId: "win-2", label: "Chrome — GitHub #88", confidence: 0.65 }],
 };
 
 describe("clarificationReasonSchema", () => {
@@ -46,9 +43,9 @@ describe("clarificationRequestSchema", () => {
   });
 
   it("rejects an empty question", () => {
-    expect(
-      clarificationRequestSchema.safeParse({ ...validRequest, question: "" }).success,
-    ).toBe(false);
+    expect(clarificationRequestSchema.safeParse({ ...validRequest, question: "" }).success).toBe(
+      false,
+    );
   });
 
   it("rejects an option confidence outside [0,1]", () => {

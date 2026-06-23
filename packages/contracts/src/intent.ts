@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { actionPlanSchema, riskLevelSchema, targetAgentSchema } from "./action-plan";
+import { clarificationRequestSchema } from "./clarification";
 import { selectedReferentSchema } from "./referent";
 import { surfaceSnapshotSchema } from "./surface";
 import { finalTranscriptSchema } from "./transcript";
@@ -64,6 +65,9 @@ export const resolvedIntentSchema = z.discriminatedUnion("status", [
     requires_approval: z.boolean(),
     target_agent: targetAgentSchema,
     reason: z.string().min(1),
+    // Structured prompt for the dashboard when status is clarification_required
+    // (#36). Absent on `blocked` and on log-only clarifications.
+    clarification: clarificationRequestSchema.optional(),
     createdAt: z.string().datetime(),
   }),
 ]);
