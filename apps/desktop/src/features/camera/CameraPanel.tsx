@@ -38,12 +38,14 @@ type Quality = "good" | "fair" | "poor";
 
 const IDENTITY: AffineTransform = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0 };
 const DWELL = { enter: 0.6, exit: 0.4, dwellMs: 600, cooldownMs: 800 };
-// Aim-based pointing: the wrist→fingertip ray, extrapolated, so the direction the finger
-// aims drives the cursor (not just the hand's position). The live loop and the
+// Pointing signal = the index FINGERTIP (extend 0). An earlier "aim ahead" projection
+// (extend 1.5 along wrist→tip) threw the visible cursor off the fingertip — and across the
+// frame when pointing sideways — so the dot is the fingertip itself. The live loop and the
 // calibration capture MUST use the same signal or the fitted mapping is meaningless.
-const POINTING = { anchor: "wrist", extend: 1.5 } as const;
+const POINTING = { anchor: "wrist", extend: 0 } as const;
 const FRAME_BUFFER = 150;
-const CALIB_KEY = "handsoff.calibration";
+// v2: invalidates calibrations fit against the old extend:1.5 pointing signal.
+const CALIB_KEY = "handsoff.calibration.v2";
 // Coordinate space of the smoothed pointer before calibration (identity transform → the
 // raw [0,1] pointing signal); after calibration it's DEMO_SCREEN_BOUNDS.
 const UNIT_BOUNDS = { x: 0, y: 0, w: 1, h: 1 };
@@ -315,7 +317,12 @@ export function CameraPanel({
           <PointerCursor
             point={pointer}
             bounds={calibration ? DEMO_SCREEN_BOUNDS : UNIT_BOUNDS}
-            mirrored={mirrored}
+            // Flip ONLY the raw uncalibrated signal (it's in raw-image space, so it must be
+            // mirrored to line up with the selfie-view video). A calibrated point is already
+            // in on-screen stage space — the user aimed at un-flipped targets through the
+            // mirrored video, so the mirror is baked into the fit; flipping again double-
+            // mirrors it (correct at center, opposite at the edges).
+            mirrored={calibration ? false : mirrored}
             confidence={confidence}
           />
         )}
