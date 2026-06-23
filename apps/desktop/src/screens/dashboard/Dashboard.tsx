@@ -17,7 +17,10 @@ import {
 } from "../../features/head-pointing/useHeadPointing";
 import { useLocalConfig } from "../../features/settings/useLocalConfig";
 import { TranscriptPanel } from "../../features/transcript/TranscriptPanel";
-import { useVoiceCuaController } from "../../features/voice-cua/useVoiceCuaController";
+import {
+  createIntentWorkerResolver,
+  useVoiceCuaController,
+} from "../../features/voice-cua/useVoiceCuaController";
 import type { ResolveIntentOptions } from "@handsoff/intent";
 import type { IntentInput, ResolvedIntent } from "@handsoff/contracts";
 
@@ -91,10 +94,21 @@ export function Dashboard({
     (hasTauriBackend()
       ? createTauriCuaDriver((command, args) => invoke(command, args))
       : createUnavailableCuaDriver());
+  const intentResolver =
+    resolveIntent ??
+    (hasTauriBackend()
+      ? createIntentWorkerResolver((command, args) => invoke(command, args))
+      : undefined);
   const liveHeadPointing = useHeadPointing(hasTauriBackend() ? HEAD_POINTING_TAURI : undefined);
   const headPointing = injectedHeadPointing ?? liveHeadPointing;
   const { intent, runResult, session, auditEvents, approve, reject, handleFinalTranscript } =
-    useVoiceCuaController({ driver, headPointing, now, resolveIntent, targetResolveDelayMs });
+    useVoiceCuaController({
+      driver,
+      headPointing,
+      now,
+      resolveIntent: intentResolver,
+      targetResolveDelayMs,
+    });
 
   return (
     <main className="dashboard">

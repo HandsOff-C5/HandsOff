@@ -177,6 +177,22 @@ importers:
         specifier: ^4.103.0
         version: 4.103.0(@cloudflare/workers-types@4.20260621.1)
 
+  workers/llm-intent:
+    dependencies:
+      '@handsoff/intent':
+        specifier: workspace:*
+        version: link:../../packages/intent
+      openai:
+        specifier: ^6.0.0
+        version: 6.44.0(ws@8.21.0)(zod@3.25.76)
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260621.1
+        version: 4.20260621.1
+      wrangler:
+        specifier: ^4.103.0
+        version: 4.103.0(@cloudflare/workers-types@4.20260621.1)
+
 packages:
 
   '@adobe/css-tools@4.5.0':

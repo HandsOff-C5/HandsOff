@@ -72,10 +72,13 @@ Pinned toolchain is committed: `.node-version`, `rust-toolchain.toml`, `knip.jso
 corepack pnpm --filter @handsoff/desktop-app exec tauri build --debug --bundles app
 open -n apps/desktop/src-tauri/target/debug/bundle/macos/HandsOff.app \
   --env "HANDSOFF_STT_TOKEN_WORKER_URL=https://<worker-host>/v1/realtime-token" \
-  --env "HANDSOFF_STT_APP_AUTH_TOKEN=<launch-cohort app token>"
+  --env "HANDSOFF_STT_APP_AUTH_TOKEN=<launch-cohort app token>" \
+  --env "HANDSOFF_INTENT_WORKER_URL=https://<worker-host>/v1/resolve-intent" \
+  --env "HANDSOFF_INTENT_APP_AUTH_TOKEN=<launch-cohort app token>"
 ```
 
 Worker deploy + a curl smoke test live in `workers/assemblyai-token/README.md`.
+The LLM intent Worker is documented in `workers/llm-intent/README.md`.
 
 Head tracking follows the same TCC rule: test Camera/head tracking from the bundled `.app`, not `tauri dev`; this path must not require Input Monitoring.
 

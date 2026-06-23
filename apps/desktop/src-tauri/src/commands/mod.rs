@@ -2,6 +2,7 @@
 pub mod cua;
 pub mod head_track;
 pub mod hotkey;
+pub mod intent;
 pub mod permissions;
 pub mod readiness;
 pub mod storage;

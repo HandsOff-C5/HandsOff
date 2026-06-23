@@ -49,6 +49,27 @@ function terminal(status: PlanRunResult["status"]): TerminalSessionStatus {
   return status;
 }
 
+export type IntentResolveInvoke = <T>(
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<T>;
+
+export function createIntentWorkerResolver(invoke: IntentResolveInvoke) {
+  return (input: IntentInput, options: ResolveIntentOptions): Promise<ResolvedIntent> => {
+    const client: NonNullable<ResolveIntentOptions["client"]> = {
+      chat: {
+        completions: {
+          async parse(request) {
+            const { model, messages } = request as { model?: unknown; messages?: unknown };
+            return invoke("intent_resolve", { request: { model, messages } });
+          },
+        },
+      },
+    };
+    return resolveIntent(input, { ...options, client });
+  };
+}
+
 export function useVoiceCuaController(args: {
   driver: CuaDriver;
   headPointing?: HeadPointingSnapshot;

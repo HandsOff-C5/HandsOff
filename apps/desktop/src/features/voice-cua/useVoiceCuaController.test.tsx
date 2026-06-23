@@ -4,7 +4,7 @@ import { fakeCuaWindowState } from "@handsoff/testkit";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { useVoiceCuaController } from "./useVoiceCuaController";
+import { createIntentWorkerResolver, useVoiceCuaController } from "./useVoiceCuaController";
 import type { HeadPointingSnapshot } from "../head-pointing/useHeadPointing";
 
 const NOW = "2026-06-22T12:00:00.000Z";
@@ -129,6 +129,49 @@ function readyLaunchAndType(
 }
 
 describe("useVoiceCuaController", () => {
+  it("resolves intent through the Tauri Worker proxy client", async () => {
+    const invoke = vi.fn(async () => ({
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            parsed: {
+              status: "blocked",
+              id: "intent-llm",
+              intent_type: null,
+              referent: null,
+              constraints: [],
+              risk_level: null,
+              requires_approval: false,
+              target_agent: "none",
+              action_plan: null,
+              reason: "Need a clearer target",
+            },
+          },
+        },
+      ],
+    }));
+    const input: IntentInput = {
+      sessionId: "session-1",
+      speech: { finalTranscript },
+      pointingEvidence: [{ source: "head", confidence: 0.9, strategy: "head-neighborhood" }],
+      surfaceCandidates: [surface()],
+    };
+
+    await expect(
+      createIntentWorkerResolver(invoke)(input, {
+        resolver: "auto",
+        createdAt: NOW,
+      }),
+    ).resolves.toMatchObject({
+      status: "blocked",
+      reason: "Need a clearer target",
+    });
+    expect(invoke).toHaveBeenCalledWith("intent_resolve", {
+      request: { model: "gpt-4o-mini", messages: expect.any(Array) },
+    });
+  });
+
   it("resolves final transcripts with head candidates through auto intent resolution", async () => {
     const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
     const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
