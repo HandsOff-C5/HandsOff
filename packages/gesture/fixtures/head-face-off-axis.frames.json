@@ -1,0 +1,21 @@
+[
+  {
+    "timestampMs": 200,
+    "raw": {
+      "faces": [
+        {
+          "id": "face-right",
+          "confidence": 0.88,
+          "boundingBox": { "x": 0.52, "y": 0.22, "width": 0.22, "height": 0.3 },
+          "landmarks": {
+            "leftEye": [{ "x": 0.58, "y": 0.35, "z": -0.02, "visibility": 0.95 }],
+            "rightEye": [{ "x": 0.68, "y": 0.35, "z": -0.02, "visibility": 0.95 }],
+            "nose": [{ "x": 0.69, "y": 0.43, "z": 0.01, "visibility": 0.94 }]
+          },
+          "yaw": 0.24,
+          "pitch": -0.03
+        }
+      ]
+    }
+  }
+]
