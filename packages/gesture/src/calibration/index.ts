@@ -1,16 +1,21 @@
 export {
   applyHomography,
+  applyPolynomial,
   applyTransform,
   calibrationQualityFromResidual,
   calibrationResidual,
   fitAffine,
   fitHomography,
+  fitPolynomial,
   homographyResidual,
+  polynomialResidual,
   toCandidate,
   type AffineTransform,
   type CalibrationPair,
   type Homography,
   type Point,
+  type PolynomialSample,
+  type PolynomialTransform,
 } from "./calibrate";
 export {
   createCalibrationSession,

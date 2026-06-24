@@ -12,6 +12,7 @@ export {
 } from "./perception/pointing";
 export * from "./calibration";
 export * from "./display";
+export * from "./gaze";
 export * from "./mediapipe";
 export * from "./runtime";
 export * from "./confidence";

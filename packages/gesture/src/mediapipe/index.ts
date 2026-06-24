@@ -11,3 +11,9 @@ export {
   type HandLandmarkerHandle,
   type HandLandmarkerOptions,
 } from "./handLandmarker";
+export {
+  createFaceLandmarker,
+  type FaceLandmarkerHandle,
+  type FaceLandmarkerOptions,
+  type RawFaceLandmarkerResult,
+} from "./faceLandmarker";

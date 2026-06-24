@@ -223,6 +223,99 @@ export const homographyResidual = (h: Homography, pairs: CalibrationPair[]): num
   return Math.sqrt(sumSq / pairs.length);
 };
 
+// --- Polynomial calibration fit -------------------------------------------------
+// A richer model than affine for mapping a MULTI-feature vector (e.g. iris fractions
+// + head pose) → screen px — the calibration model for eye-gaze. The length-k feature
+// vector f is expanded to a quadratic basis
+//   φ(f) = [1, f₀…f_{k-1}, f₀²…f_{k-1}²]   (1 + 2k terms)
+// and each output axis is least-squares fit over φ via the normal equations
+// (φᵀφ)·c = φᵀt, solved with the in-file Gauss-Jordan `solveLinear`. Per-feature
+// squares (no cross terms) keep the basis deterministic and the system sized for a
+// 9-dots-per-monitor capture. Pure math (STRICT); no camera, no clock.
+
+export interface PolynomialSample {
+  features: readonly number[];
+  target: Point;
+}
+
+export interface PolynomialTransform {
+  readonly featureCount: number;
+  // Per-axis coefficients over the quadratic basis, length 1 + 2·featureCount.
+  readonly cx: readonly number[];
+  readonly cy: readonly number[];
+}
+
+const polynomialBasis = (features: readonly number[]): number[] => {
+  const basis: number[] = [1];
+  for (const f of features) basis.push(f);
+  for (const f of features) basis.push(f * f);
+  return basis;
+};
+
+export const applyPolynomial = (t: PolynomialTransform, features: readonly number[]): Point => {
+  const phi = polynomialBasis(features);
+  let x = 0;
+  let y = 0;
+  for (let i = 0; i < phi.length; i++) {
+    const p = at(phi, i);
+    x += at(t.cx, i) * p;
+    y += at(t.cy, i) * p;
+  }
+  return [x, y];
+};
+
+export const fitPolynomial = (samples: readonly PolynomialSample[]): PolynomialTransform => {
+  const first = samples[0];
+  if (!first) {
+    throw new Error("fitPolynomial: need at least one sample");
+  }
+  const featureCount = first.features.length;
+  const basisSize = 1 + 2 * featureCount;
+  if (samples.length < basisSize) {
+    throw new Error(
+      `fitPolynomial: need ≥${basisSize} samples for ${featureCount} features, got ${samples.length}`,
+    );
+  }
+  const m = new Array<number>(basisSize * basisSize).fill(0); // φᵀφ
+  const vx = new Array<number>(basisSize).fill(0); // φᵀ·X
+  const vy = new Array<number>(basisSize).fill(0); // φᵀ·Y
+  for (const s of samples) {
+    if (s.features.length !== featureCount) {
+      throw new Error(
+        `fitPolynomial: inconsistent feature length (expected ${featureCount}, got ${s.features.length})`,
+      );
+    }
+    const phi = polynomialBasis(s.features);
+    const X = at(s.target, 0);
+    const Y = at(s.target, 1);
+    for (let i = 0; i < basisSize; i++) {
+      const pi = at(phi, i);
+      for (let j = 0; j < basisSize; j++) {
+        const k = i * basisSize + j;
+        m[k] = at(m, k) + pi * at(phi, j);
+      }
+      vx[i] = at(vx, i) + pi * X;
+      vy[i] = at(vy, i) + pi * Y;
+    }
+  }
+  return { featureCount, cx: solveLinear(m, vx), cy: solveLinear(m, vy) };
+};
+
+// RMS reprojection error (screen-px) of a polynomial fit over its samples — the
+// gaze counterpart to calibrationResidual; grade with calibrationQualityFromResidual.
+export const polynomialResidual = (
+  t: PolynomialTransform,
+  samples: readonly PolynomialSample[],
+): number => {
+  if (samples.length === 0) return 0;
+  let sumSq = 0;
+  for (const s of samples) {
+    const [px, py] = applyPolynomial(t, s.features);
+    sumSq += (px - at(s.target, 0)) ** 2 + (py - at(s.target, 1)) ** 2;
+  }
+  return Math.sqrt(sumSq / samples.length);
+};
+
 // RMS reprojection error (in target/screen-px space) of a transform over the
 // correspondences it was fit on — the calibration's residual.
 export const calibrationResidual = (t: AffineTransform, pairs: CalibrationPair[]): number => {
