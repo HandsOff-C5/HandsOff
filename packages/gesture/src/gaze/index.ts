@@ -6,3 +6,4 @@ export {
   type GazeFeatures,
   type GazeOverlayPoint,
 } from "./features";
+export { eyeTrackingConfidence } from "./confidence";

@@ -25,3 +25,13 @@ export {
   type CalibrationSession,
   type GridSpec,
 } from "./capture";
+export {
+  createEyeCalibration,
+  type EyeCalibration,
+  type EyeCalibrationConfig,
+  type EyeCalibrationDot,
+  type EyeCalibrationOutcome,
+  type EyeCalibrationView,
+  type EyeMonitorFit,
+  type MonitorRect,
+} from "./eye-calibration";
