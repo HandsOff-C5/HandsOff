@@ -31,6 +31,7 @@ A pnpm + TypeScript workspace; the macOS shell is a Tauri app.
 - Match the conventions already in the file you're editing.
 - Prefer small high-conviction comments over long cosmetic notes.
 - Do not use mocks, placeholders, fallbacks.
+- Never hardcode the product name `"HandsOff"` in TypeScript; import `APP_NAME` from `@handsoff/contracts` (the webview title is set from it in `apps/desktop/src/main.tsx`). `APP_NAME` can't reach non-TS layers, so a rebrand must also edit, under `apps/desktop/`: `src-tauri/tauri.conf.json` (`productName` + window `title`), `index.html` (`<title>`), `src-tauri/Info.plist` and the sidecar `Info.plist`s (permission prompts / bundle names), `src-tauri/src/commands/overlay.rs` (overlay window title), and `src-tauri/Cargo.toml`.
 - Always defer from backwards-compatibility. Do not keep dead code.
 
 ## Local checks (run before you push)

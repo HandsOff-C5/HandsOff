@@ -1,3 +1,4 @@
+import { APP_NAME } from "@handsoff/contracts";
 import { useEffect } from "react";
 
 // Full-screen pointing overlay (#25 cursor seam) — the layer that draws where you
@@ -21,7 +22,7 @@ export function PointingOverlay() {
   return (
     <div className="pointing-overlay" aria-hidden="true">
       <div className="pointing-overlay__marker" />
-      <p className="pointing-overlay__hint">HandsOff overlay active — clicks pass through</p>
+      <p className="pointing-overlay__hint">{APP_NAME} overlay active — clicks pass through</p>
     </div>
   );
 }
