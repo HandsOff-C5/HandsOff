@@ -83,7 +83,8 @@ fn main() {
             commands::permissions::restart_app,
             commands::permissions::open_privacy_settings,
             commands::overlay::show_overlay,
-            commands::overlay::hide_overlay
+            commands::overlay::hide_overlay,
+            commands::overlay::set_overlay_interactive
         ])
         .run(tauri::generate_context!())
         .expect("error while running the HandsOff application");

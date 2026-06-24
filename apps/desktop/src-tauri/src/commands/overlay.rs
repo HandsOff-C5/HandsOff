@@ -107,6 +107,20 @@ pub fn hide_overlay(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Toggle whether the overlay swallows or passes through mouse clicks. The HUD is
+/// click-through by default (`interactive = false`) so the real desktop stays
+/// usable underneath; the engine flips it `true` while an approval chip is up so
+/// the operator can click approve/deny, then back to click-through afterwards.
+#[tauri::command]
+pub fn set_overlay_interactive(app: AppHandle, interactive: bool) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(OVERLAY_LABEL) {
+        window
+            .set_ignore_cursor_events(!interactive)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{union_bounds, Rect};

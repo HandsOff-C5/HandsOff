@@ -41,6 +41,7 @@ import {
   emitOverlayPointer,
   emitOverlaySupervisor,
   emitOverlayVoice,
+  listenOverlayApproval,
 } from "../../features/overlay/tauri-overlay";
 import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnboarding";
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
@@ -56,6 +57,7 @@ import {
 } from "../../features/head-pointing/useHeadPointing";
 import { useLocalConfig } from "../../features/settings/useLocalConfig";
 import { TranscriptPanel } from "../../features/transcript/TranscriptPanel";
+import { parseApprovalUtterance } from "../../features/voice-cua/approval-voice";
 import {
   createIntentWorkerResolver,
   useVoiceCuaController,
@@ -299,6 +301,26 @@ export function Dashboard({
     emitSupervisor();
   }, [voiceState, cuaApproval.pending, runResult, emitSupervisor]);
 
+  // Hands-off approvals (overlay-as-UI phase 4). The approval chip lives in the
+  // separate overlay window, so its click comes back as an event the engine
+  // resolves against the queue. And while a step is pending we make the overlay
+  // interactive (it stops swallowing clicks) so the chip is actually clickable;
+  // otherwise the HUD stays click-through and the real desktop is usable.
+  useEffect(
+    () =>
+      listenOverlayApproval((decision) => {
+        const pending = pendingRef.current[0];
+        if (pending) cuaApproval.decide(pending.id, decision);
+      }),
+    [cuaApproval],
+  );
+  useEffect(() => {
+    if (!hasTauriBackend()) return;
+    void invoke("set_overlay_interactive", {
+      interactive: cuaApproval.pending.length > 0,
+    }).catch(() => {});
+  }, [cuaApproval.pending]);
+
   // First-run permission onboarding (#18/#56). Show one guided flow on launch
   // until every permission HandsOff needs is granted (or the user skips it),
   // so nobody has to hunt for a per-permission button. Only in the real app.
@@ -421,6 +443,16 @@ export function Dashboard({
           headPointer={config.headPointer}
           onFinalTranscript={(utterance) => {
             lastTranscriptRef.current = utterance.text;
+            // While a step awaits approval, a spoken "approve"/"deny" resolves the
+            // gate hands-off instead of starting a new command.
+            const pending = cuaApproval.pending[0];
+            if (pending) {
+              const decision = parseApprovalUtterance(utterance.text);
+              if (decision) {
+                cuaApproval.decide(pending.id, decision);
+                return;
+              }
+            }
             handleFinalTranscript(utterance);
           }}
           onStatusChange={setCaptureStatus}
