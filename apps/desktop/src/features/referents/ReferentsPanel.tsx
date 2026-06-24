@@ -106,7 +106,7 @@ export function ReferentsPanel({ intent }: { intent: ResolvedIntent | null }) {
           <dt>Status</dt>
           <dd className="referents-panel__intent-status">{intent.status}</dd>
 
-          {intent.intent_type && (
+          {"intent_type" in intent && intent.intent_type && (
             <>
               <dt>Intent type</dt>
               <dd className="referents-panel__intent-type">{intent.intent_type}</dd>
@@ -137,8 +137,18 @@ export function ReferentsPanel({ intent }: { intent: ResolvedIntent | null }) {
               <dd className="referents-panel__requires-approval">
                 {intent.requires_approval ? "yes" : "no"}
               </dd>
-              <dt>Reason</dt>
-              <dd className="referents-panel__reason">{intent.reason}</dd>
+              {"reason" in intent && (
+                <>
+                  <dt>Reason</dt>
+                  <dd className="referents-panel__reason">{intent.reason}</dd>
+                </>
+              )}
+              {"summary" in intent && (
+                <>
+                  <dt>Summary</dt>
+                  <dd className="referents-panel__summary">{intent.summary}</dd>
+                </>
+              )}
             </>
           )}
         </dl>

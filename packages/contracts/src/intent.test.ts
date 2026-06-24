@@ -77,6 +77,36 @@ describe("resolved intent contract", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts goal-session observations on next-action inputs", () => {
+    const observed = input({
+      goalSession: {
+        goal: "dump this text into Notes",
+        tick: 1,
+        observations: [
+          {
+            tick: 0,
+            capturedAt: "2026-06-22T12:00:00.000Z",
+            windows: [input().surfaceCandidates[0]!],
+            state: {
+              surface: input().surfaceCandidates[0]!,
+              capturedAt: "2026-06-22T12:00:00.000Z",
+              elementCount: 1,
+              elements: [{ id: "notes-body", index: 0, role: "text" }],
+            },
+            previousAction: {
+              actionId: "plan-open-notes",
+              result: { status: "succeeded", summary: "Opened Notes" },
+            },
+          },
+        ],
+      },
+    });
+
+    const result = safeParseResolvedIntent(readyIntent({ input: observed }));
+
+    expect(result.success).toBe(true);
+  });
+
   it("rejects missing pointing evidence", () => {
     const result = safeParseResolvedIntent(readyIntent({ input: input({ pointingEvidence: [] }) }));
 
@@ -92,6 +122,20 @@ describe("resolved intent contract", () => {
       requires_approval: false,
       target_agent: "none",
       reason: "No accessible target was found",
+      createdAt: "2026-06-22T12:00:00.000Z",
+    } satisfies ResolvedIntent);
+
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a satisfied terminal intent with no action plan", () => {
+    const result = safeParseResolvedIntent({
+      status: "satisfied",
+      id: "intent-done",
+      input: input(),
+      requires_approval: false,
+      target_agent: "none",
+      summary: "Notes now contains the dictated idea",
       createdAt: "2026-06-22T12:00:00.000Z",
     } satisfies ResolvedIntent);
 

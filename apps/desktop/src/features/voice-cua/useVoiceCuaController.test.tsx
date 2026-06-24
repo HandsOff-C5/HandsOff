@@ -144,6 +144,41 @@ function readyLaunchAndType(
   };
 }
 
+function readyLaunchTick(input: IntentInput, appName: string): ResolvedIntent {
+  return {
+    status: "ready",
+    id: `intent-open-${appName.toLowerCase()}`,
+    input,
+    intent_type: "launch",
+    referent: null,
+    constraints: [],
+    risk_level: "reversible",
+    requires_approval: false,
+    target_agent: "cua-driver",
+    action_plan: {
+      id: `plan-open-${appName.toLowerCase()}`,
+      summary: `Open ${appName}`,
+      risk_level: "reversible",
+      requires_approval: false,
+      target_agent: "cua-driver",
+      action_plan: [{ id: "step-open", kind: "launch_app", label: `Open ${appName}`, appName }],
+    },
+    createdAt: NOW,
+  };
+}
+
+function satisfied(input: IntentInput, summary = "Goal satisfied"): ResolvedIntent {
+  return {
+    status: "satisfied",
+    id: "intent-satisfied",
+    input,
+    requires_approval: false,
+    target_agent: "none",
+    summary,
+    createdAt: NOW,
+  };
+}
+
 describe("useVoiceCuaController", () => {
   it("resolves intent through the Tauri Worker proxy client", async () => {
     const invoke = vi.fn(async () => ({
@@ -263,7 +298,7 @@ describe("useVoiceCuaController", () => {
       status: "ready",
       referent: { id: "gesture-target" },
     });
-    expect(driver.calls().some((call) => call.kind === "get_window_state")).toBe(false);
+    expect(driver.calls().map((call) => call.kind)).toEqual(["list_windows", "get_window_state"]);
   });
 
   it("falls back to the active-window cursor path when no gesture or head snapshot is available", async () => {
@@ -344,7 +379,7 @@ describe("useVoiceCuaController", () => {
     });
 
     await act(async () => result.current.approve());
-    expect(driver.calls()).toEqual([]);
+    expect(driver.calls().map((call) => call.kind)).toEqual(["list_windows", "get_window_state"]);
   });
 
   it("includes gesture cursor evidence when getGestureCursor provides a position", async () => {
@@ -403,34 +438,39 @@ describe("useVoiceCuaController", () => {
 
   it("auto-runs a reversible plan without waiting for approval", async () => {
     const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
-    const resolveIntent = vi.fn(
-      async (input: IntentInput): Promise<ResolvedIntent> => ({
-        status: "ready",
-        id: "intent-1",
-        input,
-        intent_type: "click",
-        referent: { id: input.surfaceCandidates[0]!.id, source: "head", confidence: 0.9 },
-        constraints: [],
+    // tick 0 hands back a reversible (no-approval) click; tick 1 reports the goal
+    // satisfied. The loop should execute the click on its own — no approve() call —
+    // and settle into a satisfied / succeeded terminal state.
+    const reversibleClick = (input: IntentInput): ResolvedIntent => ({
+      status: "ready",
+      id: "intent-1",
+      input,
+      intent_type: "click",
+      referent: { id: input.surfaceCandidates[0]!.id, source: "head", confidence: 0.9 },
+      constraints: [],
+      risk_level: "reversible",
+      requires_approval: false,
+      target_agent: "cua-driver",
+      action_plan: {
+        id: "plan-1",
+        summary: "Click selected target",
         risk_level: "reversible",
         requires_approval: false,
         target_agent: "cua-driver",
-        action_plan: {
-          id: "plan-1",
-          summary: "Click selected target",
-          risk_level: "reversible",
-          requires_approval: false,
-          target_agent: "cua-driver",
-          action_plan: [
-            {
-              id: "step-1",
-              kind: "click_element",
-              label: "Click selected target",
-              target: { surface: input.surfaceCandidates[0]!, elementIndex: 0 },
-            },
-          ],
-        },
-        createdAt: NOW,
-      }),
+        action_plan: [
+          {
+            id: "step-1",
+            kind: "click_element",
+            label: "Click selected target",
+            target: { surface: input.surfaceCandidates[0]!, elementIndex: 0 },
+          },
+        ],
+      },
+      createdAt: NOW,
+    });
+    const resolveIntent = vi.fn(
+      async (input: IntentInput): Promise<ResolvedIntent> =>
+        input.goalSession?.tick === 0 ? reversibleClick(input) : satisfied(input),
     );
     const { result } = renderHook(() =>
       useVoiceCuaController({
@@ -444,8 +484,9 @@ describe("useVoiceCuaController", () => {
 
     act(() => result.current.handleFinalTranscript(finalTranscript));
 
-    // No approve() call — a non-approval plan should run on its own.
-    await waitFor(() => expect(result.current.runResult?.status).toBe("succeeded"));
+    // No approve() call — a reversible plan runs on its own and the loop terminates.
+    await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
+    expect(result.current.session?.status).toBe("succeeded");
     expect(driver.calls().some((call) => call.kind === "click")).toBe(true);
   });
 
@@ -473,7 +514,9 @@ describe("useVoiceCuaController", () => {
 
   it("preserves approval through CUA execution and supervision", async () => {
     const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
-    const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
+    const resolveIntent = vi.fn(async (input: IntentInput) =>
+      input.goalSession?.tick === 0 ? ready(input) : satisfied(input),
+    );
     const { result } = renderHook(() =>
       useVoiceCuaController({
         driver,
@@ -491,26 +534,91 @@ describe("useVoiceCuaController", () => {
 
     expect(result.current.runResult?.status).toBe("succeeded");
     expect(driver.calls().map((call) => call.kind)).toEqual([
+      "list_windows",
+      "get_window_state",
       "get_window_state",
       "click",
+      "get_window_state",
+      "list_windows",
       "get_window_state",
     ]);
   });
 
-  it("runs a launch-and-type plan for the reported TextEdit command", async () => {
-    const textEdit = surface({
-      id: "textedit:1",
-      title: "Untitled",
-      app: "TextEdit",
-      pid: 99,
-      windowId: 100,
-    });
+  it("iterates a multi-step goal as observed one-action ticks and gates the mutating tick", async () => {
+    const notes = surface({ id: "notes:1", title: "Quick Note", app: "Notes" });
     const driver = createFakeCuaDriver({
-      state: fakeCuaWindowState({ surface: textEdit }),
-      windows: [textEdit],
+      state: fakeCuaWindowState({ surface: notes }),
+      windows: [notes],
+    });
+    const resolveIntent = vi.fn(async (input: IntentInput) => {
+      if (input.goalSession?.tick === 0) return readyLaunchTick(input, "Notes");
+      if (input.goalSession?.tick === 1) return readyType(input, notes, "hello from the loop");
+      return satisfied(input, "Notes contains the dictated idea");
+    });
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: null, candidates: [] },
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+        maxGoalTicks: 3,
+      }),
+    );
+
+    act(() =>
+      result.current.handleFinalTranscript({
+        ...finalTranscript,
+        text: "dump hello from the loop into Notes",
+      }),
+    );
+
+    await waitFor(() => expect(resolveIntent).toHaveBeenCalledTimes(2));
+    expect(resolveIntent.mock.calls[0]![0].goalSession).toMatchObject({
+      goal: "dump hello from the loop into Notes",
+      tick: 0,
+      observations: [{ tick: 0, windows: [notes] }],
+    });
+    expect(resolveIntent.mock.calls[1]![0].goalSession).toMatchObject({
+      tick: 1,
+      observations: [
+        { tick: 0, windows: [notes] },
+        { tick: 1, windows: [notes], previousAction: { actionId: "plan-open-notes" } },
+      ],
+    });
+    expect(result.current.intent).toMatchObject({
+      status: "ready",
+      requires_approval: true,
+      action_plan: { action_plan: [{ kind: "type_text" }] },
+    });
+    expect(driver.calls().map((call) => call.kind)).not.toContain("type_text");
+
+    await act(async () => result.current.approve());
+
+    await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
+    expect(result.current.session?.status).toBe("succeeded");
+    expect(driver.calls().map((call) => call.kind)).toEqual([
+      "list_windows",
+      "get_window_state",
+      "launch_app",
+      "list_windows",
+      "get_window_state",
+      "get_window_state",
+      "type_text",
+      "get_window_state",
+      "list_windows",
+      "get_window_state",
+    ]);
+  });
+
+  it("blocks next-action resolution that returns a pre-baked multi-step plan", async () => {
+    const notes = surface({ id: "notes:1", title: "Quick Note", app: "Notes" });
+    const driver = createFakeCuaDriver({
+      state: fakeCuaWindowState({ surface: notes }),
+      windows: [notes],
     });
     const resolveIntent = vi.fn(async (input: IntentInput) =>
-      readyLaunchAndType(input, "TextEdit", surfaceForApp("TextEdit"), "hello goodbye"),
+      readyLaunchAndType(input, "Notes", notes, "do not run"),
     );
     const { result } = renderHook(() =>
       useVoiceCuaController({
@@ -525,25 +633,53 @@ describe("useVoiceCuaController", () => {
     act(() =>
       result.current.handleFinalTranscript({
         ...finalTranscript,
-        text: "Open TextEdit and type hello goodbye",
+        text: "open Notes and type do not run",
       }),
     );
-    await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
 
-    await act(async () => result.current.approve());
-
-    expect(driver.calls().map((call) => call.kind)).toEqual([
-      "launch_app",
-      "get_window_state",
-      "type_text",
-      "get_window_state",
-    ]);
-    expect(driver.calls()).toContainEqual({
-      kind: "type_text",
-      target: expect.objectContaining({ surface: expect.objectContaining({ app: "TextEdit" }) }),
-      text: "hello goodbye",
+    await waitFor(() => expect(result.current.intent?.status).toBe("blocked"));
+    expect(result.current.intent).toMatchObject({
+      status: "blocked",
+      reason: "Next-action resolver must return exactly one action per tick; got 2",
     });
-    expect(result.current.auditEvents.map((event) => event.kind)).toContain("cua_call");
+    expect(result.current.session?.status).toBe("blocked");
+    expect(driver.calls().map((call) => call.kind)).not.toContain("launch_app");
+    expect(driver.calls().map((call) => call.kind)).not.toContain("type_text");
+  });
+
+  it("stops the goal loop at the max-tick safety bound", async () => {
+    const notes = surface({ id: "notes:1", title: "Quick Note", app: "Notes" });
+    const driver = createFakeCuaDriver({
+      state: fakeCuaWindowState({ surface: notes }),
+      windows: [notes],
+    });
+    const resolveIntent = vi.fn(async (input: IntentInput) => readyLaunchTick(input, "Notes"));
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: null, candidates: [] },
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+        maxGoalTicks: 2,
+      }),
+    );
+
+    act(() =>
+      result.current.handleFinalTranscript({
+        ...finalTranscript,
+        text: "keep opening Notes forever",
+      }),
+    );
+
+    await waitFor(() => expect(result.current.intent?.status).toBe("blocked"));
+    expect(result.current.intent).toMatchObject({
+      status: "blocked",
+      reason: "Goal loop reached the max-tick safety bound (2)",
+    });
+    expect(result.current.session?.status).toBe("blocked");
+    expect(resolveIntent).toHaveBeenCalledTimes(2);
+    expect(driver.calls().filter((call) => call.kind === "launch_app")).toHaveLength(2);
   });
 
   it("runs an add-into-this-app transcript as a current-app type action", async () => {
@@ -553,7 +689,9 @@ describe("useVoiceCuaController", () => {
       windows: [active],
     });
     const resolveIntent = vi.fn(async (input: IntentInput) =>
-      readyType(input, currentAppSurface(), "hello hello goodbye"),
+      input.goalSession?.tick === 0
+        ? readyType(input, currentAppSurface(), "hello hello goodbye")
+        : satisfied(input),
     );
     const { result } = renderHook(() =>
       useVoiceCuaController({
@@ -586,15 +724,60 @@ describe("useVoiceCuaController", () => {
   });
 });
 
-function surfaceForApp(appName: string): SurfaceSnapshot {
-  return {
-    id: `app:${appName.toLowerCase()}`,
-    title: appName,
-    app: appName,
-    availability: "unknown",
-    accessStatus: "unknown",
-  };
-}
+describe("ADR 0006 goal-loop golden evals", () => {
+  const goldens = [
+    {
+      id: "adr-0006-task-05-dump-text-into-notes",
+      transcript: "dump this text into Notes",
+      expectedActions: ["launch_app", "type_text"],
+      terminalStatus: "satisfied",
+    },
+  ] as const;
+
+  for (const golden of goldens) {
+    it(`${golden.id} reaches a terminal state through iteration, not a pre-baked plan`, async () => {
+      const notes = surface({ id: "notes:1", title: "Quick Note", app: "Notes" });
+      const driver = createFakeCuaDriver({
+        state: fakeCuaWindowState({ surface: notes }),
+        windows: [notes],
+      });
+      const resolveIntent = vi.fn(async (input: IntentInput) => {
+        if (input.goalSession?.tick === 0) return readyLaunchTick(input, "Notes");
+        if (input.goalSession?.tick === 1) return readyType(input, notes, golden.transcript);
+        return satisfied(input, "Notes contains the dictated text");
+      });
+      const { result } = renderHook(() =>
+        useVoiceCuaController({
+          driver,
+          headPointing: { point: null, candidates: [] },
+          now: () => NOW,
+          resolveIntent,
+          targetResolveDelayMs: 0,
+          maxGoalTicks: 3,
+        }),
+      );
+
+      act(() =>
+        result.current.handleFinalTranscript({
+          ...finalTranscript,
+          text: golden.transcript,
+        }),
+      );
+      await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
+      await act(async () => result.current.approve());
+      await waitFor(() => expect(result.current.intent?.status).toBe(golden.terminalStatus));
+
+      const actionCalls = driver
+        .calls()
+        .map((call) => call.kind)
+        .filter((kind) => kind === "launch_app" || kind === "type_text");
+      expect(actionCalls).toEqual([...golden.expectedActions]);
+      for (const [input] of resolveIntent.mock.calls) {
+        expect(input.goalSession?.observations.at(-1)?.tick).toBe(input.goalSession?.tick);
+      }
+    });
+  }
+});
 
 function currentAppSurface(): SurfaceSnapshot {
   return {

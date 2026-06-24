@@ -5,9 +5,9 @@ import { EmptyPanel } from "../../components/EmptyPanel";
 
 function eventSummary(event: SupervisionAuditEvent): string {
   if (event.kind === "intent_created") {
-    return event.intent.status === "ready"
-      ? `Plan ready: ${event.intent.action_plan.summary}`
-      : `Blocked: ${event.intent.reason}`;
+    if (event.intent.status === "ready") return `Plan ready: ${event.intent.action_plan.summary}`;
+    if (event.intent.status === "satisfied") return `Satisfied: ${event.intent.summary}`;
+    return `Blocked: ${event.intent.reason}`;
   }
   if (event.kind === "approval_decided") {
     return `Approval ${event.approval.decision}`;
