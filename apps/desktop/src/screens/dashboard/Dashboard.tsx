@@ -237,7 +237,16 @@ export function Dashboard({
   useEffect(() => {
     if (!hasTauriBackend()) return;
     void invoke("show_overlay").catch(() => {});
-    void invoke("head_track_start").catch(() => {});
+    // Start head-track in ABSOLUTE mode and open the debug preview at launch, since
+    // the Settings controls live in the off-screen engine-host and aren't reachable
+    // on the overlay yet (reachable on-overlay controls are Phase 3). The debug
+    // window shows the camera + face/eyes/nose + live values so the head signal is
+    // visible regardless of mode.
+    void invoke("head_track_start", {
+      headPointer: { movementMode: "absolute", speed: 5, distanceToEdge: 0.12 },
+    })
+      .then(() => invoke("head_track_set_debug_preview", { on: true }))
+      .catch(() => {});
   }, []);
   // CUA-5: the agent escalator + its human approval queue. One stable approval
   // controller backs both the escalator's gate and the CuaApprovalPanel, so the

@@ -38,7 +38,9 @@ export type LocalConfig = z.infer<typeof localConfigSchema>;
 export const DEFAULT_LOCAL_CONFIG: LocalConfig = {
   sttProvider: "native",
   headPointer: {
-    movementMode: "edge",
+    // Absolute (hold-to-aim) is the calibratable default while we validate it on
+    // hardware; revisit before merge. Settings to change it live is Phase 3.
+    movementMode: "absolute",
     speed: 5,
     distanceToEdge: 0.12,
   },
