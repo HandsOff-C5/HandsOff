@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { actionPlanSchema, riskLevelSchema, targetAgentSchema } from "./action-plan";
 import { clarificationRequestSchema } from "./clarification";
+import { cuaActionResultSchema, cuaWindowStateSchema } from "./cua";
 import { selectedReferentSchema } from "./referent";
 import { surfaceSnapshotSchema } from "./surface";
 import { finalTranscriptSchema } from "./transcript";
@@ -32,6 +33,27 @@ export const pointingEvidenceSchema = z.object({
 });
 export type PointingEvidence = z.infer<typeof pointingEvidenceSchema>;
 
+export const goalLoopObservationSchema = z.object({
+  tick: z.number().int().nonnegative(),
+  capturedAt: z.string().datetime(),
+  windows: z.array(surfaceSnapshotSchema),
+  state: cuaWindowStateSchema.optional(),
+  previousAction: z
+    .object({
+      actionId: z.string().min(1),
+      result: cuaActionResultSchema,
+    })
+    .optional(),
+});
+export type GoalLoopObservation = z.infer<typeof goalLoopObservationSchema>;
+
+export const goalSessionInputSchema = z.object({
+  goal: z.string().min(1),
+  tick: z.number().int().nonnegative(),
+  observations: z.array(goalLoopObservationSchema),
+});
+export type GoalSessionInput = z.infer<typeof goalSessionInputSchema>;
+
 export const intentInputSchema = z.object({
   sessionId: z.string().min(1),
   speech: z.object({
@@ -39,6 +61,7 @@ export const intentInputSchema = z.object({
   }),
   pointingEvidence: z.array(pointingEvidenceSchema).min(1),
   surfaceCandidates: z.array(surfaceSnapshotSchema),
+  goalSession: goalSessionInputSchema.optional(),
 });
 export type IntentInput = z.infer<typeof intentInputSchema>;
 
@@ -72,6 +95,15 @@ export const resolvedIntentSchema = z.discriminatedUnion("status", [
     // Structured prompt for the dashboard when status is clarification_required
     // (#36). Absent on `blocked` and on log-only clarifications.
     clarification: clarificationRequestSchema.optional(),
+    createdAt: z.string().datetime(),
+  }),
+  z.object({
+    status: z.literal("satisfied"),
+    id: z.string().min(1),
+    input: intentInputSchema,
+    requires_approval: z.literal(false),
+    target_agent: z.literal("none"),
+    summary: z.string().min(1),
     createdAt: z.string().datetime(),
   }),
 ]);

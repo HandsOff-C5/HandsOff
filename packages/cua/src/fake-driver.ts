@@ -10,6 +10,7 @@ import type {
 import type { CuaDriver } from "./driver";
 
 export type FakeCuaCall =
+  | { kind: "list_windows" }
   | { kind: "launch_app"; appName: string; bundleId?: string }
   | { kind: "get_window_state"; target: ActionTarget }
   | { kind: "click"; target: ActionTarget }
@@ -60,6 +61,7 @@ export function createFakeCuaDriver(options: {
       return options.apps ?? [];
     },
     async listWindows() {
+      record({ kind: "list_windows" });
       return options.windows ?? [options.state.surface];
     },
     async launchApp({ appName, bundleId }) {

@@ -1,5 +1,5 @@
 import { APP_NAME } from "@handsoff/contracts";
-import type { IntentInput, SurfaceSnapshot } from "@handsoff/contracts";
+import type { IntentInput, ResolvedIntent, SurfaceSnapshot } from "@handsoff/contracts";
 import { createFakeCuaDriver } from "@handsoff/cua";
 import { fuseIntent, type ResolveIntentOptions } from "@handsoff/intent";
 import { FakeSttStream, fakeCuaWindowState } from "@handsoff/testkit";
@@ -59,6 +59,24 @@ async function ruleResolver(input: IntentInput, options: ResolveIntentOptions) {
   return fuseIntent(input, { createdAt: options.createdAt });
 }
 
+async function oneTickRuleResolver(
+  input: IntentInput,
+  options: ResolveIntentOptions,
+): Promise<ResolvedIntent> {
+  if ((input.goalSession?.tick ?? 0) > 0) {
+    return {
+      status: "satisfied",
+      id: "intent-satisfied",
+      input,
+      requires_approval: false,
+      target_agent: "none",
+      summary: "Goal satisfied",
+      createdAt: options.createdAt ?? "2026-06-22T12:00:00.000Z",
+    };
+  }
+  return ruleResolver(input, options);
+}
+
 beforeEach(() => {
   fakes = [];
 });
@@ -115,6 +133,7 @@ describe("Dashboard", () => {
           cuaDriver={driver}
           headPointing={headPointing(state.surface)}
           now={() => "2026-06-22T12:00:00.000Z"}
+          resolveIntent={oneTickRuleResolver}
           targetResolveDelayMs={0}
         />,
       );
@@ -132,8 +151,12 @@ describe("Dashboard", () => {
 
       await waitFor(() => expect(screen.getByText(/Last run:/)).toHaveTextContent("succeeded"));
       expect(driver.calls().map((call) => call.kind)).toEqual([
+        "list_windows",
+        "get_window_state",
         "get_window_state",
         "click",
+        "get_window_state",
+        "list_windows",
         "get_window_state",
       ]);
     } finally {
@@ -170,7 +193,7 @@ describe("Dashboard", () => {
       });
 
       expect(screen.getByText("Click selected target")).toBeInTheDocument();
-      expect(driver.calls()).toHaveLength(0);
+      expect(driver.calls().map((call) => call.kind)).toEqual(["list_windows", "get_window_state"]);
     } finally {
       clock.mockRestore();
     }
