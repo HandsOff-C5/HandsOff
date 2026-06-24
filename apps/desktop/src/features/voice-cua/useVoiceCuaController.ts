@@ -1,7 +1,9 @@
 import { runApprovedPlan, type CuaActionPort, type PlanRunResult } from "@handsoff/actions";
 import {
+  type CuaActionResult,
   type CuaActionRequest,
   type FinalTranscript,
+  type GoalLoopObservation,
   type IntentInput,
   type PointingEvidence,
   type ResolvedIntent,
@@ -31,6 +33,7 @@ const ACTIVE_WINDOW_SURFACE: SurfaceSnapshot = {
 
 // ponytail: fixed retarget grace; make it configurable if manual testing proves one size wrong.
 const DEFAULT_TARGET_RESOLVE_DELAY_MS = 1500;
+const DEFAULT_MAX_GOAL_TICKS = 5;
 
 function wait(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
@@ -58,6 +61,39 @@ function terminal(status: PlanRunResult["status"]): TerminalSessionStatus {
   }
   return status;
 }
+
+function blockedIntent(
+  input: IntentInput,
+  id: string,
+  createdAt: string,
+  reason: string,
+): ResolvedIntent {
+  return {
+    status: "blocked",
+    id,
+    input,
+    constraints: [],
+    requires_approval: false,
+    target_agent: "none",
+    reason,
+    createdAt,
+  };
+}
+
+function actionResultFor(result: PlanRunResult, fallbackSummary: string): CuaActionResult {
+  if (result.result) return result.result;
+  if (result.status === "succeeded") return { status: "succeeded", summary: fallbackSummary };
+  if (result.status === "blocked") return { status: "blocked", reason: fallbackSummary };
+  return { status: "failed", error: fallbackSummary };
+}
+
+type GoalRunState = {
+  sessionId: string;
+  baseInput: IntentInput;
+  observations: readonly GoalLoopObservation[];
+  nextTick: number;
+  maxTicks: number;
+};
 
 export type IntentResolveInvoke = <T>(
   command: string,
@@ -89,6 +125,7 @@ export function useVoiceCuaController(args: {
   // The live gesture referent (#35): when the camera has a locked point at intent
   // time it returns gesture `PointingEvidence`; null when nothing is locked.
   getGestureEvidence?: () => PointingEvidence | null;
+  maxGoalTicks?: number;
 }) {
   const [intent, setIntent] = useState<ResolvedIntent | null>(null);
   const [runResult, setRunResult] = useState<PlanRunResult | null>(null);
@@ -96,6 +133,7 @@ export function useVoiceCuaController(args: {
   const [auditEvents, setAuditEvents] = useState<readonly SupervisionAuditEvent[]>([]);
   const audit = useRef(createActionAuditStore());
   const sessions = useRef(createSupervisionSessionStore());
+  const goalRun = useRef<GoalRunState | null>(null);
   const headPointingRef = useRef(args.headPointing);
   const resolveIntentRef = useRef(args.resolveIntent ?? resolveIntent);
   headPointingRef.current = args.headPointing;
@@ -159,11 +197,125 @@ export function useVoiceCuaController(args: {
           ? headCandidates.map((candidate) => candidate.surface)
           : pointingEvidence.flatMap((e) => (e.surface ? [e.surface] : [])),
     };
-    // Diagnostic: the exact transcript + head evidence handed to the intent engine.
-    // `surfaceCandidates: []` here is the "No attention-region candidates" path.
+    const run: GoalRunState = {
+      sessionId: started.id,
+      baseInput: input,
+      observations: [],
+      nextTick: 0,
+      maxTicks: args.maxGoalTicks ?? DEFAULT_MAX_GOAL_TICKS,
+    };
+    goalRun.current = run;
+    setSession(started);
+    await continueGoal(run, createdAt);
+  }
+
+  async function observeGoalTick(
+    tick: number,
+    previousAction?: GoalLoopObservation["previousAction"],
+  ): Promise<GoalLoopObservation> {
+    const capturedAt = timestamp();
+    const windows = [...(await args.driver.listWindows())];
+    const focused = windows.find((window) => window.focused) ?? windows[0];
+    const stateResult = focused
+      ? await args.driver.getWindowState({ surface: focused })
+      : ({
+          status: "blocked",
+          reason: "No windows available to observe",
+        } satisfies CuaActionResult);
+    return {
+      tick,
+      capturedAt,
+      windows,
+      ...(stateResult.status === "succeeded" && stateResult.state
+        ? { state: stateResult.state }
+        : {}),
+      ...(previousAction ? { previousAction } : {}),
+    };
+  }
+
+  function inputForTick(
+    run: GoalRunState,
+    tick: number,
+    observations: readonly GoalLoopObservation[],
+  ): IntentInput {
+    if (tick === 0) {
+      return {
+        ...run.baseInput,
+        goalSession: {
+          goal: run.baseInput.speech.finalTranscript.text,
+          tick,
+          observations: [...observations],
+        },
+      };
+    }
+
+    const latest = observations.at(-1);
+    const surface = latest?.state?.surface ?? latest?.windows[0];
+    return {
+      ...run.baseInput,
+      pointingEvidence: surface
+        ? [
+            {
+              source: "active_window",
+              confidence: 1,
+              strategy: "goal-loop-live-observation",
+              surface,
+            },
+          ]
+        : run.baseInput.pointingEvidence,
+      surfaceCandidates: latest?.windows.length ? latest.windows : run.baseInput.surfaceCandidates,
+      goalSession: {
+        goal: run.baseInput.speech.finalTranscript.text,
+        tick,
+        observations: [...observations],
+      },
+    };
+  }
+
+  function recordIntent(sessionId: string, createdAt: string, next: ResolvedIntent) {
+    audit.current.record({
+      kind: "intent_created",
+      sessionId,
+      actionId: next.status === "ready" ? next.action_plan.id : next.id,
+      recordedAt: createdAt,
+      intent: next,
+    });
+    setAuditEvents(audit.current.forSession(sessionId));
+  }
+
+  function finishGoal(run: GoalRunState, status: TerminalSessionStatus, finishedAt: string) {
+    const nextSession = sessions.current.finish(run.sessionId, status, finishedAt);
+    setSession(nextSession);
+    goalRun.current = null;
+  }
+
+  async function continueGoal(
+    run: GoalRunState,
+    createdAt: string,
+    previousAction?: GoalLoopObservation["previousAction"],
+  ) {
+    if (run.nextTick >= run.maxTicks) {
+      const input = inputForTick(run, run.nextTick, run.observations);
+      const next = blockedIntent(
+        input,
+        `intent-max-ticks-${run.nextTick}`,
+        createdAt,
+        `Goal loop reached the max-tick safety bound (${run.maxTicks})`,
+      );
+      setIntent(next);
+      setRunResult(null);
+      recordIntent(run.sessionId, createdAt, next);
+      finishGoal(run, "blocked", createdAt);
+      return;
+    }
+
+    const observation = await observeGoalTick(run.nextTick, previousAction);
+    const observations = [...run.observations, observation];
+    const input = inputForTick(run, run.nextTick, observations);
+    // Diagnostic: the exact transcript + live observation handed to the intent engine.
     console.info("[handsoff] intent input", {
-      transcript: finalTranscript.text,
-      headPoint: headPointing?.point ?? null,
+      transcript: input.speech.finalTranscript.text,
+      tick: input.goalSession?.tick,
       surfaceCandidates: input.surfaceCandidates.map((s) => ({
         id: s.id,
         app: s.app,
@@ -176,45 +328,85 @@ export function useVoiceCuaController(args: {
         surfaceId: "surface" in p ? p.surface?.id : undefined,
       })),
     });
-    const next = await resolveIntentRef.current(input, { resolver: "auto", createdAt });
+    const resolved = await resolveIntentRef.current(input, { resolver: "auto", createdAt });
+    const next =
+      resolved.status === "ready" && resolved.action_plan.action_plan.length !== 1
+        ? blockedIntent(
+            input,
+            `${resolved.id}-whole-plan-blocked`,
+            createdAt,
+            `Next-action resolver must return exactly one action per tick; got ${resolved.action_plan.action_plan.length}`,
+          )
+        : resolved;
     console.info("[handsoff] intent result", {
       status: next.status,
       reason: "reason" in next ? next.reason : undefined,
+      summary: "summary" in next ? next.summary : undefined,
       referent: "referent" in next ? next.referent : undefined,
       planSteps:
         "action_plan" in next ? next.action_plan.action_plan.map((s) => s.kind) : undefined,
     });
-    const nextSession =
-      next.status === "ready" ? started : sessions.current.finish(started.id, "blocked", createdAt);
-    setSession(nextSession);
     setIntent(next);
-    setRunResult(null);
-    audit.current.record({
-      kind: "intent_created",
-      sessionId: started.id,
-      actionId: next.status === "ready" ? next.action_plan.id : next.id,
-      recordedAt: createdAt,
-      intent: next,
-    });
-    setAuditEvents(audit.current.forSession(started.id));
+    if (next.status !== "satisfied") setRunResult(null);
+    recordIntent(run.sessionId, createdAt, next);
+
+    if (next.status === "satisfied") {
+      finishGoal(run, "succeeded", createdAt);
+      return;
+    }
+    if (next.status !== "ready") {
+      finishGoal(run, "blocked", createdAt);
+      return;
+    }
+
+    const nextRun = {
+      ...run,
+      observations,
+      nextTick: run.nextTick + 1,
+    };
+    goalRun.current = nextRun;
+    if (next.requires_approval) return;
+    await runGoalAction(nextRun, next);
   }
 
-  async function approve() {
-    if (intent?.status !== "ready" || !session) return;
+  async function runGoalAction(
+    run: GoalRunState,
+    readyIntent: Extract<ResolvedIntent, { status: "ready" }>,
+    approval?: ReturnType<typeof makeApprovalDecision>,
+  ) {
     const runningAt = timestamp();
-    setSession(sessions.current.run(session.id, runningAt));
+    setSession(sessions.current.run(run.sessionId, runningAt));
     setRunResult({ status: "running" });
     const result = await runApprovedPlan({
-      sessionId: session.id,
-      plan: intent.action_plan,
-      approval: makeApprovalDecision(intent.action_plan.id, "approved", runningAt),
+      sessionId: run.sessionId,
+      plan: readyIntent.action_plan,
+      ...(approval ? { approval } : {}),
       cua: actionPortFor(args.driver),
       audit: audit.current,
       recordedAt: runningAt,
     });
-    setSession(sessions.current.finish(session.id, terminal(result.status), timestamp()));
     setRunResult(result);
-    setAuditEvents(audit.current.forSession(session.id));
+    setAuditEvents(audit.current.forSession(run.sessionId));
+    if (result.status !== "succeeded") {
+      finishGoal(run, terminal(result.status), timestamp());
+      return;
+    }
+
+    await continueGoal(run, timestamp(), {
+      actionId: readyIntent.action_plan.id,
+      result: actionResultFor(result, readyIntent.action_plan.summary),
+    });
+  }
+
+  async function approve() {
+    const run = goalRun.current;
+    if (intent?.status !== "ready" || !session || !run) return;
+    const runningAt = timestamp();
+    await runGoalAction(
+      run,
+      intent,
+      makeApprovalDecision(intent.action_plan.id, "approved", runningAt),
+    );
   }
 
   async function reject() {
@@ -229,6 +421,7 @@ export function useVoiceCuaController(args: {
       recordedAt: decidedAt,
     });
     setSession(sessions.current.finish(session.id, terminal(result.status), decidedAt));
+    goalRun.current = null;
     setRunResult(result);
     setAuditEvents(audit.current.forSession(session.id));
   }

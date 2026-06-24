@@ -42,6 +42,17 @@ export function PlanPreviewPanel({
     );
   }
 
+  if (intent.status === "satisfied") {
+    return (
+      <section className="panel plan-preview">
+        <h2 className="panel__title">Plan preview</h2>
+        <p className="plan-preview__status" role="status">
+          {intent.summary}
+        </p>
+      </section>
+    );
+  }
+
   if (intent.status !== "ready") {
     return (
       <section className="panel plan-preview">
