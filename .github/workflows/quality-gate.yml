@@ -72,3 +72,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: knip (unused files / exports / dependencies)
         run: pnpm dlx knip
+
+  swift-sidecar:
+    name: swift · DirectorSidecar tests
+    # The native Swift sidecar (apps/sidecar) is the product UI (Option B). Build +
+    # run its Swift Testing suite on macOS, the actual target. Advisory until it is
+    # green a few runs, then flip to required (drop continue-on-error + add to branch
+    # protection). If the runner's default Xcode is too old for the project's Swift
+    # version, pin it with maxim-lobanov/setup-xcode.
+    runs-on: macos-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: apps/sidecar/DirectorSidecar
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version
+      - name: Build + run unit tests (no signing; unit target only)
+        run: |
+          xcodebuild test \
+            -project DirectorSidecar.xcodeproj \
+            -scheme DirectorSidecar \
+            -destination 'platform=macOS' \
+            -only-testing:DirectorSidecarTests \
+            CODE_SIGNING_ALLOWED=NO
