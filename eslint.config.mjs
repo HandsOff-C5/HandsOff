@@ -11,6 +11,8 @@ export default tseslint.config(
       // Self-hosted MediaPipe assets (generated, gitignored) — not our source.
       "apps/**/public/wasm/**",
       "apps/**/public/models/**",
+      // Worktree scratch space managed by the agent harness — not project source.
+      ".claude/**",
     ],
   },
   js.configs.recommended,

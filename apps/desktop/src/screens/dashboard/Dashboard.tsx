@@ -18,6 +18,7 @@ import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnb
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
 import { ReadinessPanel } from "../../features/readiness/ReadinessPanel";
+import { ReferentsPanel } from "../../features/referents/ReferentsPanel";
 import { useReadinessProbe } from "../../features/readiness/useReadinessProbe";
 import { SessionsPanel } from "../../features/sessions/SessionsPanel";
 import { SettingsPanel } from "../../features/settings/SettingsPanel";
@@ -203,6 +204,7 @@ export function Dashboard({
             gestureEvidence.current = evidence;
           }}
         />
+        <ReferentsPanel intent={intent} />
         <ReadinessPanel report={report} />
         <PermissionsPanel
           report={report}

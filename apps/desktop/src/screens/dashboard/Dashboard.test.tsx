@@ -15,10 +15,11 @@ const PANEL_TITLES = [
   "Settings",
   "Transcript",
   "Sessions",
+  "Referents",
   "Plan preview",
 ];
-// Sessions and Plan preview still start empty before a transcript arrives.
-const EMPTY_PANEL_TITLES = ["Sessions", "Plan preview"];
+// Sessions, Referents, and Plan preview still start empty before a transcript arrives.
+const EMPTY_PANEL_TITLES = ["Sessions", "Referents", "Plan preview"];
 
 let fakes: FakeSttStream[];
 
