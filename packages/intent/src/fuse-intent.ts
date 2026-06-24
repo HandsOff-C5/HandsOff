@@ -15,6 +15,11 @@ import {
   DEFAULT_CLARIFICATION_POLICY,
   type ClarificationCandidate,
 } from "./clarification/decide";
+import {
+  routeByConfidence,
+  DEFAULT_ESCALATION_THRESHOLDS,
+  type EscalationThresholds,
+} from "./escalation-policy";
 import { requiresApproval, riskForIntent } from "./risk";
 import { parseVoiceCommand } from "./voice-command-parser";
 
@@ -32,6 +37,9 @@ export type FuseIntentOptions = {
   planId?: string;
   createdAt?: string;
   minConfidence?: number;
+  // CUA-5 band (Hirom's call): act above actAt, escalate to the CUA agent in
+  // [escalateAt, actAt), clarify below escalateAt. Defaults 0.7 / 0.4.
+  escalationThresholds?: EscalationThresholds;
 };
 
 export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}): ResolvedIntent {
@@ -57,8 +65,12 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
     confidence = 1;
   } else {
     const candidates = clarificationCandidates(input);
+    const thresholds = options.escalationThresholds ?? DEFAULT_ESCALATION_THRESHOLDS;
+    // The escalate floor IS the clarify cut: below it (or ambiguous / no target)
+    // we ask rather than act blind. Handing a too-weak or genuinely ambiguous
+    // bind to a blind agent doesn't help — clarifying does.
     const decision = decideClarification(candidates, {
-      minConfidence: options.minConfidence ?? 0.5,
+      minConfidence: thresholds.escalateAt,
       ambiguityMargin: DEFAULT_CLARIFICATION_POLICY.ambiguityMargin,
     });
     if (decision.kind === "clarify") {
@@ -67,6 +79,12 @@ export function fuseIntent(input: IntentInput, options: FuseIntentOptions = {}):
     const chosen = candidates.find((c) => c.targetId === decision.targetId);
     surface = chosen?.surface ?? input.surfaceCandidates[0];
     confidence = chosen?.confidence ?? 0;
+    // CUA-5 band: a single clear target with only middling confidence isn't
+    // act-worthy on its own, but it's too specific to waste on a clarify — hand
+    // it to the CUA agent (whose own gate guards each mutating step).
+    if (surface && routeByConfidence(confidence, thresholds) === "escalate_to_agent") {
+      return escalateToAgent(input, id, createdAt, surface, confidence, parsed.intent_type);
+    }
   }
 
   if (
@@ -173,6 +191,34 @@ function clarificationRequired(
     target_agent: "none",
     reason: CLARIFICATION_REASON_TEXT[request.reason],
     clarification: request,
+    createdAt,
+  };
+}
+
+// Build the CUA-5 hand-off intent: a clear single target whose fused confidence
+// landed in the agent band. Carries the grounded surface (so the controller can
+// ground the agent on the pointed-at window) and the confidence that triggered it.
+function escalateToAgent(
+  input: IntentInput,
+  id: string,
+  createdAt: string,
+  surface: SurfaceSnapshot,
+  fusedConfidence: number,
+  intentType: ResolvedIntent["intent_type"],
+): ResolvedIntent {
+  const risk_level = intentType ? riskForIntent(intentType) : undefined;
+  return {
+    status: "escalate_to_agent",
+    id,
+    input,
+    ...(intentType ? { intent_type: intentType } : {}),
+    surface,
+    fusedConfidence,
+    constraints: [],
+    ...(risk_level ? { risk_level } : {}),
+    requires_approval: true,
+    target_agent: "cua-driver",
+    reason: `Fused confidence ${fusedConfidence.toFixed(2)} is in the agent band — handing off to the CUA agent.`,
     createdAt,
   };
 }

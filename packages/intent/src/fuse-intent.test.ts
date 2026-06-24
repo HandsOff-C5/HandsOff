@@ -88,6 +88,67 @@ describe("intent fusion", () => {
     });
   });
 
+  it("escalates to the agent when fused confidence lands in the band (CUA-5)", () => {
+    const grounded = surface();
+    const intent = fuseIntent(
+      input("click there", {
+        pointingEvidence: [
+          {
+            source: "cursor",
+            confidence: 0.55,
+            strategy: "active-window-current-cursor",
+            surface: grounded,
+          },
+        ],
+        surfaceCandidates: [grounded],
+      }),
+    );
+
+    expect(intent.status).toBe("escalate_to_agent");
+    if (intent.status !== "escalate_to_agent") throw new Error("expected escalate_to_agent");
+    // It carries the grounded window + the confidence that triggered the hand-off.
+    expect(intent.surface.app).toBe("Notes");
+    expect(intent.fusedConfidence).toBeCloseTo(0.55);
+    expect(intent.target_agent).toBe("cua-driver");
+  });
+
+  it("acts directly above the band, escalates inside it, clarifies below it", () => {
+    const make = (confidence: number) => {
+      const s = surface();
+      return fuseIntent(
+        input("click there", {
+          pointingEvidence: [
+            { source: "cursor", confidence, strategy: "active-window-current-cursor", surface: s },
+          ],
+          surfaceCandidates: [s],
+        }),
+      ).status;
+    };
+    expect(make(0.85)).toBe("ready");
+    expect(make(0.45)).toBe("escalate_to_agent");
+    expect(make(0.3)).toBe("clarification_required");
+  });
+
+  it("honors custom escalation thresholds", () => {
+    const grounded = surface();
+    const intent = fuseIntent(
+      input("click there", {
+        pointingEvidence: [
+          {
+            source: "cursor",
+            confidence: 0.65,
+            strategy: "active-window-current-cursor",
+            surface: grounded,
+          },
+        ],
+        surfaceCandidates: [grounded],
+      }),
+      { escalationThresholds: { actAt: 0.6, escalateAt: 0.3 } },
+    );
+    // 0.65 >= custom actAt 0.6 → acts instead of escalating.
+    expect(intent.status).toBe("ready");
+  });
+
   it("attaches a structured low_confidence clarification (#36)", () => {
     const intent = fuseIntent(
       input("click there", {

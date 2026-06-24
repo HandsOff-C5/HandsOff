@@ -1,10 +1,14 @@
 import { APP_NAME } from "@handsoff/contracts";
 import type { IntentInput, SurfaceSnapshot } from "@handsoff/contracts";
-import { createFakeCuaDriver } from "@handsoff/cua";
+import {
+  createApprovalController,
+  createFakeCuaDriver,
+  type TauriCuaEscalator,
+} from "@handsoff/cua";
 import { fuseIntent, type ResolveIntentOptions } from "@handsoff/intent";
 import { FakeSttStream, fakeCuaWindowState } from "@handsoff/testkit";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../App";
 import { Dashboard } from "./Dashboard";
@@ -48,10 +52,10 @@ function talkButton() {
   return screen.getByRole("button", { name: /Hold to talk|Release to send/ });
 }
 
-function headPointing(surface: SurfaceSnapshot) {
+function headPointing(surface: SurfaceSnapshot, score = 0.9) {
   return {
     point: { x: 10, y: 20 },
-    candidates: [{ surface, score: 0.9, distance: 0 }],
+    candidates: [{ surface, score, distance: 0 }],
   };
 }
 
@@ -169,6 +173,41 @@ describe("Dashboard", () => {
 
     expect(screen.getByText("Click selected target")).toBeInTheDocument();
     expect(driver.calls()).toHaveLength(0);
+  });
+
+  it("hands a band-confidence request to the CUA agent (CUA-5 escalation)", async () => {
+    const state = fakeCuaWindowState();
+    const escalate = vi.fn().mockResolvedValue({
+      status: "succeeded",
+      summary: "Agent completed the task",
+      transcript: [],
+    });
+    const escalator: TauriCuaEscalator = { approval: createApprovalController(), escalate };
+    render(
+      <Dashboard
+        createStream={makeFactory()}
+        cuaDriver={createFakeCuaDriver({ state })}
+        cuaEscalator={escalator}
+        // 0.55 lands in the 0.4–0.7 agent band → fusion routes to escalate_to_agent.
+        headPointing={headPointing(state.surface, 0.55)}
+        resolveIntent={ruleResolver}
+        now={() => "2026-06-22T12:00:00.000Z"}
+        targetResolveDelayMs={0}
+      />,
+    );
+
+    fireEvent.pointerDown(talkButton());
+    await flush();
+    act(() => latest().emitFinal("click there", 0.95, 100));
+    fireEvent.pointerUp(talkButton());
+    await flush();
+
+    // Fusion handed off to the agent loop with the spoken command + grounded referent.
+    await waitFor(() => expect(escalate).toHaveBeenCalledTimes(1));
+    expect(escalate.mock.calls[0]?.[0]).toMatchObject({
+      command: "click there",
+      referent: { app: state.surface.app },
+    });
   });
 
   it("shows a non-actionable clarification when no head candidates are available", async () => {

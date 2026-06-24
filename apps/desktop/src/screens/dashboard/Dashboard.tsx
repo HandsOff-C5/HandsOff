@@ -7,7 +7,14 @@ import {
   type SttProvider,
   type SttStream,
 } from "@handsoff/contracts";
-import { createTauriCuaDriver, createUnavailableCuaDriver, type CuaDriver } from "@handsoff/cua";
+import {
+  createApprovalController,
+  createTauriCuaDriver,
+  createTauriCuaEscalator,
+  createUnavailableCuaDriver,
+  type CuaDriver,
+  type TauriCuaEscalator,
+} from "@handsoff/cua";
 import { planPermissionOnboarding } from "@handsoff/desktop";
 import {
   createAssemblyAiStream,
@@ -20,6 +27,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { CameraPanel } from "../../features/camera/CameraPanel";
 import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
+import { CuaApprovalPanel } from "../../features/cua-approval/CuaApprovalPanel";
+import { useCuaApproval } from "../../features/cua-approval/useCuaApproval";
 import { DiagnosticsScreen } from "../../features/diagnostics/DiagnosticsScreen";
 import { deriveVoiceState } from "../../features/overlay/overlay-signal";
 import { emitOverlayPointer, emitOverlayVoice } from "../../features/overlay/tauri-overlay";
@@ -104,6 +113,7 @@ function streamFactoryFor(provider: SttProvider): () => SttStream {
 interface DashboardProps {
   createStream?: () => SttStream;
   cuaDriver?: CuaDriver;
+  cuaEscalator?: TauriCuaEscalator;
   headPointing?: HeadPointingSnapshot;
   resolveIntent?: (input: IntentInput, options: ResolveIntentOptions) => Promise<ResolvedIntent>;
   now?: () => string;
@@ -118,6 +128,7 @@ interface DashboardProps {
 export function Dashboard({
   createStream: injectedStream,
   cuaDriver,
+  cuaEscalator: injectedEscalator,
   headPointing: injectedHeadPointing,
   resolveIntent,
   now,
@@ -145,6 +156,20 @@ export function Dashboard({
       : undefined);
   const liveHeadPointing = useHeadPointing(hasTauriBackend() ? HEAD_POINTING_TAURI : undefined);
   const headPointing = injectedHeadPointing ?? liveHeadPointing;
+  // CUA-5: the agent escalator + its human approval queue. One stable approval
+  // controller backs both the escalator's gate and the CuaApprovalPanel, so the
+  // panel renders and resolves the mutating actions the agent loop queues.
+  const cuaApprovalController = useRef(createApprovalController()).current;
+  const cuaEscalator =
+    injectedEscalator ??
+    (hasTauriBackend()
+      ? createTauriCuaEscalator({
+          invoke: (command, commandArgs) => invoke(command, commandArgs),
+          approval: cuaApprovalController,
+        })
+      : undefined);
+  const approvalController = injectedEscalator?.approval ?? cuaApprovalController;
+  const cuaApproval = useCuaApproval(approvalController);
   const { intent, runResult, session, auditEvents, approve, reject, handleFinalTranscript } =
     useVoiceCuaController({
       driver,
@@ -153,6 +178,7 @@ export function Dashboard({
       resolveIntent: intentResolver,
       targetResolveDelayMs,
       getGestureEvidence: () => gestureEvidence.current,
+      ...(cuaEscalator ? { escalate: cuaEscalator.escalate } : {}),
     });
   // The structured clarification prompt (#36) when the engine won't act blind.
   // Display-first; interactive pick→re-resolve needs a controller round-trip (follow-up).
@@ -283,6 +309,11 @@ export function Dashboard({
           onStatusChange={setCaptureStatus}
         />
         <SessionsPanel session={session} auditEvents={auditEvents} />
+        <CuaApprovalPanel
+          pending={cuaApproval.pending}
+          onApprove={(id) => cuaApproval.decide(id, "allow")}
+          onDeny={(id) => cuaApproval.decide(id, "deny")}
+        />
         <ClarificationPanel request={clarification} />
         <PlanPreviewPanel
           intent={intent}

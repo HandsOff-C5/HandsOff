@@ -97,4 +97,39 @@ describe("resolved intent contract", () => {
 
     expect(result.success).toBe(true);
   });
+
+  it("accepts an escalate-to-agent state carrying the grounded surface + fused confidence", () => {
+    const surface = input().surfaceCandidates[0]!;
+    const result = safeParseResolvedIntent({
+      status: "escalate_to_agent",
+      id: "intent-3",
+      input: input(),
+      intent_type: "click",
+      surface,
+      fusedConfidence: 0.55,
+      constraints: [],
+      requires_approval: true,
+      target_agent: "cua-driver",
+      reason: "Confidence 0.55 is in the agent band — handing off to the CUA agent",
+      createdAt: "2026-06-22T12:00:00.000Z",
+    } satisfies ResolvedIntent);
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an escalate-to-agent state missing the grounded surface", () => {
+    const result = safeParseResolvedIntent({
+      status: "escalate_to_agent",
+      id: "intent-3",
+      input: input(),
+      fusedConfidence: 0.55,
+      constraints: [],
+      requires_approval: true,
+      target_agent: "cua-driver",
+      reason: "no surface",
+      createdAt: "2026-06-22T12:00:00.000Z",
+    });
+
+    expect(result.success).toBe(false);
+  });
 });

@@ -8,7 +8,12 @@ import {
   type SupervisionAuditEvent,
   type SurfaceSnapshot,
 } from "@handsoff/contracts";
-import type { CuaDriver } from "@handsoff/cua";
+import {
+  cuaTranscriptToAuditEvents,
+  type CuaDriver,
+  type CuaEscalationRequest,
+  type LoopResult,
+} from "@handsoff/cua";
 import { resolveIntent, type ResolveIntentOptions } from "@handsoff/intent";
 import {
   createActionAuditStore,
@@ -62,6 +67,13 @@ function terminal(status: PlanRunResult["status"]): TerminalSessionStatus {
   return status;
 }
 
+// Map the agent loop's outcome onto a terminal session status: only a clean
+// success closes the session as succeeded; blocked/failed/max_steps all read as
+// not-completed so the trail shows the agent didn't finish the task.
+function loopToTerminal(status: LoopResult["status"]): TerminalSessionStatus {
+  return status === "succeeded" ? "succeeded" : status === "blocked" ? "blocked" : "failed";
+}
+
 export type IntentResolveInvoke = <T>(
   command: string,
   args?: Record<string, unknown>,
@@ -92,9 +104,14 @@ export function useVoiceCuaController(args: {
   // The live gesture referent (#35): when the camera has a locked point at intent
   // time it returns gesture `PointingEvidence`; null when nothing is locked.
   getGestureEvidence?: () => PointingEvidence | null;
+  // CUA-5: the agent escalator (createTauriCuaEscalator().escalate). When fusion
+  // routes a request into the agent band, the controller hands it off here. Absent
+  // (e.g. no native backend) → the escalate intent is surfaced but not run.
+  escalate?: (request: CuaEscalationRequest) => Promise<LoopResult>;
 }) {
   const [intent, setIntent] = useState<ResolvedIntent | null>(null);
   const [runResult, setRunResult] = useState<PlanRunResult | null>(null);
+  const [escalationResult, setEscalationResult] = useState<LoopResult | null>(null);
   const [session, setSession] = useState<SupervisionSession | null>(null);
   const [auditEvents, setAuditEvents] = useState<readonly SupervisionAuditEvent[]>([]);
   const audit = useRef(createActionAuditStore());
@@ -172,11 +189,9 @@ export function useVoiceCuaController(args: {
       surfaceCandidates: pointingEvidence.flatMap((e) => (e.surface ? [e.surface] : [])),
     };
     const next = await resolveIntentRef.current(input, { resolver: "auto", createdAt });
-    const nextSession =
-      next.status === "ready" ? started : sessions.current.finish(started.id, "blocked", createdAt);
-    setSession(nextSession);
     setIntent(next);
     setRunResult(null);
+    setEscalationResult(null);
     audit.current.record({
       kind: "intent_created",
       sessionId: started.id,
@@ -184,6 +199,36 @@ export function useVoiceCuaController(args: {
       recordedAt: createdAt,
       intent: next,
     });
+
+    // CUA-5 band: fusion handed this to the agent. Run the grounded loop (its own
+    // approval gate guards each mutating step via the shared ApprovalController),
+    // record the agent's steps to the trail, and close the session on the outcome.
+    if (next.status === "escalate_to_agent" && args.escalate) {
+      setSession(sessions.current.run(started.id, createdAt));
+      const loop = await args.escalate({
+        command: finalTranscript.text,
+        referent: {
+          app: next.surface.app,
+          ...(next.surface.title ? { title: next.surface.title } : {}),
+        },
+      });
+      for (const event of cuaTranscriptToAuditEvents({
+        sessionId: started.id,
+        actionId: next.id,
+        recordedAt: timestamp(),
+        transcript: loop.transcript,
+      })) {
+        audit.current.record(event);
+      }
+      setEscalationResult(loop);
+      setSession(sessions.current.finish(started.id, loopToTerminal(loop.status), timestamp()));
+      setAuditEvents(audit.current.forSession(started.id));
+      return;
+    }
+
+    setSession(
+      next.status === "ready" ? started : sessions.current.finish(started.id, "blocked", createdAt),
+    );
     setAuditEvents(audit.current.forSession(started.id));
   }
 
@@ -224,6 +269,7 @@ export function useVoiceCuaController(args: {
   return {
     intent,
     runResult,
+    escalationResult,
     session,
     auditEvents,
     approve,

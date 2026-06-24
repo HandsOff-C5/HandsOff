@@ -71,6 +71,24 @@ export const resolvedIntentSchema = z.discriminatedUnion("status", [
     clarification: clarificationRequestSchema.optional(),
     createdAt: z.string().datetime(),
   }),
+  // CUA-5 (#88): the fused confidence landed in the agent band — not confident
+  // enough to act on its own, not so weak that asking is better. Hand off to the
+  // CUA agent loop, grounded on `surface` (the pointed-at window). `fusedConfidence`
+  // records why; the agent's own approval gate guards each mutating step.
+  z.object({
+    status: z.literal("escalate_to_agent"),
+    id: z.string().min(1),
+    input: intentInputSchema,
+    intent_type: intentTypeSchema.optional(),
+    surface: surfaceSnapshotSchema,
+    fusedConfidence: z.number().min(0).max(1),
+    constraints: z.array(z.string()).default([]),
+    risk_level: riskLevelSchema.optional(),
+    requires_approval: z.boolean(),
+    target_agent: targetAgentSchema,
+    reason: z.string().min(1),
+    createdAt: z.string().datetime(),
+  }),
 ]);
 export type ResolvedIntent = z.infer<typeof resolvedIntentSchema>;
 
