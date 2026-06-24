@@ -1209,6 +1209,20 @@ body {
   color: #8b93a7;
 }
 
+/* The engine (camera/trackers/voice/CUA/calibration) renders headless in the
+   VISIBLE overlay window, parked off-screen so it never shows but its <video> keeps
+   playing and its requestAnimationFrame loops run at full rate. Do NOT use
+   display:none here — that can suspend the video pipeline. */
+.engine-host {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+  width: 1440px;
+  height: 900px;
+  pointer-events: none;
+  overflow: hidden;
+}
+
 /* ── Startup calibration onboarding (touch the dots) ─────────────────────────
    Fullscreen over the real desktop before the HUD goes live. A 3×3 grid of dots;
    the glowing one fills as you dwell on it, captured dots dim, the live cursor
