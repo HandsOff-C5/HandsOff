@@ -37,10 +37,10 @@ export type CuaElement = z.infer<typeof cuaElementSchema>;
 // elements. The brain grounds on `elements[]` first and falls back to the pixels
 // for AX-blind surfaces, so the image is optional — `ax`-only captures omit it.
 export const cuaScreenshotSchema = z.object({
-  pngBase64: z.string(),
-  mimeType: z.string(),
-  width: z.number(),
-  height: z.number(),
+  pngBase64: z.string().min(1),
+  mimeType: z.string().min(1),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
 });
 export type CuaScreenshot = z.infer<typeof cuaScreenshotSchema>;
 
