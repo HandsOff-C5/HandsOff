@@ -16,8 +16,9 @@ struct HeadPointerConfig: Equatable {
     var speed: Double
     var distanceToEdge: Double
 
-    // speed raised 5→8, distanceToEdge halved 0.12→0.06 for snappier out-of-the-box feel
-    static let `default` = HeadPointerConfig(movementMode: .edge, speed: 8, distanceToEdge: 0.06)
+    // speed raised 5→8 for snappier out-of-the-box feel.
+    // distanceToEdge stays 0.12 (raw head displacement before controlGain is applied).
+    static let `default` = HeadPointerConfig(movementMode: .edge, speed: 8, distanceToEdge: 0.12)
 
     var sanitized: HeadPointerConfig {
         HeadPointerConfig(

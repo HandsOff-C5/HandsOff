@@ -463,8 +463,12 @@ struct HeadPointerMotion {
     }
 
     private mutating func pointerVelocity(rawVector: SignalVector, smoothedVector: SignalVector) -> SignalVector {
-        let outer = max(config.distanceToEdge, 0.01)
-        let inner = outer * 0.45  // was 0.55 — tighter hysteresis, cursor activates sooner
+        // Scale by controlGain so thresholds stay calibrated against raw head displacement.
+        // controlVector multiplies all components by 2.5, so rawVector.magnitude is 2.5x
+        // the pre-gain displacement; the outer/inner boundaries must scale with it.
+        let controlGain = 2.5
+        let outer = max(config.distanceToEdge, 0.01) * controlGain
+        let inner = outer * 0.45
         let rawMagnitude = rawVector.magnitude
 
         if movementActive {
@@ -482,10 +486,9 @@ struct HeadPointerMotion {
 
         let excess = max(driveVector.magnitude - inner, 0)
         let normalized = min(excess / max(1 - inner, 0.001), 1)
-        // pow(x, 0.7) is a concave curve: small head movements produce a proportionally
-        // larger cursor jump than before (was pow(x, 1.35) which was convex and crushed
-        // small movements). This makes the cursor feel much more responsive at low displacement.
-        let gain = pow(normalized, 0.7)
+        // Convex curve required: the self-test asserts fastDelta > slowDelta*2 which only
+        // holds when the gain/magnitude ratio grows with displacement (exponent > 1).
+        let gain = pow(normalized, 1.35)
         // Max speed raised: was 180 + speed*90; now 320 + speed*120 for snappier response.
         let maxPixelsPerSecond = 320 + config.speed * 120
         let scalar = maxPixelsPerSecond * gain / driveVector.magnitude
@@ -493,7 +496,7 @@ struct HeadPointerMotion {
     }
 
     private mutating func updateStableRecenter(rawVector: SignalVector, smoothed: HeadSignal, dt: Double) {
-        let inner = max(config.distanceToEdge, 0.01) * 0.55
+        let inner = max(config.distanceToEdge, 0.01) * 0.55 * 2.5  // scale by controlGain
         guard rawVector.magnitude < inner, movementActive == false else {
             stableTime = 0
             return
