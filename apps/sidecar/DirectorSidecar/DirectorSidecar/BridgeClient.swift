@@ -2,10 +2,14 @@
 //  BridgeClient.swift
 //  DirectorSidecar
 //
-//  Loopback client for the Director engine bridge (G0). An `actor` so its socket state
-//  is never raced. Connects to the 127.0.0.1 IP literal (ATS does not apply to IP
-//  literals, so no Info.plist exception is needed) and sends no Origin header — the
-//  engine rejects any client that does (browser / DNS-rebind defense).
+//  Loopback client for the Director engine bridge (G0). An `actor` so its state is never
+//  raced. Connects to the 127.0.0.1 IP literal (ATS does not apply to IP literals) and
+//  sends no Origin header — the engine rejects any client that does.
+//
+//  Readiness is request/response, so each call uses a FRESH short-lived WebSocket: a
+//  memoized socket goes stale when idle (URLSession tears it down after ~6s) and the next
+//  call fails with ENOTCONN ("Socket is not connected"). G1/G2's streaming state will
+//  instead hold a persistent connection with reconnect — a different method from this poll.
 //
 
 import Foundation
@@ -14,20 +18,13 @@ enum BridgeError: Error { case badFrame(String) }
 
 actor BridgeClient {
     private let url = URL(string: "ws://127.0.0.1:51703")!
-    private var task: URLSessionWebSocketTask?
-
-    private func ensureConnected() -> URLSessionWebSocketTask {
-        if let task { return task }
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 6 // bounds a stalled receive()
-        let t = URLSession(configuration: config).webSocketTask(with: url)
-        t.resume()
-        task = t
-        return t
-    }
 
     func requestReadiness() async throws -> ReadinessPayload {
-        let task = ensureConnected()
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() } // close the socket; no stale reuse
+        let task = session.webSocketTask(with: url)
+        task.resume()
+
         try await task.send(.string(#"{"v":1,"type":"command","topic":"getReadiness"}"#))
         for _ in 0..<5 { // receive() yields one frame per call; skip anything unexpected
             guard case let .string(text) = try await task.receive() else { continue }
