@@ -83,14 +83,41 @@ describe("createTauriCuaEscalator", () => {
     expect(goal).toContain("Cursor window");
   });
 
-  it("blocks when no window target was resolved for the referent", async () => {
-    const { invoke, calls } = fakeInvoke({ cua_brain_step: () => doneTurn });
+  it("resolves the window target from the referent when none is passed", async () => {
+    const cursorWindow = {
+      id: "w",
+      title: "main.ts",
+      app: "Cursor",
+      pid: 99,
+      windowId: 12,
+      availability: "available",
+      accessStatus: "accessible",
+    };
+    const { invoke, calls } = fakeInvoke({
+      cua_list_windows: () => [cursorWindow],
+      cua_brain_step: () => doneTurn,
+    });
     const escalator = createTauriCuaEscalator({ invoke });
 
-    const result = await escalator.escalate({ command: "click that" });
+    const result = await escalator.escalate({ command: "do it", referent: { app: "Cursor" } });
+
+    expect(result.status).toBe("succeeded");
+    // It listed windows to ground the referent, THEN ran the brain on it.
+    expect(calls.map((c) => c.command)).toEqual(["cua_list_windows", "cua_brain_step"]);
+  });
+
+  it("blocks when no window can be resolved for the referent", async () => {
+    const { invoke, calls } = fakeInvoke({
+      cua_list_windows: () => [], // nothing to ground in
+      cua_brain_step: () => doneTurn,
+    });
+    const escalator = createTauriCuaEscalator({ invoke });
+
+    const result = await escalator.escalate({ command: "click that", referent: { app: "Ghost" } });
 
     expect(result.status).toBe("blocked");
-    expect(calls).toEqual([]); // never reached the brain or driver
+    // It tried to ground, found nothing, and never reached the brain.
+    expect(calls.map((c) => c.command)).toEqual(["cua_list_windows"]);
   });
 
   it("runs a read-only snapshot through the env and feeds the result back (brain↔env↔brain)", async () => {

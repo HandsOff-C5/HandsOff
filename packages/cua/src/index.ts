@@ -7,6 +7,7 @@ export * from "./runner/audit-trail";
 export * from "./runner/computer-use-loop";
 export * from "./runner/escalation";
 export * from "./runner/live-cua";
+export * from "./runner/referent-target";
 export * from "./runner/tauri-brain-client";
 export * from "./safety/approval-controller";
 export * from "./safety/blast-radius";

@@ -6,6 +6,7 @@ import { buildCuaAgentTool } from "./ax-brain";
 import { createAnthropicBrain } from "./anthropic-brain-adapter";
 import { createTauriCuaAgentEnv } from "./ax-env";
 import { runCuaEscalation, type CuaEscalationRequest } from "./escalation";
+import { resolveTargetFromReferent } from "./referent-target";
 import { createTauriComputerUseClient } from "./tauri-brain-client";
 import type { GateDecision, LoopResult } from "./computer-use-loop";
 
@@ -44,16 +45,19 @@ export function createTauriCuaEscalator(deps: {
 
   return {
     approval,
-    escalate(request) {
+    async escalate(request) {
       // No grounded window → nothing safe to drive. Surface it as blocked rather
-      // than letting the agent act against an unknown surface.
-      if (!request.target) {
-        return Promise.resolve({
+      // than letting the agent act against an unknown surface. An explicit target
+      // wins; otherwise resolve the pointed-at referent to a concrete window.
+      const target =
+        request.target ?? (await resolveTargetFromReferent(deps.invoke, request.referent));
+      if (!target) {
+        return {
           status: "blocked",
           summary:
             "No window was resolved for the pointed-at target; cannot escalate to the agent.",
           transcript: [],
-        });
+        };
       }
 
       // A fresh brain + env per run: the brain holds the Anthropic message history
@@ -67,7 +71,7 @@ export function createTauriCuaEscalator(deps: {
       });
       const env = createTauriCuaAgentEnv({
         invoke: deps.invoke,
-        target: request.target,
+        target,
         ...(deps.refreshAfterAction !== undefined
           ? { refreshAfterAction: deps.refreshAfterAction }
           : {}),
