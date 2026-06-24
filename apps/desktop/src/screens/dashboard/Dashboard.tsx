@@ -49,6 +49,7 @@ import {
   emitOverlayVoice,
   listenOverlayApproval,
 } from "../../features/overlay/tauri-overlay";
+import { overlayShouldBeInteractive } from "../../features/overlay/overlay-interactivity";
 import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnboarding";
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
@@ -350,7 +351,7 @@ export function Dashboard({
       // Corrupt/absent storage — gaze stays uncorrected.
     }
   }, []);
-  useCalibrationOnboarding({
+  const { calibrating } = useCalibrationOnboarding({
     enabled: hasTauriBackend(),
     handBounds: DEMO_SCREEN_BOUNDS,
     getHandCursor: () => handPointerRef.current?.point ?? null,
@@ -392,13 +393,6 @@ export function Dashboard({
       }),
     [cuaApproval],
   );
-  useEffect(() => {
-    if (!hasTauriBackend()) return;
-    void invoke("set_overlay_interactive", {
-      interactive: cuaApproval.pending.length > 0,
-    }).catch(() => {});
-  }, [cuaApproval.pending]);
-
   // First-run permission onboarding (#18/#56). Show one guided flow on launch
   // until every permission HandsOff needs is granted (or the user skips it),
   // so nobody has to hunt for a per-permission button. Only in the real app.
@@ -406,6 +400,23 @@ export function Dashboard({
   const onboardingPlan = planPermissionOnboarding(report);
   const showOnboarding =
     hasTauriBackend() && onboardingPlan.needsOnboarding && !onboardingDismissed;
+
+  // The transparent overlay is CLICK-THROUGH by default (set_ignore_cursor_events)
+  // so the real desktop stays usable. It must flip interactive whenever an on-overlay
+  // control needs clicks — a pending CUA approval, the first-run onboarding modal, OR
+  // the calibration gate — composed so none clobbers the others. Without this the
+  // window swallows no clicks (they pass through to the desktop) and the modal/gate
+  // buttons never register. Declared after showOnboarding so both are in scope.
+  useEffect(() => {
+    if (!hasTauriBackend()) return;
+    void invoke("set_overlay_interactive", {
+      interactive: overlayShouldBeInteractive({
+        pendingApprovals: cuaApproval.pending.length,
+        showOnboarding,
+        calibrationActive: calibrating,
+      }),
+    }).catch(() => {});
+  }, [cuaApproval.pending, showOnboarding, calibrating]);
   // Fire the OS camera prompt by briefly opening a video stream, then release it.
   const requestCamera = async () => {
     try {
