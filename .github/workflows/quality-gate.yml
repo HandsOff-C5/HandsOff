@@ -49,6 +49,8 @@ jobs:
       - name: Build the frontend (dist) for generate_context
         working-directory: .
         run: pnpm install --frozen-lockfile && pnpm --filter @handsoff/desktop-app build
+      - name: Build Swift sidecars for Tauri externalBin
+        run: ./sidecars/build.sh all
       - name: Install Rust (pinned by rust-toolchain.toml) + components
         run: rustup component add rustfmt clippy
       - run: cargo fmt --all --check
