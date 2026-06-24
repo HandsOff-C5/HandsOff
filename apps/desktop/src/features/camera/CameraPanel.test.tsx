@@ -1,7 +1,7 @@
 import type { LandmarkFrame } from "@handsoff/contracts";
 import * as gesture from "@handsoff/gesture";
 import type { RawHandLandmarkerResult } from "@handsoff/gesture";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { CameraPanel } from "./CameraPanel";
@@ -149,15 +149,11 @@ describe("CameraPanel", () => {
   it("calls onGestureCursor with a point when hands are present and null when no hands", async () => {
     // Capture the onResult callback injected into createLandmarkProcessor so we can
     // trigger frames directly without relying on the rAF loop running in jsdom.
-    let capturedOnResult:
-      | ((result: { frame: LandmarkFrame; fps: number }) => void)
-      | undefined;
-    const processorSpy = vi
-      .spyOn(gesture, "createLandmarkProcessor")
-      .mockImplementation((opts) => {
-        capturedOnResult = opts.onResult;
-        return { process: vi.fn() };
-      });
+    let capturedOnResult: ((result: { frame: LandmarkFrame; fps: number }) => void) | undefined;
+    const processorSpy = vi.spyOn(gesture, "createLandmarkProcessor").mockImplementation((opts) => {
+      capturedOnResult = opts.onResult;
+      return { process: vi.fn() };
+    });
 
     const onGestureCursor = vi.fn();
     render(

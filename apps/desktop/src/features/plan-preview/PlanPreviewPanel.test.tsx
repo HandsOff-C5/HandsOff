@@ -85,6 +85,14 @@ describe("PlanPreviewPanel", () => {
     expect(reject).toHaveBeenCalledOnce();
   });
 
+  it("omits approval controls for non-approval plans (they auto-run)", () => {
+    render(
+      <PlanPreviewPanel intent={intent({ risk_level: "reversible", requires_approval: false })} />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+
   it("renders blocked reasons without approval controls", () => {
     render(
       <PlanPreviewPanel

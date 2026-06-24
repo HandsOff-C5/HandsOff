@@ -79,6 +79,9 @@ export function PlanPreviewPanel({
         </p>
       ) : null}
       {intent.requires_approval && !runResult ? (
+        // Mutating/destructive plans gate on explicit approval. Read-only and
+        // reversible plans (requires_approval === false) auto-run in the
+        // controller, so they never wait for a manual trigger here.
         <div className="plan-preview__actions">
           <button type="button" onClick={onApprove}>
             Approve

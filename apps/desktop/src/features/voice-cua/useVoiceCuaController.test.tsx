@@ -401,6 +401,54 @@ describe("useVoiceCuaController", () => {
     expect(sources).toContain("head");
   });
 
+  it("auto-runs a reversible plan without waiting for approval", async () => {
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    const resolveIntent = vi.fn(
+      async (input: IntentInput): Promise<ResolvedIntent> => ({
+        status: "ready",
+        id: "intent-1",
+        input,
+        intent_type: "click",
+        referent: { id: input.surfaceCandidates[0]!.id, source: "head", confidence: 0.9 },
+        constraints: [],
+        risk_level: "reversible",
+        requires_approval: false,
+        target_agent: "cua-driver",
+        action_plan: {
+          id: "plan-1",
+          summary: "Click selected target",
+          risk_level: "reversible",
+          requires_approval: false,
+          target_agent: "cua-driver",
+          action_plan: [
+            {
+              id: "step-1",
+              kind: "click_element",
+              label: "Click selected target",
+              target: { surface: input.surfaceCandidates[0]!, elementIndex: 0 },
+            },
+          ],
+        },
+        createdAt: NOW,
+      }),
+    );
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: headPointing(),
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+
+    // No approve() call — a non-approval plan should run on its own.
+    await waitFor(() => expect(result.current.runResult?.status).toBe("succeeded"));
+    expect(driver.calls().some((call) => call.kind === "click")).toBe(true);
+  });
+
   it("uses candidates that arrive during the resolve delay", async () => {
     const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
     const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));

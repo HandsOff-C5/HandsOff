@@ -239,24 +239,41 @@ export function useVoiceCuaController(args: {
       intent: next,
     });
     setAuditEvents(audit.current.forSession(started.id));
+
+    // Read-only / reversible plans carry no approval gate, so run them
+    // immediately rather than leaving them stranded at "queued". Mutating and
+    // destructive plans (requires_approval) wait for the Approve control.
+    if (next.status === "ready" && !next.requires_approval) {
+      await runPlan(next, started);
+    }
   }
 
-  async function approve() {
-    if (intent?.status !== "ready" || !session) return;
+  // Execute a plan: queued -> running -> terminal, persisting each transition.
+  // Shared by the manual Approve control and the auto-run path for non-approval
+  // (read-only / reversible) plans, so both go through the same runner + audit.
+  async function runPlan(
+    readyIntent: Extract<ResolvedIntent, { status: "ready" }>,
+    runSession: SupervisionSession,
+  ) {
     const runningAt = timestamp();
-    setSession(sessions.current.run(session.id, runningAt));
+    setSession(sessions.current.run(runSession.id, runningAt));
     setRunResult({ status: "running" });
     const result = await runApprovedPlan({
-      sessionId: session.id,
-      plan: intent.action_plan,
-      approval: makeApprovalDecision(intent.action_plan.id, "approved", runningAt),
+      sessionId: runSession.id,
+      plan: readyIntent.action_plan,
+      approval: makeApprovalDecision(readyIntent.action_plan.id, "approved", runningAt),
       cua: actionPortFor(args.driver),
       audit: audit.current,
       recordedAt: runningAt,
     });
-    setSession(sessions.current.finish(session.id, terminal(result.status), timestamp()));
+    setSession(sessions.current.finish(runSession.id, terminal(result.status), timestamp()));
     setRunResult(result);
-    setAuditEvents(audit.current.forSession(session.id));
+    setAuditEvents(audit.current.forSession(runSession.id));
+  }
+
+  async function approve() {
+    if (intent?.status !== "ready" || !session) return;
+    await runPlan(intent, session);
   }
 
   async function reject() {
