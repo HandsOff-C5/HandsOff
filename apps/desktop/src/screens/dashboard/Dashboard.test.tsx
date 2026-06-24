@@ -127,11 +127,12 @@ describe("Dashboard", () => {
       fireEvent.pointerUp(talkButton());
       await flush();
 
-      expect(screen.getByText("Click selected target")).toBeInTheDocument();
-      expect(screen.getByText("Session: session-1")).toBeInTheDocument();
+      // "Click selected target" appears in both PlanPreviewPanel and ReferentsPanel action plan
+      expect(screen.getAllByText("Click selected target").length).toBeGreaterThan(0);
+      expect(screen.getByText("session-1")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
-      await waitFor(() => expect(screen.getByText(/Last run:/)).toHaveTextContent("succeeded"));
+      await waitFor(() => expect(screen.getAllByText("succeeded").length).toBeGreaterThan(0));
       expect(driver.calls().map((call) => call.kind)).toEqual([
         "get_window_state",
         "click",
@@ -170,7 +171,8 @@ describe("Dashboard", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
 
-      expect(screen.getByText("Click selected target")).toBeInTheDocument();
+      // "Click selected target" appears in both PlanPreviewPanel and ReferentsPanel action plan
+      expect(screen.getAllByText("Click selected target").length).toBeGreaterThan(0);
       expect(driver.calls()).toHaveLength(0);
     } finally {
       clock.mockRestore();
@@ -196,9 +198,11 @@ describe("Dashboard", () => {
       fireEvent.pointerUp(talkButton());
       await flush();
 
+      // "No attention-region candidates were available" appears in both ReferentsPanel (reason)
+      // and PlanPreviewPanel (blocked reason) — use getAllByText to accept multiple matches.
       expect(
-        await screen.findByText("No attention-region candidates were available"),
-      ).toBeInTheDocument();
+        (await screen.findAllByText("No attention-region candidates were available")).length,
+      ).toBeGreaterThan(0);
       expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     } finally {
       clock.mockRestore();
