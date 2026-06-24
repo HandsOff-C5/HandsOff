@@ -18,9 +18,18 @@ interface GazeDebugOverlayProps {
   readonly points: readonly GazeOverlayPoint[] | null;
   // Live feature readout, or null with no face.
   readonly features: GazeFeatures | null;
+  // Eye-model load state — shown so a slow/failed model load is never a blank card.
+  readonly status?: "idle" | "loading" | "ready" | "failed";
   // Selfie mirror — matches the camera video's CSS flip so dots land on the eyes.
   readonly mirrored?: boolean;
 }
+
+const STATUS_COPY: Record<NonNullable<GazeDebugOverlayProps["status"]>, string> = {
+  idle: "",
+  loading: "Loading eye model…",
+  ready: "",
+  failed: "Eye model failed to load — relaunch once the download finishes.",
+};
 
 const KIND_FILL: Record<GazeOverlayPoint["kind"], string> = {
   iris: "#ff4d4f",
@@ -32,8 +41,10 @@ export function GazeDebugOverlay({
   stream,
   points,
   features,
+  status = "idle",
   mirrored = true,
 }: GazeDebugOverlayProps) {
+  const statusCopy = STATUS_COPY[status];
   const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const video = videoRef.current;
@@ -93,7 +104,7 @@ export function GazeDebugOverlay({
           </div>
         </dl>
       ) : (
-        <p className="gaze-debug__empty">No face detected.</p>
+        <p className="gaze-debug__empty">{statusCopy || "No face detected."}</p>
       )}
     </section>
   );

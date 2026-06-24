@@ -135,6 +135,9 @@ export function CameraPanel({
   const [gazeStream, setGazeStream] = useState<MediaStream | null>(null);
   const [gazePoints, setGazePoints] = useState<readonly GazeOverlayPoint[] | null>(null);
   const [gazeFeats, setGazeFeats] = useState<GazeFeatures | null>(null);
+  // Eye-model load state, surfaced in the debug card so a failed/slow model download
+  // is never a silent blank card.
+  const [gazeStatus, setGazeStatus] = useState<"idle" | "loading" | "ready" | "failed">("idle");
 
   const resources = useRef<Resources>({
     raf: 0,
@@ -245,16 +248,28 @@ export function CameraPanel({
         // expose it to the on-screen iris debug overlay. Best-effort — a failure here
         // never breaks hand tracking.
         if (gazeDebug) {
-          try {
-            r.faceHandle = await createFaceDetector();
-            if (r.cancelled) {
-              r.faceHandle.close();
+          setGazeStatus("loading");
+          // Retry: the face model can still be downloading on a first launch, so a
+          // single failed init shouldn't permanently disable the eye card.
+          for (let attempt = 0; attempt < 3 && !r.cancelled; attempt++) {
+            try {
+              r.faceHandle = await createFaceDetector();
+              break;
+            } catch {
               r.faceHandle = null;
-            } else {
-              setGazeStream(stream);
+              await new Promise((res) => setTimeout(res, 800));
             }
-          } catch {
-            // FaceLandmarker unavailable — the iris overlay just stays empty.
+          }
+          if (r.cancelled) {
+            r.faceHandle?.close();
+            r.faceHandle = null;
+          } else if (r.faceHandle) {
+            setGazeStream(stream);
+            setGazeStatus("ready");
+          } else {
+            // Model never loaded — the card shows a clear "failed" status, not a blank.
+            setGazeStatus("failed");
+            setGazeStream(stream);
           }
         }
 
@@ -458,6 +473,7 @@ export function CameraPanel({
           stream={gazeStream}
           points={gazePoints}
           features={gazeFeats}
+          status={gazeStatus}
           mirrored={mirrored}
         />
       )}
