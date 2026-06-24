@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -11,6 +12,12 @@ function readDesktopFile(relativePath: string): string {
   const workspacePath = join(process.cwd(), "apps/desktop", relativePath);
   const desktopPath = join(process.cwd(), relativePath);
   return readFileSync(existsSync(workspacePath) ? workspacePath : desktopPath, "utf8");
+}
+
+function desktopPath(relativePath: string): string {
+  const workspacePath = join(process.cwd(), "apps/desktop", relativePath);
+  const desktopPath = join(process.cwd(), relativePath);
+  return existsSync(workspacePath) ? workspacePath : desktopPath;
 }
 
 describe("macOS media permission signing config", () => {
@@ -38,5 +45,79 @@ describe("macOS media permission signing config", () => {
     expect(command).not.toContain(".sidecar(SIDECAR_NAME)");
     expect(bridge).toContain("SFSpeechAudioBufferRecognitionRequest");
     expect(bridge).toContain("AVAudioEngine");
+  });
+
+  it("defines local macOS release dry-run entrypoints", () => {
+    const pkg = JSON.parse(readDesktopFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+
+    expect(pkg.scripts?.["release:dry-run"]).toBe(
+      "pnpm tauri build --debug --bundles app && node scripts/macos-release-dry-run.mjs --validate-app src-tauri/target/debug/bundle/macos/HandsOff.app",
+    );
+    expect(pkg.scripts?.["release:dry-run:plan"]).toBe(
+      "node scripts/macos-release-dry-run.mjs --json",
+    );
+  });
+
+  it("prints a signing and notarization dry-run plan without repository credentials", () => {
+    const output = execFileSync(
+      process.execPath,
+      [desktopPath("scripts/macos-release-dry-run.mjs"), "--json"],
+      {
+        encoding: "utf8",
+      },
+    );
+    const plan = JSON.parse(output) as {
+      signing: { identity: string; command: readonly string[] };
+      notarization: { validation: readonly string[]; credentialSource: string };
+      permissions: readonly { capability: string; mechanism: string; entitlementKey?: string }[];
+    };
+
+    expect(plan.signing.identity).toBe("-");
+    expect(plan.signing.command).toEqual(["pnpm", "tauri", "build", "--debug", "--bundles", "app"]);
+    expect(plan.notarization.validation).toContain(
+      "xcrun notarytool history --keychain-profile <external-profile>",
+    );
+    expect(plan.notarization.credentialSource).toBe("external keychain profile or CI secret");
+    expect(plan.permissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          capability: "camera",
+          mechanism: "entitlement",
+          entitlementKey: "com.apple.security.device.camera",
+        }),
+        expect.objectContaining({
+          capability: "microphone",
+          mechanism: "entitlement",
+          entitlementKey: "com.apple.security.device.audio-input",
+        }),
+        expect.objectContaining({
+          capability: "speech recognition",
+          mechanism: "entitlement",
+          entitlementKey: "com.apple.security.personal-information.speech-recognition",
+        }),
+        expect.objectContaining({
+          capability: "screen recording",
+          mechanism: "TCC user grant",
+        }),
+        expect.objectContaining({
+          capability: "accessibility",
+          mechanism: "TCC user grant",
+        }),
+      ]),
+    );
+  });
+
+  it("documents the notarization dry-run path and reviewed permission model", () => {
+    const doc = readDesktopFile("RELEASE.md");
+
+    expect(doc).toContain("pnpm --filter @handsoff/desktop-app release:dry-run");
+    expect(doc).toContain("xcrun notarytool submit");
+    expect(doc).toContain("Screen Recording");
+    expect(doc).toContain("Accessibility");
+    expect(doc).toContain(
+      "No certificates, passwords, API keys, or profile material belong in this repo.",
+    );
   });
 });
