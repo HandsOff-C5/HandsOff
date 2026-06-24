@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "handsoff": "pnpm --filter @handsoff/desktop-app setup:assets && pnpm --filter @handsoff/desktop-app tauri dev"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
