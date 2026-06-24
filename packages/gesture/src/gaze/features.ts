@@ -93,3 +93,35 @@ export const gazeFeatureVector = (f: GazeFeatures): number[] => [
   f.irisXR,
   f.irisYR,
 ];
+
+// A drawable landmark for the debug overlay, in normalized [0,1] mesh space.
+export interface GazeOverlayPoint {
+  readonly x: number;
+  readonly y: number;
+  readonly kind: "iris" | "corner" | "lid";
+}
+
+// The iris/eye landmarks to draw on the debug view (iris centers, eye corners, lids for
+// both eyes) so the user can SEE what the tracker reads. Same indices the features use.
+// Normalized [0,1]; the overlay applies the selfie mirror (1-x). null if any is missing.
+export const gazeOverlayPoints = (
+  landmarks: ReadonlyArray<FaceLandmark>,
+): readonly GazeOverlayPoint[] | null => {
+  const out: GazeOverlayPoint[] = [];
+  for (const e of [EYE_L, EYE_R]) {
+    const iris = landmarks[e.iris];
+    const inner = landmarks[e.inner];
+    const outer = landmarks[e.outer];
+    const top = landmarks[e.top];
+    const bottom = landmarks[e.bottom];
+    if (!iris || !inner || !outer || !top || !bottom) return null;
+    out.push(
+      { x: iris.x, y: iris.y, kind: "iris" },
+      { x: inner.x, y: inner.y, kind: "corner" },
+      { x: outer.x, y: outer.y, kind: "corner" },
+      { x: top.x, y: top.y, kind: "lid" },
+      { x: bottom.x, y: bottom.y, kind: "lid" },
+    );
+  }
+  return out;
+};

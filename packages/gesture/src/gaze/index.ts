@@ -1,1 +1,8 @@
-export { gazeFeatures, gazeFeatureVector, type FaceLandmark, type GazeFeatures } from "./features";
+export {
+  gazeFeatures,
+  gazeFeatureVector,
+  gazeOverlayPoints,
+  type FaceLandmark,
+  type GazeFeatures,
+  type GazeOverlayPoint,
+} from "./features";

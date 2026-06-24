@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { gazeFeatures, gazeFeatureVector, type FaceLandmark } from "./features";
+import { gazeFeatures, gazeFeatureVector, gazeOverlayPoints, type FaceLandmark } from "./features";
 
 // Build a 478-point mesh of neutral points, then override the iris/eye indices we use.
 const baseMesh = (): FaceLandmark[] => Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5 }));
@@ -64,5 +64,25 @@ describe("gazeFeatures", () => {
     expect(
       gazeFeatures(set(centered(), { 133: { x: 0.6, y: 0.5 }, 33: { x: 0.6, y: 0.5 } })),
     ).toBeNull();
+  });
+});
+
+describe("gazeOverlayPoints", () => {
+  it("returns the iris/corner/lid points for both eyes", () => {
+    const pts = gazeOverlayPoints(centered());
+    expect(pts).not.toBeNull();
+    // 5 per eye (iris + 2 corners + 2 lids) × 2 eyes.
+    expect(pts!).toHaveLength(10);
+    expect(pts!.filter((p) => p.kind === "iris")).toHaveLength(2);
+    expect(pts!.filter((p) => p.kind === "corner")).toHaveLength(4);
+    expect(pts!.filter((p) => p.kind === "lid")).toHaveLength(4);
+    // The left iris center is index 468 = (0.5, 0.5) in the centered fixture.
+    const iris = pts!.filter((p) => p.kind === "iris");
+    expect(iris[0]!.x).toBeCloseTo(0.5, 6);
+    expect(iris[0]!.y).toBeCloseTo(0.5, 6);
+  });
+
+  it("returns null when a required landmark is missing", () => {
+    expect(gazeOverlayPoints(Array.from({ length: 100 }, () => ({ x: 0.5, y: 0.5 })))).toBeNull();
   });
 });

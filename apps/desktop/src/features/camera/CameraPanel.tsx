@@ -6,16 +6,24 @@ import type {
   PointingEvidence,
 } from "@handsoff/contracts";
 import {
+  createFaceLandmarker,
   createHandLandmarker,
   createLandmarkProcessor,
   createReferentLoop,
+  gazeFeatures,
+  gazeOverlayPoints,
   pointingSignalFromFrame,
   type AffineTransform,
+  type FaceLandmarkerHandle,
+  type GazeFeatures,
+  type GazeOverlayPoint,
   type HandLandmarkerHandle,
   type Point,
   type ReferentLoop,
 } from "@handsoff/gesture";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
+
+import { GazeDebugOverlay } from "./GazeDebugOverlay";
 
 import { toGestureEvidence } from "../fusion/gestureEvidence";
 import { normalizeOverlayPoint, type OverlayPointerUpdate } from "../overlay/overlay-signal";
@@ -53,6 +61,11 @@ interface CameraPanelProps {
   // Apply a calibration fitted elsewhere (the touch-the-dots onboarding): rebuild
   // the pointing loop with it + persist, exactly like the in-panel Calibrate flow.
   calibrationOverride?: { transform: AffineTransform; quality: Quality } | null;
+  // Eye-gaze verification (M2a): also run the MediaPipe FaceLandmarker on the SAME
+  // video and show the on-screen iris debug overlay. Off by default (extra GPU cost).
+  gazeDebug?: boolean;
+  // Injectable face detector factory (default MediaPipe FaceLandmarker) — tests pass a fake.
+  createFaceDetector?: () => Promise<FaceLandmarkerHandle>;
 }
 
 type Status = "idle" | "starting" | "live" | "error";
@@ -84,6 +97,7 @@ const defaultListDevices = () =>
 interface Resources {
   raf: number;
   handle: HandLandmarkerHandle | null;
+  faceHandle: FaceLandmarkerHandle | null;
   stream: MediaStream | null;
   cancelled: boolean;
 }
@@ -98,6 +112,8 @@ export function CameraPanel({
   autoStart = false,
   rawPointerRef,
   calibrationOverride,
+  gazeDebug = false,
+  createFaceDetector = createFaceLandmarker,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -115,8 +131,18 @@ export function CameraPanel({
   const [active, setActive] = useState(false);
   const [pointer, setPointer] = useState<Point | null>(null);
   const [confidence, setConfidence] = useState(0);
+  // Eye-gaze debug (M2a): the shared live stream + latest iris overlay points + features.
+  const [gazeStream, setGazeStream] = useState<MediaStream | null>(null);
+  const [gazePoints, setGazePoints] = useState<readonly GazeOverlayPoint[] | null>(null);
+  const [gazeFeats, setGazeFeats] = useState<GazeFeatures | null>(null);
 
-  const resources = useRef<Resources>({ raf: 0, handle: null, stream: null, cancelled: false });
+  const resources = useRef<Resources>({
+    raf: 0,
+    handle: null,
+    faceHandle: null,
+    stream: null,
+    cancelled: false,
+  });
   // Live pointing signal this frame — read by the calibration overlay's Capture.
   const latestRaw = useRef<Point | null>(null);
   // Rolling buffer of parsed frames for the dump-to-fixture button.
@@ -189,9 +215,14 @@ export function CameraPanel({
     if (r.raf) cancelAnimationFrame(r.raf);
     r.stream?.getTracks().forEach((t) => t.stop());
     r.handle?.close();
+    r.faceHandle?.close();
     r.raf = 0;
     r.handle = null;
+    r.faceHandle = null;
     r.stream = null;
+    setGazeStream(null);
+    setGazePoints(null);
+    setGazeFeats(null);
   }, []);
 
   const start = useCallback(
@@ -209,6 +240,23 @@ export function CameraPanel({
         }
         r.stream = stream;
         r.handle = handle;
+
+        // Eye-gaze verification: spin up the FaceLandmarker on the SAME stream and
+        // expose it to the on-screen iris debug overlay. Best-effort — a failure here
+        // never breaks hand tracking.
+        if (gazeDebug) {
+          try {
+            r.faceHandle = await createFaceDetector();
+            if (r.cancelled) {
+              r.faceHandle.close();
+              r.faceHandle = null;
+            } else {
+              setGazeStream(stream);
+            }
+          } catch {
+            // FaceLandmarker unavailable — the iris overlay just stays empty.
+          }
+        }
 
         const video = videoRef.current;
         if (video) {
@@ -253,7 +301,22 @@ export function CameraPanel({
 
         const loop = () => {
           if (r.cancelled) return;
-          if (videoRef.current) processor.process(videoRef.current, performance.now());
+          const video = videoRef.current;
+          if (video) {
+            const ts = performance.now();
+            processor.process(video, ts);
+            // Eye-gaze: run the face mesh on the same frame + same timestamp (each
+            // detector tracks its own monotonic clock) and publish iris overlay points.
+            if (r.faceHandle) {
+              try {
+                const lm = r.faceHandle.detector.detectForVideo(video, ts).faceLandmarks?.[0];
+                setGazePoints(lm ? gazeOverlayPoints(lm) : null);
+                setGazeFeats(lm ? gazeFeatures(lm) : null);
+              } catch {
+                // Transient face-detect error — skip this frame.
+              }
+            }
+          }
           r.raf = requestAnimationFrame(loop);
         };
         r.raf = requestAnimationFrame(loop);
@@ -263,7 +326,7 @@ export function CameraPanel({
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [getStream, createDetector, listDevices],
+    [getStream, createDetector, listDevices, gazeDebug, createFaceDetector],
   );
 
   const switchDevice = (id: string) => {
@@ -388,6 +451,15 @@ export function CameraPanel({
             Dump frames
           </button>
         </div>
+      )}
+
+      {gazeDebug && (
+        <GazeDebugOverlay
+          stream={gazeStream}
+          points={gazePoints}
+          features={gazeFeats}
+          mirrored={mirrored}
+        />
       )}
 
       <div className="camera-panel__stage">

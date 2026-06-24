@@ -513,6 +513,9 @@ export function Dashboard({
       <div className="dashboard__panels">
         <CameraPanel
           autoStart={hasTauriBackend()}
+          // Eye-gaze verification (M2a): show the on-screen iris debug overlay at launch
+          // (Settings is off-screen on the overlay). Temporary test-branch default.
+          gazeDebug={hasTauriBackend()}
           rawPointerRef={rawHandRef}
           calibrationOverride={handCalibrationOverride}
           onGestureEvidence={(evidence) => {

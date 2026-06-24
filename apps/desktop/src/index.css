@@ -1236,6 +1236,92 @@ body {
   z-index: 200;
 }
 
+/* On-screen mount for engine-owned debug views (eye-tracking preview). Click-through
+   container; the debug card is display-only so it does not need pointer events. */
+.overlay-debug-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 190;
+}
+
+.gaze-debug {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 320px;
+  background: rgba(8, 10, 14, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  padding: 10px;
+  color: #fff;
+  font:
+    12px/1.4 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+.gaze-debug__title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  opacity: 0.85;
+}
+
+.gaze-debug__stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.gaze-debug__video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.gaze-debug__video--mirrored {
+  transform: scaleX(-1);
+}
+
+.gaze-debug__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.gaze-debug__readout {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.gaze-debug__readout div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gaze-debug__readout dt {
+  opacity: 0.6;
+}
+
+.gaze-debug__readout dd {
+  margin: 0;
+}
+
+.gaze-debug__empty {
+  margin: 8px 0 0;
+  opacity: 0.6;
+}
+
 /* ── Startup calibration onboarding (touch the dots) ─────────────────────────
    Fullscreen over the real desktop before the HUD goes live. A 3×3 grid of dots;
    the glowing one fills as you dwell on it, captured dots dim, the live cursor
