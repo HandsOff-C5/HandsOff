@@ -110,6 +110,9 @@ export function Dashboard({
   // the controller reads it at intent time so "point + speak" binds to the pointed
   // surface. A ref (not state) avoids re-rendering the dashboard on every lock.
   const gestureEvidence = useRef<PointingEvidence | null>(null);
+  // Latest gesture cursor position (even without a locked referent). Updated every
+  // frame while hands are present, cleared to null when no hands are detected.
+  const gestureCursor = useRef<{ x: number; y: number } | null>(null);
   const intentResolver =
     resolveIntent ??
     (hasTauriBackend()
@@ -125,6 +128,7 @@ export function Dashboard({
       resolveIntent: intentResolver,
       targetResolveDelayMs,
       getGestureEvidence: () => gestureEvidence.current,
+      getGestureCursor: () => gestureCursor.current,
     });
   // The structured clarification prompt (#36) when the engine won't act blind.
   // Display-first; interactive pick→re-resolve needs a controller round-trip (follow-up).
@@ -202,6 +206,9 @@ export function Dashboard({
         <CameraPanel
           onGestureEvidence={(evidence) => {
             gestureEvidence.current = evidence;
+          }}
+          onGestureCursor={(cursor) => {
+            gestureCursor.current = cursor;
           }}
         />
         <ReferentsPanel intent={intent} />

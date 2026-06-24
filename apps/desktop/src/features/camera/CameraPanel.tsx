@@ -49,6 +49,10 @@ interface CameraPanelProps {
   // Live gesture referent out: the locked point as intent PointingEvidence, or null when
   // nothing is locked. The dashboard feeds this into fuseIntent.
   onGestureEvidence?: (evidence: PointingEvidence | null) => void;
+  // Live gesture cursor position (even without a locked referent). Called each frame with
+  // the wrist-ray projected point when hands are present, or null when no hands are detected.
+  // The dashboard feeds this into the intent fusion as an additional pointing signal.
+  onGestureCursor?: (cursor: { x: number; y: number } | null) => void;
 }
 
 type Status = "idle" | "starting" | "live" | "error";
@@ -93,6 +97,7 @@ export function CameraPanel({
   listDevices = defaultListDevices,
   overlay: injectedOverlay,
   onGestureEvidence,
+  onGestureCursor,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -125,6 +130,13 @@ export function CameraPanel({
       pointing: POINTING,
     }),
   );
+
+  // Holds the latest onGestureCursor callback so the rAF closure can call it without
+  // being rebuilt on every render.
+  const gestureCursorCallbackRef = useRef<
+    ((cursor: { x: number; y: number } | null) => void) | undefined
+  >(onGestureCursor);
+  gestureCursorCallbackRef.current = onGestureCursor;
 
   // Refs mirror the state the per-frame loop reads, so the rAF closure always sees the latest
   // calibration + overlay handle without being rebuilt.
@@ -173,6 +185,7 @@ export function CameraPanel({
     r.stream = null;
     overlayRef.current.clear("main");
     void overlayRef.current.stop();
+    gestureCursorCallbackRef.current?.(null);
   }, []);
 
   const start = useCallback(
@@ -235,6 +248,13 @@ export function CameraPanel({
             setActive(out.active);
             setPhase(out.state.phase);
             if (out.emit && "targetId" in out.emit) setReferent(out.emit);
+            // Publish the raw gesture cursor position each frame so the intent engine
+            // can use it as a pointing signal even without a locked referent.
+            if (f.hands.length) {
+              gestureCursorCallbackRef.current?.({ x: out.point[0], y: out.point[1] });
+            } else {
+              gestureCursorCallbackRef.current?.(null);
+            }
             // Drive the separate desktop cursor only while calibrated; hide it when no hand.
             if (multiCalRef.current) {
               if (f.hands.length) overlayRef.current.move("main", out.point[0], out.point[1]);

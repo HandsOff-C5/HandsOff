@@ -1,5 +1,7 @@
+import type { LandmarkFrame } from "@handsoff/contracts";
+import * as gesture from "@handsoff/gesture";
 import type { RawHandLandmarkerResult } from "@handsoff/gesture";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { CameraPanel } from "./CameraPanel";
@@ -142,5 +144,60 @@ describe("CameraPanel", () => {
     fireEvent.click(await screen.findByRole("button", { name: /calibrate/i }));
     expect(screen.getByText(/0\s*\/\s*9/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /capture/i })).toBeInTheDocument();
+  });
+
+  it("calls onGestureCursor with a point when hands are present and null when no hands", async () => {
+    // Capture the onResult callback injected into createLandmarkProcessor so we can
+    // trigger frames directly without relying on the rAF loop running in jsdom.
+    let capturedOnResult:
+      | ((result: { frame: LandmarkFrame; fps: number }) => void)
+      | undefined;
+    const processorSpy = vi
+      .spyOn(gesture, "createLandmarkProcessor")
+      .mockImplementation((opts) => {
+        capturedOnResult = opts.onResult;
+        return { process: vi.fn() };
+      });
+
+    const onGestureCursor = vi.fn();
+    render(
+      <CameraPanel
+        getStream={() => Promise.resolve(fakeStream())}
+        createDetector={() => Promise.resolve(fakeDetector())}
+        overlay={fakeOverlay()}
+        onGestureCursor={onGestureCursor}
+      />,
+    );
+    startCamera();
+    await screen.findByText(/^Live\b/);
+    expect(capturedOnResult).toBeDefined();
+
+    // Frame with one hand present — should call onGestureCursor with a point.
+    const fakeLandmark = { x: 0.5, y: 0.5, z: 0, visibility: 1 };
+    const frameWithHand: LandmarkFrame = {
+      timestampMs: 1,
+      hands: [
+        {
+          landmarks: Array(21).fill(fakeLandmark) as LandmarkFrame["hands"][0]["landmarks"],
+          handedness: "Right",
+          score: 0.9,
+        },
+      ],
+    };
+    act(() => {
+      capturedOnResult!({ frame: frameWithHand, fps: 30 });
+    });
+    expect(onGestureCursor).toHaveBeenLastCalledWith(
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+    );
+
+    // Frame with no hands — should call onGestureCursor with null.
+    const frameNoHands: LandmarkFrame = { timestampMs: 2, hands: [] };
+    act(() => {
+      capturedOnResult!({ frame: frameNoHands, fps: 30 });
+    });
+    expect(onGestureCursor).toHaveBeenLastCalledWith(null);
+
+    processorSpy.mockRestore();
   });
 });
