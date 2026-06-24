@@ -14,13 +14,15 @@
     "windows": [
       {
         "label": "main",
-        "title": "HandsOff",
+        "title": "HandsOff engine",
         "width": 1280,
         "height": 800,
         "minWidth": 880,
         "minHeight": 600,
         "resizable": true,
-        "center": true
+        "center": true,
+        "visible": false,
+        "skipTaskbar": true
       }
     ],
     "security": {

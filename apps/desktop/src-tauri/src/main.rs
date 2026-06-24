@@ -43,6 +43,15 @@ fn main() {
                 Ok(()) => eprintln!("handsoff: registered capture hotkey {shortcut:?}"),
                 Err(error) => eprintln!("handsoff: FAILED to register capture hotkey: {error}"),
             }
+            // Overlay-as-UI: the transparent supervisor HUD is the only visible
+            // window. The `main` window starts hidden (visible:false) and runs the
+            // engine (camera/trackers/voice/CUA) headless, streaming to the overlay.
+            // Show the overlay from the host at startup so the UI is up immediately,
+            // independent of how fast the engine webview boots.
+            match commands::overlay::show_overlay(app.handle().clone()) {
+                Ok(()) => eprintln!("handsoff: overlay shown on startup"),
+                Err(error) => eprintln!("handsoff: FAILED to show overlay on startup: {error}"),
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
