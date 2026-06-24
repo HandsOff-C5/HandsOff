@@ -7,6 +7,7 @@ import type {
   CuaScreenshot,
   CuaWindow,
   CuaWindowState,
+  DriverToolDefinition,
 } from "@handsoff/contracts";
 
 import type { CuaDriver } from "./driver";
@@ -19,7 +20,27 @@ export type FakeCuaCall =
   | { kind: "click"; target: ActionTarget }
   | { kind: "type_text"; target: ActionTarget; text: string }
   | { kind: "set_value"; target: ActionTarget; value: string }
-  | { kind: "screenshot"; target: ActionTarget };
+  | { kind: "screenshot"; target: ActionTarget }
+  | { kind: "call"; tool: string; input: unknown }
+  | { kind: "list_tools" };
+
+// A minimal catalog so tests can exercise the catalog path without the binary.
+const DEFAULT_TOOL_CATALOG: readonly DriverToolDefinition[] = [
+  {
+    name: "get_screen_size",
+    description: "Return the logical size of the main display in points.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "scroll",
+    description: "Scroll the target pid's focused region.",
+    inputSchema: {
+      type: "object",
+      required: ["pid", "direction"],
+      properties: { pid: { type: "integer" }, direction: { type: "string" } },
+    },
+  },
+];
 
 export type FakeCuaDriver = CuaDriver & {
   calls(): readonly FakeCuaCall[];
@@ -31,6 +52,8 @@ export function createFakeCuaDriver(options: {
   windows?: readonly CuaWindow[];
   state: CuaWindowState;
   nextActionResult?: CuaActionResult;
+  nextCallResult?: CuaResult<unknown>;
+  tools?: readonly DriverToolDefinition[];
 }): FakeCuaDriver {
   const permissions = options.permissions ?? {
     accessibility: "granted",
@@ -120,6 +143,16 @@ export function createFakeCuaDriver(options: {
     async screenshot(target) {
       record({ kind: "screenshot", target });
       return screenshotResult(target);
+    },
+    async call(tool, input) {
+      record({ kind: "call", tool, input });
+      if (permissions.driver !== "running") return cuaBlocked("CUA driver is unavailable");
+      return options.nextCallResult ?? cuaSucceeded({ ok: true, tool });
+    },
+    async listTools() {
+      record({ kind: "list_tools" });
+      if (permissions.driver !== "running") return cuaBlocked("CUA driver is unavailable");
+      return cuaSucceeded(options.tools ?? DEFAULT_TOOL_CATALOG);
     },
     calls() {
       return [...calls];

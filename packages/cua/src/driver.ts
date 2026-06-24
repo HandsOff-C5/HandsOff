@@ -8,6 +8,7 @@ import type {
   CuaScreenshot,
   CuaWindow,
   CuaWindowState,
+  DriverToolDefinition,
 } from "@handsoff/contracts";
 
 export type CuaDriver = {
@@ -20,6 +21,11 @@ export type CuaDriver = {
   typeText(target: ActionTarget, text: string): Promise<CuaActionResult>;
   setValue(target: ActionTarget, value: string): Promise<CuaActionResult>;
   screenshot(target: ActionTarget): Promise<CuaResult<CuaScreenshot>>;
+  // Generic passthrough to the full driver tool surface. `call` runs any tool by
+  // name with its raw JSON input and returns the driver's result; `listTools`
+  // returns the driver's self-described catalog (the agent's function set).
+  call(tool: string, input: unknown): Promise<CuaResult<unknown>>;
+  listTools(): Promise<CuaResult<readonly DriverToolDefinition[]>>;
 };
 
 export function cuaSucceeded<T>(value: T): CuaResult<T> {
@@ -77,5 +83,7 @@ export function createUnavailableCuaDriver(reason = "cua-driver is unavailable")
     typeText: blocked,
     setValue: blocked,
     screenshot: blockedResult,
+    call: blockedResult,
+    listTools: blockedResult,
   };
 }

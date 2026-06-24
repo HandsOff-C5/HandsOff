@@ -58,6 +58,22 @@ export type CuaResult<T> =
   | { status: "failed"; error: string }
   | { status: "blocked"; reason: string };
 
+// One tool as the driver self-describes it (`cua-driver list-tools` +
+// `describe`). `inputSchema` is the driver's JSON Schema verbatim — we do not
+// re-model per-tool shapes HandsOff-side; this is the agent's function set.
+export const driverToolDefinitionSchema = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  inputSchema: z.unknown().nullable(),
+});
+export type DriverToolDefinition = z.infer<typeof driverToolDefinitionSchema>;
+
+export function safeParseDriverToolDefinitions(
+  input: unknown,
+): z.SafeParseReturnType<unknown, DriverToolDefinition[]> {
+  return driverToolDefinitionSchema.array().safeParse(input);
+}
+
 export const cuaActionRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("launch_app"),
