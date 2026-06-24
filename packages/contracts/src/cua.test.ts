@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { cuaActionRequestSchema, safeParseCuaActionResult, safeParseCuaWindowState } from "./cua";
+import {
+  cuaActionRequestSchema,
+  cuaAppSchema,
+  cuaScreenshotSchema,
+  safeParseCuaActionResult,
+  safeParseCuaWindowState,
+} from "./cua";
 import type { CuaActionResult, CuaWindowState } from "./cua";
 
 function state(): CuaWindowState {
@@ -67,6 +73,32 @@ describe("CUA contract", () => {
     const result = cuaActionRequestSchema.safeParse({
       kind: "launch_app",
       appName: "TextEdit",
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts normalized app inventory records", () => {
+    const result = cuaAppSchema.safeParse({
+      id: "com.apple.Notes",
+      name: "Notes",
+      pid: 42,
+      bundleId: "com.apple.Notes",
+      running: true,
+      active: false,
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts typed screenshot metadata from the CUA adapter", () => {
+    const result = cuaScreenshotSchema.safeParse({
+      surface: state().surface,
+      capturedAt: "2026-06-22T12:00:00.000Z",
+      mimeType: "image/png",
+      width: 640,
+      height: 480,
+      pngBase64: "abc123",
     });
 
     expect(result.success).toBe(true);
