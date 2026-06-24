@@ -2,15 +2,21 @@ import type { PointingEvidence } from "@handsoff/contracts";
 import { emit, listen } from "@tauri-apps/api/event";
 
 import { hasTauriBackend } from "../../lib/tauri";
-import type { OverlayListen } from "./PointingOverlay";
+import type { OverlayListen, SupervisorListen } from "./PointingOverlay";
 import {
+  OVERLAY_APPROVAL_EVENT,
   OVERLAY_FUSION_EVENT,
   OVERLAY_POINTER_EVENT,
+  OVERLAY_SUPERVISOR_EVENT,
   OVERLAY_VOICE_EVENT,
   type OverlayPointerUpdate,
   type OverlayVoiceState,
 } from "./overlay-signal";
+import type { SupervisorSnapshot } from "./supervisor-signal";
 import type { FusionListen } from "./useFusionSignal";
+
+// The overlay's verdict on the agent's pending step (sent back to the engine).
+export type OverlayApprovalDecision = "allow" | "deny";
 
 // Thin Tauri I/O shell for the overlay signal. The main (dashboard) window emits; the
 // overlay window listens. No-ops outside Tauri (browser/tests) so callers stay unguarded.
@@ -25,6 +31,15 @@ export function emitOverlayVoice(state: OverlayVoiceState): void {
 
 export function emitOverlayFusion(evidence: PointingEvidence[]): void {
   if (hasTauriBackend()) void emit(OVERLAY_FUSION_EVENT, evidence);
+}
+
+export function emitOverlaySupervisor(snapshot: SupervisorSnapshot): void {
+  if (hasTauriBackend()) void emit(OVERLAY_SUPERVISOR_EVENT, snapshot);
+}
+
+// The overlay window emits its approve/deny click; the engine window listens.
+export function emitOverlayApproval(decision: OverlayApprovalDecision): void {
+  if (hasTauriBackend()) void emit(OVERLAY_APPROVAL_EVENT, decision);
 }
 
 // Backs PointingOverlay's `listen` prop in the overlay window: subscribes to both the
@@ -63,3 +78,39 @@ export const tauriFusionListen: FusionListen = (onEvidence) => {
     unlisten?.();
   };
 };
+
+// Backs PointingOverlay's `supervisorListen` prop in the overlay window: subscribes
+// to the per-frame supervisor snapshot and returns one unsubscribe.
+export const tauriSupervisorListen: SupervisorListen = (onSnapshot) => {
+  let cancelled = false;
+  let unlisten: (() => void) | undefined;
+  void listen<SupervisorSnapshot>(OVERLAY_SUPERVISOR_EVENT, (event) =>
+    onSnapshot(event.payload),
+  ).then((fn) => {
+    if (cancelled) fn();
+    else unlisten = fn;
+  });
+  return () => {
+    cancelled = true;
+    unlisten?.();
+  };
+};
+
+// Backs the engine window's listener for the overlay's approve/deny click.
+export function listenOverlayApproval(
+  onDecision: (decision: OverlayApprovalDecision) => void,
+): () => void {
+  if (!hasTauriBackend()) return () => {};
+  let cancelled = false;
+  let unlisten: (() => void) | undefined;
+  void listen<OverlayApprovalDecision>(OVERLAY_APPROVAL_EVENT, (event) =>
+    onDecision(event.payload),
+  ).then((fn) => {
+    if (cancelled) fn();
+    else unlisten = fn;
+  });
+  return () => {
+    cancelled = true;
+    unlisten?.();
+  };
+}

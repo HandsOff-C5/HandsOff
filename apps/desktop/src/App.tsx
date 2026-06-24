@@ -1,5 +1,10 @@
 import { PointingOverlay } from "./features/overlay/PointingOverlay";
-import { tauriFusionListen, tauriOverlayListen } from "./features/overlay/tauri-overlay";
+import {
+  emitOverlayApproval,
+  tauriFusionListen,
+  tauriOverlayListen,
+  tauriSupervisorListen,
+} from "./features/overlay/tauri-overlay";
 import { Dashboard } from "./screens/dashboard/Dashboard";
 
 // Both the dashboard and the full-screen pointing overlay load this same bundle;
@@ -19,11 +24,20 @@ function currentWindowLabel(): string {
   }
 }
 
-// Shell entry. The dashboard is the mission-control window (issue #15); the
-// overlay window draws the live pointer on the real desktop (#25 cursor seam).
+// Shell entry. Overlay-as-UI (#25): the transparent supervisor HUD window is the
+// app the operator sees — it subscribes to the engine's per-model snapshot and
+// paints every tracker + the agent on the real desktop, and its approval chip
+// sends the verdict back to the hidden engine window. The `main` window runs that
+// engine (camera/trackers/voice/CUA) headless and never shows.
 export function App() {
   return currentWindowLabel() === "overlay" ? (
-    <PointingOverlay listen={tauriOverlayListen} fusionListen={tauriFusionListen} />
+    <PointingOverlay
+      listen={tauriOverlayListen}
+      fusionListen={tauriFusionListen}
+      supervisorListen={tauriSupervisorListen}
+      onApprove={() => emitOverlayApproval("allow")}
+      onDeny={() => emitOverlayApproval("deny")}
+    />
   ) : (
     <Dashboard />
   );

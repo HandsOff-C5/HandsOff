@@ -1,3 +1,5 @@
+import type { CuaAgentAction } from "@handsoff/contracts";
+
 import type { OverlayVoiceState } from "./overlay-signal";
 
 // The richer per-model signal the engine (hidden dashboard) streams to the
@@ -84,4 +86,32 @@ export function fpsFromTimestamps(timestampsMs: readonly number[]): number {
 // The agent banner's plain-words line: the current action, or "Idle".
 export function agentBannerText(agent: AgentState): string {
   return agent.action ? `Acting: ${agent.action}` : "Idle";
+}
+
+// Turn one AX-native CUA action into plain words for the agent banner, so the
+// operator reads "click element #3" / 'type "hello"' instead of raw JSON. STRICT
+// over the discriminated union so a new action kind is a compile error here.
+export function describeCuaAgentAction(action: CuaAgentAction): string {
+  switch (action.kind) {
+    case "snapshot":
+      return "look at the window";
+    case "click":
+      return `click element #${action.elementIndex}`;
+    case "click_point":
+      return `click at (${action.x}, ${action.y})`;
+    case "type_text":
+      return `type "${action.text}"`;
+    case "set_value":
+      return `set value to "${action.value}"`;
+    case "press_key": {
+      const chord = [...(action.modifiers ?? []), action.key].join("+");
+      return `press ${chord}`;
+    }
+    case "hotkey":
+      return `press ${action.keys.join("+")}`;
+    case "scroll":
+      return `scroll ${action.direction}`;
+    case "launch_app":
+      return `launch ${action.appName}`;
+  }
 }

@@ -13,6 +13,13 @@ export const OVERLAY_VOICE_EVENT = "overlay://voice";
 // the FusionHud's meters + drag. Carries the raw votes so the HUD's fusion stays
 // the single fuseEvidence call site.
 export const OVERLAY_FUSION_EVENT = "overlay://fusion";
+// The richer per-model supervisor snapshot (each tracker's cursor/confidence/fps/
+// lock + voice transcript + agent action), streamed every frame so the overlay-as-
+// UI HUD shows every model's live tracking + accuracy + the CUA's current action.
+export const OVERLAY_SUPERVISOR_EVENT = "overlay://supervisor";
+// The overlay's approve/deny decision for the agent's pending step, sent back to
+// the engine window so a click on the (separate-window) chip resolves the CUA gate.
+export const OVERLAY_APPROVAL_EVENT = "overlay://approval";
 
 // listening = mic open, heard = final utterance in, acting = plan executing.
 export type OverlayVoiceState = "idle" | "listening" | "heard" | "acting";

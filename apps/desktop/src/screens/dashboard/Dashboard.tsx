@@ -30,10 +30,16 @@ import { ClarificationPanel } from "../../features/clarification/ClarificationPa
 import { CuaApprovalPanel } from "../../features/cua-approval/CuaApprovalPanel";
 import { useCuaApproval } from "../../features/cua-approval/useCuaApproval";
 import { DiagnosticsScreen } from "../../features/diagnostics/DiagnosticsScreen";
-import { deriveVoiceState } from "../../features/overlay/overlay-signal";
+import { deriveVoiceState, type OverlayPointerUpdate } from "../../features/overlay/overlay-signal";
+import {
+  describeCuaAgentAction,
+  fpsFromTimestamps,
+  type SupervisorSnapshot,
+} from "../../features/overlay/supervisor-signal";
 import {
   emitOverlayFusion,
   emitOverlayPointer,
+  emitOverlaySupervisor,
   emitOverlayVoice,
 } from "../../features/overlay/tauri-overlay";
 import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnboarding";
@@ -188,8 +194,18 @@ export function Dashboard({
     emitLiveFusion();
   }, [headPointing, emitLiveFusion]);
 
-  // One-command launch: bring up the whole-screen overlay and start head tracking
-  // on mount, so every tracker is live without the operator clicking anything.
+  // Supervisor HUD feed (overlay-as-UI): the engine streams a per-model snapshot
+  // — each tracker's own cursor/confidence/fps/lock, the voice transcript, and the
+  // agent's current action — to the overlay every frame. Fresh values are mirrored
+  // into refs so the emit stays a stable callback. fps is measured from a short
+  // window of per-source frame timestamps.
+  const handPointerRef = useRef<OverlayPointerUpdate | null>(null);
+  const handTsRef = useRef<number[]>([]);
+  const gazeTsRef = useRef<number[]>([]);
+  const lastTranscriptRef = useRef<string | null>(null);
+  const pushTimestamp = (ref: { current: number[] }): void => {
+    ref.current = [...ref.current.slice(-11), performance.now()];
+  };
   useEffect(() => {
     if (!hasTauriBackend()) return;
     void invoke("show_overlay").catch(() => {});
@@ -233,6 +249,55 @@ export function Dashboard({
     running: runResult?.status === "running",
   });
   useEffect(() => emitOverlayVoice(voiceState), [voiceState]);
+
+  // Assemble + emit the supervisor snapshot. Reads the freshest values from refs
+  // (mirrored each render below) so it can stay a stable callback. The agent line
+  // is the pending step (turned to plain words) while one is queued, else "working"
+  // while a plan runs, else idle.
+  const voiceStateRef = useRef(voiceState);
+  voiceStateRef.current = voiceState;
+  const pendingRef = useRef(cuaApproval.pending);
+  pendingRef.current = cuaApproval.pending;
+  const runningRef = useRef(runResult?.status === "running");
+  runningRef.current = runResult?.status === "running";
+  const emitSupervisor = useCallback(() => {
+    const hand = handPointerRef.current;
+    const head = headPointingRef.current;
+    const topGaze = head?.candidates?.[0];
+    const pending = pendingRef.current[0];
+    const snapshot: SupervisorSnapshot = {
+      hand: {
+        point: hand?.point ?? null,
+        confidence: hand?.confidence ?? 0,
+        fps: fpsFromTimestamps(handTsRef.current),
+        lock: hand?.targetLabel ?? null,
+      },
+      gaze: {
+        point: head?.point ? [head.point.x, head.point.y] : null,
+        confidence: topGaze?.score ?? 0,
+        fps: fpsFromTimestamps(gazeTsRef.current),
+        lock: topGaze ? (topGaze.surface.app ?? topGaze.surface.title ?? null) : null,
+      },
+      voice: { state: voiceStateRef.current, transcript: lastTranscriptRef.current },
+      agent: {
+        action: pending
+          ? describeCuaAgentAction(pending.action)
+          : runningRef.current
+            ? "working…"
+            : null,
+        pendingApproval: pendingRef.current.length > 0,
+      },
+    };
+    emitOverlaySupervisor(snapshot);
+  }, []);
+  // Re-emit on gaze, voice, or agent-state change; the camera callback covers hand frames.
+  useEffect(() => {
+    pushTimestamp(gazeTsRef);
+    emitSupervisor();
+  }, [headPointing, emitSupervisor]);
+  useEffect(() => {
+    emitSupervisor();
+  }, [voiceState, cuaApproval.pending, runResult, emitSupervisor]);
 
   // First-run permission onboarding (#18/#56). Show one guided flow on launch
   // until every permission HandsOff needs is granted (or the user skips it),
@@ -322,10 +387,15 @@ export function Dashboard({
           onGestureEvidence={(evidence) => {
             gestureEvidence.current = evidence;
           }}
-          onOverlayPointer={emitOverlayPointer}
+          onOverlayPointer={(update) => {
+            handPointerRef.current = update;
+            emitOverlayPointer(update);
+          }}
           onFrameEvidence={(evidence) => {
             handFrameEvidence.current = evidence;
+            pushTimestamp(handTsRef);
             emitLiveFusion();
+            emitSupervisor();
           }}
         />
         <ReadinessPanel report={report} />
@@ -349,7 +419,10 @@ export function Dashboard({
         <TranscriptPanel
           createStream={createStream}
           headPointer={config.headPointer}
-          onFinalTranscript={handleFinalTranscript}
+          onFinalTranscript={(utterance) => {
+            lastTranscriptRef.current = utterance.text;
+            handleFinalTranscript(utterance);
+          }}
           onStatusChange={setCaptureStatus}
         />
         <SessionsPanel session={session} auditEvents={auditEvents} />

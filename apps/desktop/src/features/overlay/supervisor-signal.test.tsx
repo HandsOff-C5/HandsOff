@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   agentBannerText,
+  describeCuaAgentAction,
   formatConfidencePct,
   formatFps,
   fpsFromTimestamps,
@@ -79,6 +80,31 @@ describe("supervisor-signal", () => {
       expect(
         agentBannerText({ action: 'click "Equals" in Calculator', pendingApproval: false }),
       ).toBe('Acting: click "Equals" in Calculator');
+    });
+  });
+
+  describe("describeCuaAgentAction", () => {
+    it("turns each AX action into plain words", () => {
+      expect(describeCuaAgentAction({ kind: "snapshot" })).toBe("look at the window");
+      expect(describeCuaAgentAction({ kind: "click", elementIndex: 3 })).toBe("click element #3");
+      expect(describeCuaAgentAction({ kind: "click_point", x: 12, y: 40 })).toBe(
+        "click at (12, 40)",
+      );
+      expect(describeCuaAgentAction({ kind: "type_text", elementIndex: 1, text: "hello" })).toBe(
+        'type "hello"',
+      );
+      expect(describeCuaAgentAction({ kind: "set_value", elementIndex: 1, value: "9" })).toBe(
+        'set value to "9"',
+      );
+      expect(describeCuaAgentAction({ kind: "press_key", key: "Enter" })).toBe("press Enter");
+      expect(describeCuaAgentAction({ kind: "press_key", key: "c", modifiers: ["cmd"] })).toBe(
+        "press cmd+c",
+      );
+      expect(describeCuaAgentAction({ kind: "hotkey", keys: ["cmd", "v"] })).toBe("press cmd+v");
+      expect(describeCuaAgentAction({ kind: "scroll", direction: "down" })).toBe("scroll down");
+      expect(describeCuaAgentAction({ kind: "launch_app", appName: "Calculator" })).toBe(
+        "launch Calculator",
+      );
     });
   });
 });
