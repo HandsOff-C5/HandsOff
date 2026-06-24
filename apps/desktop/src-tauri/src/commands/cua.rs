@@ -432,7 +432,10 @@ mod tests {
             "screenshot_png_b64": "abc123"
         });
 
-        assert_eq!(screenshot_field_string(&raw, "screenshot_mime_type").unwrap(), "image/png");
+        assert_eq!(
+            screenshot_field_string(&raw, "screenshot_mime_type").unwrap(),
+            "image/png"
+        );
         assert_eq!(screenshot_field_u64(&raw, "screenshot_width").unwrap(), 640);
         assert!(screenshot_field_string(&json!({}), "screenshot_png_b64").is_err());
     }
