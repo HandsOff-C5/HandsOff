@@ -408,6 +408,42 @@ describe("useVoiceCuaController", () => {
     ]);
   });
 
+  it("persists exact fake-CUA permission failures to the session audit trail", async () => {
+    const driver = createFakeCuaDriver({
+      state: fakeCuaWindowState({ surface: surface() }),
+      permissions: {
+        accessibility: "denied",
+        screenRecording: "granted",
+        driver: "running",
+      },
+    });
+    const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: headPointing(),
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+    await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
+
+    await act(async () => result.current.approve());
+
+    expect(result.current.runResult).toEqual({
+      status: "blocked",
+      result: { status: "blocked", reason: "Accessibility permission denied" },
+    });
+    expect(result.current.auditEvents.at(-1)).toMatchObject({
+      kind: "execution_finished",
+      status: "blocked",
+      result: { status: "blocked", reason: "Accessibility permission denied" },
+    });
+  });
+
   it("iterates a multi-step goal as observed one-action ticks and gates the mutating tick", async () => {
     const notes = surface({ id: "notes:1", title: "Quick Note", app: "Notes" });
     const driver = createFakeCuaDriver({

@@ -117,7 +117,7 @@ describe("PlanPreviewPanel", () => {
     );
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "blocked: No accessible CUA window was found",
+      "The selected window is not reachable right now. Bring it back on screen or switch to its Space, then point and speak again.",
     );
   });
 });

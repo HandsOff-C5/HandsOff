@@ -1,7 +1,15 @@
-import type { SupervisionAuditEvent } from "@handsoff/contracts";
+import type { CuaActionResult, SupervisionAuditEvent } from "@handsoff/contracts";
+import { summarizeCuaFailure } from "@handsoff/cua";
 import type { SupervisionSession } from "@handsoff/supervision";
 
 import { EmptyPanel } from "../../components/EmptyPanel";
+
+function actionResultSummary(result: CuaActionResult): string {
+  if (result.status === "succeeded") return result.summary;
+  return (
+    summarizeCuaFailure(result) ?? (result.status === "blocked" ? result.reason : result.error)
+  );
+}
 
 function eventSummary(event: SupervisionAuditEvent): string {
   if (event.kind === "intent_created") {
@@ -13,21 +21,10 @@ function eventSummary(event: SupervisionAuditEvent): string {
     return `Approval ${event.approval.decision}`;
   }
   if (event.kind === "cua_call") {
-    const result =
-      event.result.status === "succeeded"
-        ? event.result.summary
-        : event.result.status === "blocked"
-          ? event.result.reason
-          : event.result.error;
-    return `CUA ${event.request.kind}: ${result}`;
+    return `CUA ${event.request.kind}: ${actionResultSummary(event.result)}`;
   }
   if (event.kind === "execution_finished") {
-    const detail =
-      event.result?.status === "blocked"
-        ? `: ${event.result.reason}`
-        : event.result?.status === "failed"
-          ? `: ${event.result.error}`
-          : "";
+    const detail = event.result ? `: ${actionResultSummary(event.result)}` : "";
     return `Finished: ${event.status}${detail}`;
   }
   return `${event.phase === "pre" ? "Before" : "After"} state captured`;
