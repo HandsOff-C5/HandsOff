@@ -1,0 +1,410 @@
+[
+  {
+    "name": "agreement boosts the hand-selected surface",
+    "input": {
+      "gesture": {
+        "source": "gesture",
+        "confidence": 0.76,
+        "strategy": "wrist-ray-calibrated:good",
+        "surface": {
+          "id": "surface-notes",
+          "title": "Daily Note",
+          "app": "Notes",
+          "availability": "available",
+          "accessStatus": "accessible"
+        }
+      },
+      "headPoint": { "x": 12, "y": 24 },
+      "headCandidates": [
+        {
+          "surface": {
+            "id": "surface-notes",
+            "title": "Daily Note",
+            "app": "Notes",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "score": 0.92,
+          "distance": 0.08
+        }
+      ]
+    },
+    "expected": {
+      "target": {
+        "confidence": 0.92,
+        "provenance": ["gesture", "head"],
+        "surface": {
+          "id": "surface-notes",
+          "title": "Daily Note",
+          "app": "Notes",
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "evidence": {
+          "source": "fusion",
+          "confidence": 0.92,
+          "strategy": "wrist-ray-calibrated:good+head-face-agree",
+          "surface": {
+            "id": "surface-notes",
+            "title": "Daily Note",
+            "app": "Notes",
+            "availability": "available",
+            "accessStatus": "accessible"
+          }
+        }
+      },
+      "pointingEvidence": [
+        {
+          "source": "fusion",
+          "confidence": 0.92,
+          "strategy": "wrist-ray-calibrated:good+head-face-agree",
+          "surface": {
+            "id": "surface-notes",
+            "title": "Daily Note",
+            "app": "Notes",
+            "availability": "available",
+            "accessStatus": "accessible"
+          }
+        }
+      ],
+      "surfaceCandidates": [
+        {
+          "id": "surface-notes",
+          "title": "Daily Note",
+          "app": "Notes",
+          "availability": "available",
+          "accessStatus": "accessible"
+        }
+      ]
+    },
+    "intent": {
+      "status": "ready"
+    }
+  },
+  {
+    "name": "disagreement keeps the hand surface but asks before acting",
+    "input": {
+      "gesture": {
+        "source": "gesture",
+        "confidence": 0.88,
+        "strategy": "wrist-ray-calibrated:good",
+        "surface": {
+          "id": "surface-notes",
+          "title": "Daily Note",
+          "app": "Notes",
+          "availability": "available",
+          "accessStatus": "accessible"
+        }
+      },
+      "headPoint": { "x": 220, "y": 64 },
+      "headCandidates": [
+        {
+          "surface": {
+            "id": "surface-browser",
+            "title": "Pull Request",
+            "app": "Browser",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "score": 0.9,
+          "distance": 0.12
+        }
+      ]
+    },
+    "expected": {
+      "target": {
+        "confidence": 0.44,
+        "provenance": ["gesture", "head"],
+        "disagreementReason": "source_disagreement",
+        "surface": {
+          "id": "surface-notes",
+          "title": "Daily Note",
+          "app": "Notes",
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "evidence": {
+          "source": "fusion",
+          "confidence": 0.44,
+          "strategy": "wrist-ray-calibrated:good+head-face-disagree",
+          "surface": {
+            "id": "surface-notes",
+            "title": "Daily Note",
+            "app": "Notes",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "cursor": { "x": 220, "y": 64 }
+        }
+      },
+      "pointingEvidence": [
+        {
+          "source": "fusion",
+          "confidence": 0.44,
+          "strategy": "wrist-ray-calibrated:good+head-face-disagree",
+          "surface": {
+            "id": "surface-notes",
+            "title": "Daily Note",
+            "app": "Notes",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "cursor": { "x": 220, "y": 64 }
+        }
+      ],
+      "surfaceCandidates": [
+        {
+          "id": "surface-notes",
+          "title": "Daily Note",
+          "app": "Notes",
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        {
+          "id": "surface-browser",
+          "title": "Pull Request",
+          "app": "Browser",
+          "availability": "available",
+          "accessStatus": "accessible"
+        }
+      ]
+    },
+    "intent": {
+      "status": "clarification_required",
+      "reason": "low_confidence"
+    }
+  },
+  {
+    "name": "hand only remains primary",
+    "input": {
+      "gesture": {
+        "source": "gesture",
+        "confidence": 0.81,
+        "strategy": "wrist-ray-calibrated:fair",
+        "surface": {
+          "id": "surface-terminal",
+          "title": "Shell",
+          "app": "Terminal",
+          "availability": "available",
+          "accessStatus": "accessible"
+        }
+      },
+      "headCandidates": []
+    },
+    "expected": {
+      "target": {
+        "confidence": 0.81,
+        "provenance": ["gesture"],
+        "surface": {
+          "id": "surface-terminal",
+          "title": "Shell",
+          "app": "Terminal",
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "evidence": {
+          "source": "gesture",
+          "confidence": 0.81,
+          "strategy": "wrist-ray-calibrated:fair",
+          "surface": {
+            "id": "surface-terminal",
+            "title": "Shell",
+            "app": "Terminal",
+            "availability": "available",
+            "accessStatus": "accessible"
+          }
+        }
+      },
+      "pointingEvidence": [
+        {
+          "source": "gesture",
+          "confidence": 0.81,
+          "strategy": "wrist-ray-calibrated:fair",
+          "surface": {
+            "id": "surface-terminal",
+            "title": "Shell",
+            "app": "Terminal",
+            "availability": "available",
+            "accessStatus": "accessible"
+          }
+        }
+      ],
+      "surfaceCandidates": [
+        {
+          "id": "surface-terminal",
+          "title": "Shell",
+          "app": "Terminal",
+          "availability": "available",
+          "accessStatus": "accessible"
+        }
+      ]
+    },
+    "intent": {
+      "status": "ready"
+    }
+  },
+  {
+    "name": "head face only selects the best region candidate",
+    "input": {
+      "headPoint": { "x": 42, "y": 18 },
+      "headCandidates": [
+        {
+          "surface": {
+            "id": "surface-browser",
+            "title": "Pull Request",
+            "app": "Browser",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "score": 0.83,
+          "distance": 0.12
+        },
+        {
+          "surface": {
+            "id": "surface-notes",
+            "title": "Daily Note",
+            "app": "Notes",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "score": 0.69,
+          "distance": 0.04
+        }
+      ]
+    },
+    "expected": {
+      "target": {
+        "confidence": 0.83,
+        "provenance": ["head"],
+        "surface": {
+          "id": "surface-browser",
+          "title": "Pull Request",
+          "app": "Browser",
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "evidence": {
+          "source": "head",
+          "confidence": 0.83,
+          "strategy": "head-neighborhood",
+          "surface": {
+            "id": "surface-browser",
+            "title": "Pull Request",
+            "app": "Browser",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "cursor": { "x": 42, "y": 18 }
+        }
+      },
+      "pointingEvidence": [
+        {
+          "source": "head",
+          "confidence": 0.83,
+          "strategy": "head-neighborhood",
+          "surface": {
+            "id": "surface-browser",
+            "title": "Pull Request",
+            "app": "Browser",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "cursor": { "x": 42, "y": 18 }
+        }
+      ],
+      "surfaceCandidates": [
+        {
+          "id": "surface-browser",
+          "title": "Pull Request",
+          "app": "Browser",
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        {
+          "id": "surface-notes",
+          "title": "Daily Note",
+          "app": "Notes",
+          "availability": "available",
+          "accessStatus": "accessible"
+        }
+      ]
+    },
+    "intent": {
+      "status": "ready"
+    }
+  },
+  {
+    "name": "low confidence head face target asks before acting",
+    "input": {
+      "headPoint": { "x": 9, "y": 15 },
+      "headCandidates": [
+        {
+          "surface": {
+            "id": "surface-browser",
+            "title": "Pull Request",
+            "app": "Browser",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "score": 0.35,
+          "distance": 0.3
+        }
+      ]
+    },
+    "expected": {
+      "target": {
+        "confidence": 0.35,
+        "provenance": ["head"],
+        "disagreementReason": "low_confidence",
+        "surface": {
+          "id": "surface-browser",
+          "title": "Pull Request",
+          "app": "Browser",
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "evidence": {
+          "source": "head",
+          "confidence": 0.35,
+          "strategy": "head-neighborhood",
+          "surface": {
+            "id": "surface-browser",
+            "title": "Pull Request",
+            "app": "Browser",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "cursor": { "x": 9, "y": 15 }
+        }
+      },
+      "pointingEvidence": [
+        {
+          "source": "head",
+          "confidence": 0.35,
+          "strategy": "head-neighborhood",
+          "surface": {
+            "id": "surface-browser",
+            "title": "Pull Request",
+            "app": "Browser",
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "cursor": { "x": 9, "y": 15 }
+        }
+      ],
+      "surfaceCandidates": [
+        {
+          "id": "surface-browser",
+          "title": "Pull Request",
+          "app": "Browser",
+          "availability": "available",
+          "accessStatus": "accessible"
+        }
+      ]
+    },
+    "intent": {
+      "status": "clarification_required",
+      "reason": "low_confidence"
+    }
+  }
+]

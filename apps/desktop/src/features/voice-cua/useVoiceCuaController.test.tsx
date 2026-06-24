@@ -253,7 +253,7 @@ describe("useVoiceCuaController", () => {
     expect(input.surfaceCandidates).toEqual([surface()]);
   });
 
-  it("binds locked gesture evidence before head candidates", async () => {
+  it("keeps locked gesture primary when head candidates disagree", async () => {
     const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
     const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
     const { result } = renderHook(() =>
@@ -271,8 +271,16 @@ describe("useVoiceCuaController", () => {
 
     await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
     expect(resolveIntent.mock.calls[0]![0]).toMatchObject({
-      pointingEvidence: [gestureEvidence],
-      surfaceCandidates: [gestureEvidence.surface],
+      pointingEvidence: [
+        {
+          source: "fusion",
+          confidence: 0.45,
+          strategy: "wrist-ray-calibrated:good+head-face-disagree",
+          surface: gestureEvidence.surface,
+          cursor: { x: 10, y: 20 },
+        },
+      ],
+      surfaceCandidates: [gestureEvidence.surface, surface()],
     });
     expect(result.current.intent).toMatchObject({
       status: "ready",

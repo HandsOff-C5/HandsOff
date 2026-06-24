@@ -11,7 +11,7 @@ import {
   type SurfaceSnapshot,
 } from "@handsoff/contracts";
 import type { CuaDriver } from "@handsoff/cua";
-import { resolveIntent, type ResolveIntentOptions } from "@handsoff/intent";
+import { fusePerceptionTarget, resolveIntent, type ResolveIntentOptions } from "@handsoff/intent";
 import {
   createActionAuditStore,
   createSupervisionSessionStore,
@@ -160,42 +160,24 @@ export function useVoiceCuaController(args: {
     const gesture = args.getGestureEvidence?.() ?? null;
     const headPointing = headPointingRef.current;
     const headCandidates = headPointing?.candidates ?? [];
-    const pointingEvidence: PointingEvidence[] = gesture?.surface
-      ? [gesture]
-      : headPointing
-        ? headCandidates.length > 0
-          ? headCandidates.map((candidate) => ({
-              source: "head" as const,
-              confidence: candidate.score,
-              strategy: "head-neighborhood",
-              surface: candidate.surface,
-              ...(headPointing.point && { cursor: headPointing.point }),
-            }))
-          : [
-              {
-                source: "head",
-                confidence: 0,
-                strategy: "head-neighborhood-empty",
-                ...(headPointing.point && { cursor: headPointing.point }),
-              },
-            ]
-        : [
-            {
-              source: "cursor",
-              confidence: 1,
-              strategy: "active-window-current-cursor",
-              surface: await resolveActiveWindowSurface(),
-            },
-          ];
+    const perception = fusePerceptionTarget({
+      gesture,
+      headCandidates,
+      headPoint: headPointing?.point ?? null,
+      fallback: headPointing
+        ? null
+        : {
+            source: "cursor",
+            confidence: 1,
+            strategy: "active-window-current-cursor",
+            surface: await resolveActiveWindowSurface(),
+          },
+    });
     const input: IntentInput = {
       sessionId: started.id,
       speech: { finalTranscript },
-      pointingEvidence,
-      surfaceCandidates: gesture?.surface
-        ? [gesture.surface]
-        : headPointing
-          ? headCandidates.map((candidate) => candidate.surface)
-          : pointingEvidence.flatMap((e) => (e.surface ? [e.surface] : [])),
+      pointingEvidence: [...perception.pointingEvidence],
+      surfaceCandidates: [...perception.surfaceCandidates],
     };
     const run: GoalRunState = {
       sessionId: started.id,
