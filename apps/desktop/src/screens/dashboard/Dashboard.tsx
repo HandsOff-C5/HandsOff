@@ -1,5 +1,6 @@
 import {
   APP_NAME,
+  type CalibrationQuality,
   type CapabilityId,
   type IntentInput,
   type PointingEvidence,
@@ -25,7 +26,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { applyTransform, type AffineTransform, type Point } from "@handsoff/gesture";
+
 import { CameraPanel } from "../../features/camera/CameraPanel";
+import { DEMO_SCREEN_BOUNDS } from "../../features/camera/demo-surfaces";
+import { useCalibrationOnboarding } from "../../features/calibration/useCalibrationOnboarding";
 import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
 import { CuaApprovalPanel } from "../../features/cua-approval/CuaApprovalPanel";
 import { useCuaApproval } from "../../features/cua-approval/useCuaApproval";
@@ -107,6 +112,20 @@ function buildDiagnosticsEvidence(
     });
   }
   return evidence;
+}
+
+// Calibration persistence. The hand calibration reuses the camera panel's key (so
+// onboarding and the in-panel Calibrate flow share one stored fit); the gaze
+// correction gets its own. A stored hand calibration means we skip the onboarding.
+const HAND_CALIB_KEY = "handsoff.calibration.v2";
+const GAZE_CALIB_KEY = "handsoff.calibration.gaze.v1";
+
+function hasStoredHandCalibration(): boolean {
+  try {
+    return localStorage.getItem(HAND_CALIB_KEY) !== null;
+  } catch {
+    return false;
+  }
 }
 
 const HEAD_POINTING_TAURI = {
@@ -208,6 +227,11 @@ export function Dashboard({
   const pushTimestamp = (ref: { current: number[] }): void => {
     ref.current = [...ref.current.slice(-11), performance.now()];
   };
+  // Calibration: the raw hand pointing signal (mirrored from the camera) the
+  // onboarding captures to fit, and the fitted gaze correction applied to the gaze
+  // point before it's shown/used.
+  const rawHandRef = useRef<Point | null>(null);
+  const gazeCorrectionRef = useRef<AffineTransform | null>(null);
   useEffect(() => {
     if (!hasTauriBackend()) return;
     void invoke("show_overlay").catch(() => {});
@@ -267,6 +291,12 @@ export function Dashboard({
     const head = headPointingRef.current;
     const topGaze = head?.candidates?.[0];
     const pending = pendingRef.current[0];
+    // Apply the gaze calibration correction to the raw gaze point, if calibrated.
+    let gazePoint: [number, number] | null = head?.point ? [head.point.x, head.point.y] : null;
+    if (gazePoint && gazeCorrectionRef.current) {
+      const corrected = applyTransform(gazeCorrectionRef.current, gazePoint);
+      gazePoint = [corrected[0], corrected[1]];
+    }
     const snapshot: SupervisorSnapshot = {
       hand: {
         point: hand?.point ?? null,
@@ -275,7 +305,7 @@ export function Dashboard({
         lock: hand?.targetLabel ?? null,
       },
       gaze: {
-        point: head?.point ? [head.point.x, head.point.y] : null,
+        point: gazePoint,
         confidence: topGaze?.score ?? 0,
         fps: fpsFromTimestamps(gazeTsRef.current),
         lock: topGaze ? (topGaze.surface.app ?? topGaze.surface.title ?? null) : null,
@@ -300,6 +330,53 @@ export function Dashboard({
   useEffect(() => {
     emitSupervisor();
   }, [voiceState, cuaApproval.pending, runResult, emitSupervisor]);
+
+  // Startup calibration onboarding (touch the dots): hand 👆 then eyes 👁, before
+  // the HUD goes live. The fitted hand calibration is pushed into the camera via
+  // calibrationOverride; the gaze fit becomes a local correction applied above.
+  // Skipped when a hand calibration is already remembered.
+  const [handCalibrationOverride, setHandCalibrationOverride] = useState<{
+    transform: AffineTransform;
+    quality: CalibrationQuality;
+  } | null>(null);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(GAZE_CALIB_KEY);
+      if (saved) {
+        gazeCorrectionRef.current = (JSON.parse(saved) as { transform: AffineTransform }).transform;
+      }
+    } catch {
+      // Corrupt/absent storage — gaze stays uncorrected.
+    }
+  }, []);
+  useCalibrationOnboarding({
+    enabled: hasTauriBackend(),
+    handBounds: DEMO_SCREEN_BOUNDS,
+    getHandCursor: () => handPointerRef.current?.point ?? null,
+    getGazeCursor: () => {
+      const point = headPointingRef.current?.point;
+      return point ? [point.x, point.y] : null;
+    },
+    getHandRaw: () => rawHandRef.current,
+    getGazeRaw: () => {
+      const point = headPointingRef.current?.point;
+      return point ? [point.x, point.y] : null;
+    },
+    onHandResult: (result) =>
+      setHandCalibrationOverride({ transform: result.transform, quality: result.quality }),
+    onGazeResult: (result) => {
+      gazeCorrectionRef.current = result.transform;
+      try {
+        localStorage.setItem(
+          GAZE_CALIB_KEY,
+          JSON.stringify({ transform: result.transform, quality: result.quality }),
+        );
+      } catch {
+        // Storage unavailable — the correction still applies this session.
+      }
+    },
+    remembered: hasStoredHandCalibration(),
+  });
 
   // Hands-off approvals (overlay-as-UI phase 4). The approval chip lives in the
   // separate overlay window, so its click comes back as an event the engine
@@ -406,6 +483,8 @@ export function Dashboard({
       <div className="dashboard__panels">
         <CameraPanel
           autoStart={hasTauriBackend()}
+          rawPointerRef={rawHandRef}
+          calibrationOverride={handCalibrationOverride}
           onGestureEvidence={(evidence) => {
             gestureEvidence.current = evidence;
           }}

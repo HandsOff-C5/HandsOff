@@ -15,7 +15,7 @@ import {
   type Point,
   type ReferentLoop,
 } from "@handsoff/gesture";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 
 import { toGestureEvidence } from "../fusion/gestureEvidence";
 import { normalizeOverlayPoint, type OverlayPointerUpdate } from "../overlay/overlay-signal";
@@ -46,6 +46,13 @@ interface CameraPanelProps {
   // Start the camera on mount (the one-command launch auto-starts every tracker
   // instead of making the operator click "Start camera").
   autoStart?: boolean;
+  // Mirror of the live raw pointing signal each frame, so the calibration
+  // onboarding (which runs in the engine, outside this panel) can capture the raw
+  // sample to fit. A ref → no re-render.
+  rawPointerRef?: MutableRefObject<Point | null>;
+  // Apply a calibration fitted elsewhere (the touch-the-dots onboarding): rebuild
+  // the pointing loop with it + persist, exactly like the in-panel Calibrate flow.
+  calibrationOverride?: { transform: AffineTransform; quality: Quality } | null;
 }
 
 type Status = "idle" | "starting" | "live" | "error";
@@ -89,6 +96,8 @@ export function CameraPanel({
   onOverlayPointer,
   onFrameEvidence,
   autoStart = false,
+  rawPointerRef,
+  calibrationOverride,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -161,6 +170,19 @@ export function CameraPanel({
     }
   }, [rebuildLoop]);
 
+  // Apply a calibration fitted by the touch-the-dots onboarding (runs in the engine,
+  // outside this panel): rebuild the loop + persist, same as the in-panel Calibrate flow.
+  useEffect(() => {
+    if (!calibrationOverride) return;
+    rebuildLoop(calibrationOverride.transform, calibrationOverride.quality);
+    setCalibration(calibrationOverride.quality);
+    try {
+      localStorage.setItem(CALIB_KEY, JSON.stringify(calibrationOverride));
+    } catch {
+      // Storage unavailable — the calibration still applies for this session.
+    }
+  }, [calibrationOverride, rebuildLoop]);
+
   const stop = useCallback(() => {
     const r = resources.current;
     r.cancelled = true;
@@ -210,6 +232,7 @@ export function CameraPanel({
             setFrame(f);
             setFps(f2);
             latestRaw.current = pointingSignalFromFrame(f, POINTING);
+            if (rawPointerRef) rawPointerRef.current = latestRaw.current;
             const buf = frameBuffer.current;
             buf.push(f);
             if (buf.length > FRAME_BUFFER) buf.shift();
