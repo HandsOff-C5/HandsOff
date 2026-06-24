@@ -1,5 +1,5 @@
 import { PointingOverlay } from "./features/overlay/PointingOverlay";
-import { tauriOverlayListen } from "./features/overlay/tauri-overlay";
+import { tauriFusionListen, tauriOverlayListen } from "./features/overlay/tauri-overlay";
 import { Dashboard } from "./screens/dashboard/Dashboard";
 
 // Both the dashboard and the full-screen pointing overlay load this same bundle;
@@ -23,7 +23,7 @@ function currentWindowLabel(): string {
 // overlay window draws the live pointer on the real desktop (#25 cursor seam).
 export function App() {
   return currentWindowLabel() === "overlay" ? (
-    <PointingOverlay listen={tauriOverlayListen} />
+    <PointingOverlay listen={tauriOverlayListen} fusionListen={tauriFusionListen} />
   ) : (
     <Dashboard />
   );

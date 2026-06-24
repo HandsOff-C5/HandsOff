@@ -23,7 +23,7 @@ import {
 } from "@handsoff/speech";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CameraPanel } from "../../features/camera/CameraPanel";
 import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
@@ -31,7 +31,11 @@ import { CuaApprovalPanel } from "../../features/cua-approval/CuaApprovalPanel";
 import { useCuaApproval } from "../../features/cua-approval/useCuaApproval";
 import { DiagnosticsScreen } from "../../features/diagnostics/DiagnosticsScreen";
 import { deriveVoiceState } from "../../features/overlay/overlay-signal";
-import { emitOverlayPointer, emitOverlayVoice } from "../../features/overlay/tauri-overlay";
+import {
+  emitOverlayFusion,
+  emitOverlayPointer,
+  emitOverlayVoice,
+} from "../../features/overlay/tauri-overlay";
 import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnboarding";
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
@@ -156,6 +160,41 @@ export function Dashboard({
       : undefined);
   const liveHeadPointing = useHeadPointing(hasTauriBackend() ? HEAD_POINTING_TAURI : undefined);
   const headPointing = injectedHeadPointing ?? liveHeadPointing;
+
+  // Continuous observability (the whole-screen HUD): stream the fused per-model
+  // evidence to the overlay window EVERY frame. The camera pushes its live hand
+  // evidence into a ref; we combine it with the gaze candidates and emit, so the
+  // on-screen FusionHud shows all models' live confidence + the disagreement drag.
+  const handFrameEvidence = useRef<PointingEvidence | null>(null);
+  const headPointingRef = useRef(headPointing);
+  headPointingRef.current = headPointing;
+  const emitLiveFusion = useCallback(() => {
+    const evidence: PointingEvidence[] = [];
+    if (handFrameEvidence.current) evidence.push(handFrameEvidence.current);
+    const head = headPointingRef.current;
+    for (const candidate of head?.candidates ?? []) {
+      evidence.push({
+        source: "head",
+        confidence: candidate.score,
+        strategy: "head-neighborhood",
+        surface: candidate.surface,
+        ...(head?.point ? { cursor: head.point } : {}),
+      });
+    }
+    emitOverlayFusion(evidence);
+  }, []);
+  // Re-emit whenever the gaze changes; the camera callback covers hand-frame changes.
+  useEffect(() => {
+    emitLiveFusion();
+  }, [headPointing, emitLiveFusion]);
+
+  // One-command launch: bring up the whole-screen overlay and start head tracking
+  // on mount, so every tracker is live without the operator clicking anything.
+  useEffect(() => {
+    if (!hasTauriBackend()) return;
+    void invoke("show_overlay").catch(() => {});
+    void invoke("head_track_start").catch(() => {});
+  }, []);
   // CUA-5: the agent escalator + its human approval queue. One stable approval
   // controller backs both the escalator's gate and the CuaApprovalPanel, so the
   // panel renders and resolves the mutating actions the agent loop queues.
@@ -279,10 +318,15 @@ export function Dashboard({
       {showDiagnostics && <DiagnosticsScreen evidence={diagnosticsEvidence} />}
       <div className="dashboard__panels">
         <CameraPanel
+          autoStart={hasTauriBackend()}
           onGestureEvidence={(evidence) => {
             gestureEvidence.current = evidence;
           }}
           onOverlayPointer={emitOverlayPointer}
+          onFrameEvidence={(evidence) => {
+            handFrameEvidence.current = evidence;
+            emitLiveFusion();
+          }}
         />
         <ReadinessPanel report={report} />
         <PermissionsPanel

@@ -1,7 +1,9 @@
+import type { PointingEvidence } from "@handsoff/contracts";
 import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { PointingOverlay, type OverlayListen } from "./PointingOverlay";
+import type { FusionListen } from "./useFusionSignal";
 import type { OverlaySignal } from "./overlay-signal";
 
 function signal(overrides: Partial<OverlaySignal> = {}): OverlaySignal {
@@ -59,5 +61,36 @@ describe("PointingOverlay", () => {
     expect(screen.getByTestId("overlay-marker").style.left).toBe("10%");
     expect(screen.getByText("Slack")).toBeInTheDocument();
     expect(screen.getByText("Acting…")).toBeInTheDocument();
+  });
+
+  it("renders the live per-model fusion HUD from the injected fusion listener", () => {
+    let pushFusion: ((evidence: PointingEvidence[]) => void) | undefined;
+    const fusionListen: FusionListen = (onEvidence) => {
+      pushFusion = onEvidence;
+      return () => {};
+    };
+    const surface = {
+      id: "win-cursor",
+      title: "main.ts",
+      app: "Cursor",
+      availability: "available" as const,
+      accessStatus: "accessible" as const,
+    };
+
+    render(<PointingOverlay fusionListen={fusionListen} />);
+    // Idle until evidence arrives.
+    expect(screen.getByText("No signal")).toBeInTheDocument();
+
+    act(() =>
+      pushFusion?.([
+        { source: "gesture", confidence: 0.9, strategy: "wrist-ray", surface },
+        { source: "head", confidence: 0.6, strategy: "head-pose", surface },
+      ]),
+    );
+
+    // The fused decision + per-model meters now render on the overlay.
+    expect(screen.getByLabelText("Fusion HUD")).toBeInTheDocument();
+    expect(screen.getByTestId("fusion-decision")).toBeInTheDocument();
+    expect(screen.getByTestId("fusion-target")).toBeInTheDocument();
   });
 });

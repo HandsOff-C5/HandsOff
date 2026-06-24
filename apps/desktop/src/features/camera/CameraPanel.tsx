@@ -39,6 +39,13 @@ interface CameraPanelProps {
   // Live pointer out for the screen overlay (#25): normalized point + confidence +
   // locked target, every frame. The dashboard relays this to the overlay window.
   onOverlayPointer?: (update: OverlayPointerUpdate) => void;
+  // Live hand evidence out EVERY frame (not just on lock): the current pointing
+  // candidate as PointingEvidence, or null with no hand. The dashboard fuses this
+  // with the gaze each frame to drive the on-screen observability HUD.
+  onFrameEvidence?: (evidence: PointingEvidence | null) => void;
+  // Start the camera on mount (the one-command launch auto-starts every tracker
+  // instead of making the operator click "Start camera").
+  autoStart?: boolean;
 }
 
 type Status = "idle" | "starting" | "live" | "error";
@@ -80,6 +87,8 @@ export function CameraPanel({
   listDevices = defaultListDevices,
   onGestureEvidence,
   onOverlayPointer,
+  onFrameEvidence,
+  autoStart = false,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -264,6 +273,24 @@ export function CameraPanel({
       onGestureEvidence(null);
     }
   }, [phase, referent, candidate, onGestureEvidence]);
+
+  // Publish the live hand evidence EVERY frame (not just on lock) so the on-screen
+  // observability HUD shows the hand channel's confidence + vote continuously.
+  useEffect(() => {
+    if (!onFrameEvidence) return;
+    onFrameEvidence(
+      candidate ? toGestureEvidence(candidate, demoSurfaceSnapshot(candidate.targetId)) : null,
+    );
+  }, [candidate, onFrameEvidence]);
+
+  // One-command launch: auto-start the camera on mount. Guarded so it fires once.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoStart && !autoStarted.current) {
+      autoStarted.current = true;
+      void start();
+    }
+  }, [autoStart, start]);
 
   // Stream the live pointer to the screen-overlay window (#25): normalized point (same
   // mapping as the in-app PointerCursor), confidence for the glow, and the locked target

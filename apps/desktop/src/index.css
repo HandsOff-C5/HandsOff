@@ -889,6 +889,16 @@ body {
 }
 
 /* Voice engagement indicator (listening / heard / acting), pinned top-center. */
+/* The live per-model observability HUD, pinned to the top-right of the screen
+   overlay so it's visible over the real desktop without covering the pointer. */
+.pointing-overlay__hud {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  max-width: 360px;
+  pointer-events: none;
+}
+
 .pointing-overlay__voice {
   position: absolute;
   top: 16px;

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { FusionHud } from "./FusionHud";
+import { useFusionSignal, type FusionListen } from "./useFusionSignal";
 import {
   IDLE_OVERLAY_SIGNAL,
   overlayMarkerStyle,
@@ -34,15 +36,24 @@ interface PointingOverlayProps {
   signal?: OverlaySignal;
   // Live subscription (the overlay window passes the Tauri-backed listener).
   listen?: OverlayListen;
+  // Per-frame fused evidence subscription (the overlay window passes the Tauri-backed
+  // listener). Drives the on-screen FusionHud so every model's live confidence + vote +
+  // the disagreement "drag" is visible on the real desktop, not just in the dashboard.
+  fusionListen?: FusionListen;
 }
 
 // Full-screen pointing overlay (#25 cursor seam) — the layer that draws where you point
 // on the REAL desktop, in its own transparent, click-through, always-on-top window. It
 // shows the fused pointer (dot + confidence glow), the locked target, and the voice
 // engagement state, so the operator sees all three signals without the dashboard.
-export function PointingOverlay({ signal: signalProp, listen }: PointingOverlayProps) {
+export function PointingOverlay({
+  signal: signalProp,
+  listen,
+  fusionListen,
+}: PointingOverlayProps) {
   const live = useOverlaySignal(listen);
   const signal = signalProp ?? live;
+  const fusion = useFusionSignal(fusionListen);
 
   // The shared bundle's body is opaque dark (dashboard theme); the overlay window must
   // be see-through, so clear the background while this layer is mounted.
@@ -77,6 +88,11 @@ export function PointingOverlay({ signal: signalProp, listen }: PointingOverlayP
       >
         {VOICE_STATE_LABEL[signal.voiceState]}
       </p>
+      {/* Live per-model accuracy on the real screen: each tracker's confidence +
+          vote + the disagreement drag, fused every frame. */}
+      <div className="pointing-overlay__hud">
+        <FusionHud fusion={fusion} />
+      </div>
     </div>
   );
 }

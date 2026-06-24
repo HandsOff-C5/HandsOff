@@ -40,6 +40,16 @@ describe("CameraPanel", () => {
     expect(screen.getByText(/starting camera/i)).toBeInTheDocument();
   });
 
+  it("auto-starts the camera on mount when autoStart is set (one-command launch)", () => {
+    const getStream = vi.fn(() => new Promise<MediaStream>(() => {}));
+    render(
+      <CameraPanel autoStart getStream={getStream} createDetector={() => new Promise(() => {})} />,
+    );
+    // No click needed — the camera comes up on its own.
+    expect(getStream).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/starting camera/i)).toBeInTheDocument();
+  });
+
   it("surfaces a permission error without crashing the dashboard", async () => {
     render(
       <CameraPanel
