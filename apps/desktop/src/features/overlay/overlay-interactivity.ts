@@ -17,5 +17,5 @@ export interface OverlayInteractivityInput {
 }
 
 export function overlayShouldBeInteractive(input: OverlayInteractivityInput): boolean {
-  return input.pendingApprovals > 0 || input.showOnboarding;
+  return input.pendingApprovals > 0 || input.showOnboarding || input.calibrationActive === true;
 }
