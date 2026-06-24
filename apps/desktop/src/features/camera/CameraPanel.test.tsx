@@ -1,4 +1,8 @@
-import type { RawHandLandmarkerResult } from "@handsoff/gesture";
+import type {
+  HandLandmarkerHandle,
+  RawFaceLandmarkerResult,
+  RawHandLandmarkerResult,
+} from "@handsoff/gesture";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -11,8 +15,30 @@ beforeAll(() => {
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
 });
 
-const fakeDetector = () => ({
+const faceLandmarks = () => {
+  const landmarks = Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
+  landmarks[33] = { x: 0.4, y: 0.45, z: 0 };
+  landmarks[133] = { x: 0.45, y: 0.45, z: 0 };
+  landmarks[263] = { x: 0.6, y: 0.45, z: 0 };
+  landmarks[362] = { x: 0.55, y: 0.45, z: 0 };
+  landmarks[1] = { x: 0.5, y: 0.55, z: 0 };
+  landmarks[4] = { x: 0.5, y: 0.58, z: 0 };
+  return landmarks;
+};
+
+const fakeDetector = (): HandLandmarkerHandle => ({
   detector: { detectForVideo: (): RawHandLandmarkerResult => ({ landmarks: [] }) },
+  close: vi.fn(),
+});
+
+const fakeFaceDetector = (): HandLandmarkerHandle => ({
+  detector: { detectForVideo: (): RawHandLandmarkerResult => ({ landmarks: [] }) },
+  faceDetector: {
+    detectForVideo: (): RawFaceLandmarkerResult => ({
+      faceLandmarks: [faceLandmarks()],
+      facePresenceScores: [0.88],
+    }),
+  },
   close: vi.fn(),
 });
 
@@ -80,6 +106,31 @@ describe("CameraPanel", () => {
     );
     startCamera();
     expect(await screen.findByText(/^Live\b/)).toBeInTheDocument();
+  });
+
+  it("shows minimal face debug state from the same camera loop", async () => {
+    const requestFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        setTimeout(() => callback(1000));
+        return 1;
+      });
+    const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+
+    render(
+      <CameraPanel
+        getStream={() => Promise.resolve(fakeStream())}
+        createDetector={() => Promise.resolve(fakeFaceDetector())}
+      />,
+    );
+    startCamera();
+
+    expect(
+      await screen.findByText(/Face: 1 detected · landmarks ready · frame 1/i),
+    ).toBeInTheDocument();
+
+    requestFrame.mockRestore();
+    cancelFrame.mockRestore();
   });
 
   it("lists available cameras once live and switches stream on selection", async () => {

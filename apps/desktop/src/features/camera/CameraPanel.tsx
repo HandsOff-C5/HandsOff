@@ -15,6 +15,7 @@ import {
   type AffineTransform,
   type CalibrationTarget,
   type HandLandmarkerHandle,
+  type HeadFaceFrame,
   type MultiMonitorCalibration,
   type Point,
   type ReferentLoop,
@@ -99,6 +100,7 @@ export function CameraPanel({
   const [mode, setMode] = useState<Mode>("live");
   const [error, setError] = useState<string | null>(null);
   const [frame, setFrame] = useState<LandmarkFrame | null>(null);
+  const [faceFrame, setFaceFrame] = useState<HeadFaceFrame | null>(null);
   const [fps, setFps] = useState(0);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
@@ -221,8 +223,10 @@ export function CameraPanel({
 
         const processor = createLandmarkProcessor({
           detector: handle.detector,
-          onResult: ({ frame: f, fps: f2 }) => {
+          faceDetector: handle.faceDetector,
+          onResult: ({ frame: f, faceFrame: faces, fps: f2 }) => {
             setFrame(f);
+            setFaceFrame(faces);
             setFps(f2);
             latestRaw.current = pointingSignalFromFrame(f, POINTING);
             const buf = frameBuffer.current;
@@ -408,6 +412,9 @@ export function CameraPanel({
           aria-label="webcam"
         />
         <LandmarkOverlay frame={frame} fps={fps} mirrored={mirrored} />
+        {isLive && faceFrame && (
+          <p className="camera-panel__face-debug">{faceDebugText(faceFrame)}</p>
+        )}
 
         {mode === "live" && locked && (
           <div className="camera-panel__candidate camera-panel__candidate--locked">
@@ -444,4 +451,14 @@ export function CameraPanel({
       </div>
     </section>
   );
+}
+
+function faceDebugText(frame: HeadFaceFrame): string {
+  const first = frame.cues[0];
+  const frameId = frame.frameId ?? "-";
+  if (!first) return `Face: none · frame ${frameId}`;
+  const landmarksReady = Object.values(first.landmarkAvailability).every(Boolean);
+  return `Face: ${frame.cues.length} detected · landmarks ${
+    landmarksReady ? "ready" : "partial"
+  } · frame ${frameId}`;
 }

@@ -2,9 +2,9 @@
 //
 // Tauri serves the frontend from tauri://localhost and the dev COOP/COEP headers
 // (require-corp) block cross-origin CDN fetches — so the wasm runtime AND the
-// hand_landmarker model must be served locally from public/. This script:
+// hand/face landmarker models must be served locally from public/. This script:
 //   1. copies the @mediapipe/tasks-vision `wasm/` dir → public/wasm
-//   2. downloads hand_landmarker.task → public/models (skipped if already present)
+//   2. downloads task models → public/models (skipped if already present)
 // Both outputs are gitignored (binaries, ~10MB); run this once before `tauri dev`.
 //
 // Run: pnpm --filter @handsoff/desktop-app setup:assets
@@ -23,8 +23,16 @@ const log = (msg) => process.stdout.write(`${msg}\n`);
 
 // Pinned to the @mediapipe/tasks-vision version in package.json. float16 is the
 // standard web build of the Hand Landmarker bundle.
-const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+const MODELS = [
+  {
+    name: "hand_landmarker.task",
+    url: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+  },
+  {
+    name: "face_landmarker.task",
+    url: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+  },
+];
 
 const copyWasm = () => {
   // The package only exports its bundle entry (not package.json), so resolve the
@@ -36,17 +44,17 @@ const copyWasm = () => {
   log(`wasm  → ${wasmDest}`);
 };
 
-const downloadModel = () =>
+const downloadModel = ({ name, url }) =>
   new Promise((resolve, reject) => {
     const modelsDir = join(publicDir, "models");
-    const dest = join(modelsDir, "hand_landmarker.task");
+    const dest = join(modelsDir, name);
     if (existsSync(dest)) {
       log(`model → ${dest} (already present, skipped)`);
       resolve();
       return;
     }
     mkdirSync(modelsDir, { recursive: true });
-    get(MODEL_URL, (res) => {
+    get(url, (res) => {
       if (res.statusCode !== 200) {
         reject(new Error(`model download failed: HTTP ${res.statusCode}`));
         res.resume();
@@ -61,7 +69,7 @@ const downloadModel = () =>
   });
 
 copyWasm();
-downloadModel()
+Promise.all(MODELS.map(downloadModel))
   .then(() => log("done."))
   .catch((err) => {
     process.stderr.write(`${err.message}\n`);

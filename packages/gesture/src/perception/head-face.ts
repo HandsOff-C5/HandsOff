@@ -37,6 +37,7 @@ export interface HeadFaceCue {
 }
 
 export interface HeadFaceFrame {
+  frameId?: number;
   timestampMs: number;
   cues: HeadFaceCue[];
 }
@@ -67,9 +68,14 @@ export interface RawHeadFaceFrame {
   faces: RawHeadFaceCandidate[];
 }
 
-export function parseHeadFaceFrame(raw: RawHeadFaceFrame, timestampMs: number): HeadFaceFrame {
+export function parseHeadFaceFrame(
+  raw: RawHeadFaceFrame,
+  timestampMs: number,
+  frameId?: number,
+): HeadFaceFrame {
   finite("timestampMs", timestampMs);
   return {
+    ...(frameId !== undefined ? { frameId } : {}),
     timestampMs,
     cues: raw.faces.map(parseFace),
   };
