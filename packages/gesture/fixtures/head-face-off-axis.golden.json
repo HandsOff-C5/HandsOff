@@ -31,8 +31,11 @@
           "availability": "available",
           "accessStatus": "accessible"
         },
-        "score": 0.74,
-        "distance": 0.18
+        "score": 0.88,
+        "distance": 0.6,
+        "timestampMs": 200,
+        "provenance": "head-face",
+        "region": "right"
       }
     ]
   }

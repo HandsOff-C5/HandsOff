@@ -17,6 +17,13 @@ export {
   type RawHeadFacePoint,
 } from "./perception/head-face";
 export {
+  headFaceAttentionCandidates,
+  type HeadFaceAttentionCandidate,
+  type HeadFaceAttentionOptions,
+  type HeadFaceAttentionRegion,
+  type HeadFaceAttentionRegionName,
+} from "./perception/head-face-candidates";
+export {
   pointingReliability,
   pointingSignal,
   pointingSignalFromFrame,
