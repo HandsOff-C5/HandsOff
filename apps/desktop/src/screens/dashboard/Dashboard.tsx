@@ -219,6 +219,7 @@ export function Dashboard({
       </header>
       <div className="dashboard__panels">
         <CameraPanel
+          autoStart
           onGestureEvidence={(evidence) => {
             gestureEvidence.current = evidence;
           }}

@@ -224,11 +224,16 @@ pub fn cua_launch_app(
 }
 
 #[tauri::command]
-pub fn cua_click(pid: u32, window_id: u32, element_index: u32) -> Result<CuaActionResult, String> {
-    call_action_tool(
-        "click",
-        json!({ "pid": pid, "window_id": window_id, "element_index": element_index }),
-    )?;
+pub fn cua_click(
+    pid: u32,
+    window_id: u32,
+    element_index: Option<u32>,
+) -> Result<CuaActionResult, String> {
+    let mut input = json!({ "pid": pid, "window_id": window_id });
+    if let Some(idx) = element_index {
+        input["element_index"] = json!(idx);
+    }
+    call_action_tool("click", input)?;
     Ok(CuaActionResult {
         status: "succeeded",
         summary: "Clicked selected target".to_string(),
@@ -239,13 +244,16 @@ pub fn cua_click(pid: u32, window_id: u32, element_index: u32) -> Result<CuaActi
 pub fn cua_type_text(
     pid: u32,
     window_id: u32,
-    element_index: u32,
+    element_index: Option<u32>,
     text: String,
 ) -> Result<CuaActionResult, String> {
-    call_action_tool(
-        "type_text",
-        json!({ "pid": pid, "window_id": window_id, "element_index": element_index, "text": text }),
-    )?;
+    // element_index is optional — without it, the cua-driver types into the pid's
+    // currently focused element (no prior get_window_state needed).
+    let mut input = json!({ "pid": pid, "window_id": window_id, "text": text });
+    if let Some(idx) = element_index {
+        input["element_index"] = json!(idx);
+    }
+    call_action_tool("type_text", input)?;
     Ok(CuaActionResult {
         status: "succeeded",
         summary: "Typed dictated text".to_string(),
@@ -256,13 +264,14 @@ pub fn cua_type_text(
 pub fn cua_set_value(
     pid: u32,
     window_id: u32,
-    element_index: u32,
+    element_index: Option<u32>,
     value: String,
 ) -> Result<CuaActionResult, String> {
-    call_action_tool(
-        "set_value",
-        json!({ "pid": pid, "window_id": window_id, "element_index": element_index, "value": value }),
-    )?;
+    let mut input = json!({ "pid": pid, "window_id": window_id, "value": value });
+    if let Some(idx) = element_index {
+        input["element_index"] = json!(idx);
+    }
+    call_action_tool("set_value", input)?;
     Ok(CuaActionResult {
         status: "succeeded",
         summary: "Set selected value".to_string(),

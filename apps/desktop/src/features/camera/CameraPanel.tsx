@@ -53,6 +53,8 @@ interface CameraPanelProps {
   // the wrist-ray projected point when hands are present, or null when no hands are detected.
   // The dashboard feeds this into the intent fusion as an additional pointing signal.
   onGestureCursor?: (cursor: { x: number; y: number } | null) => void;
+  // When true the camera starts automatically on mount without requiring a button click.
+  autoStart?: boolean;
 }
 
 type Status = "idle" | "starting" | "live" | "error";
@@ -98,6 +100,7 @@ export function CameraPanel({
   overlay: injectedOverlay,
   onGestureEvidence,
   onGestureCursor,
+  autoStart = false,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -352,6 +355,11 @@ export function CameraPanel({
       onGestureEvidence(null);
     }
   }, [phase, referent, candidate, displays, onGestureEvidence]);
+
+  // Auto-start the camera on mount when requested, without requiring a button click.
+  useEffect(() => {
+    if (autoStart) void start();
+  }, [autoStart, start]);
 
   // Tear down the camera + detector + overlay on unmount.
   useEffect(() => stop, [stop]);
