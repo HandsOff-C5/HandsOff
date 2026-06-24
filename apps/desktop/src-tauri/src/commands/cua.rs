@@ -155,8 +155,33 @@ fn element_count(raw: &Value) -> u64 {
         .unwrap_or(0)
 }
 
-fn map_elements(_raw: &Value) -> Vec<Value> {
-    vec![]
+// Map cua-driver's get_window_state `elements` into the CuaElement contract
+// shape (id, index, role, label, value). Each driver element carries an
+// `element_index` (the handle you click by) plus role/label/frame; we keep the
+// `element_token` as the stable id when present so the hybrid brain can reference
+// a target across a re-snapshot.
+fn map_elements(raw: &Value) -> Vec<Value> {
+    let Some(elements) = raw.get("elements").and_then(Value::as_array) else {
+        return vec![];
+    };
+    elements
+        .iter()
+        .filter_map(|element| {
+            let index = element.get("element_index").and_then(Value::as_u64)?;
+            let id = element
+                .get("element_token")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("el-{index}"));
+            let mut mapped = json!({ "id": id, "index": index });
+            for key in ["role", "label", "value"] {
+                if let Some(text) = element.get(key).and_then(Value::as_str) {
+                    mapped[key] = json!(text);
+                }
+            }
+            Some(mapped)
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -343,6 +368,27 @@ mod tests {
         assert_eq!(element_count(&json!({ "element_count": 3 })), 3);
         assert!(elements.is_empty());
         assert!(map_elements(&json!({ "element_count": 0 })).is_empty());
+    }
+
+    #[test]
+    fn maps_driver_elements_into_the_element_contract_shape() {
+        let raw = json!({
+            "element_count": 2,
+            "elements": [
+                { "element_index": 10, "element_token": "s1:10", "role": "AXButton", "label": "5" },
+                { "element_index": 16, "role": "AXButton", "label": "Add" }
+            ]
+        });
+        let elements = map_elements(&raw);
+        assert_eq!(elements.len(), 2);
+        // element_token becomes the stable id; index is the click handle.
+        assert_eq!(elements[0]["id"], json!("s1:10"));
+        assert_eq!(elements[0]["index"], json!(10));
+        assert_eq!(elements[0]["role"], json!("AXButton"));
+        assert_eq!(elements[0]["label"], json!("5"));
+        // No element_token → synthesized id from the index.
+        assert_eq!(elements[1]["id"], json!("el-16"));
+        assert_eq!(elements[1]["label"], json!("Add"));
     }
 
     #[test]
