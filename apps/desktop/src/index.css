@@ -748,7 +748,10 @@ body {
 .onboarding {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 200;
+  /* The interactive island on the otherwise click-through overlay (mirrors the
+     CUA approval chip). Without this the modal's buttons receive no clicks. */
+  pointer-events: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1221,6 +1224,16 @@ body {
   height: 900px;
   pointer-events: none;
   overflow: hidden;
+}
+
+/* On-screen mount for engine-owned modals (first-run onboarding) portaled out of
+   the off-screen engine-host. Covers the viewport but stays click-through itself;
+   only its children (.onboarding) opt back into pointer events. */
+.overlay-onboarding-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 200;
 }
 
 /* ── Startup calibration onboarding (touch the dots) ─────────────────────────

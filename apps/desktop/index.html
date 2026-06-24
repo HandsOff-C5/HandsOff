@@ -7,6 +7,10 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- On-screen, interactive mount for engine-owned modals (first-run permission
+         onboarding) that otherwise live in the off-screen, click-through engine-host.
+         Declared here so the portal target exists before React first renders. -->
+    <div id="overlay-onboarding-root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -25,6 +25,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { applyTransform, type AffineTransform, type Point } from "@handsoff/gesture";
 
@@ -446,21 +447,30 @@ export function Dashboard({
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const diagnosticsEvidence = buildDiagnosticsEvidence(gestureEvidence.current, headPointing);
 
+  // The onboarding is engine-owned (its prompts run in this engine window), but it
+  // must paint ON-SCREEN and receive clicks — not inside the off-screen,
+  // click-through engine-host. Portal it to the overlay HUD root when that exists
+  // (the real overlay window); fall back to inline for the browser/tests.
+  const onboardingNode = showOnboarding ? (
+    <PermissionsOnboarding
+      report={report}
+      isChecking={isChecking}
+      onRequestCamera={requestCamera}
+      onRequestMedia={requestMedia}
+      onRequestScreenRecording={requestScreenRecording}
+      onRecheck={recheck}
+      onRelaunch={relaunchApp}
+      onOpenSettings={openPrivacySettings}
+      onDismiss={() => setOnboardingDismissed(true)}
+    />
+  ) : null;
+  const onboardingRoot =
+    typeof document !== "undefined" ? document.getElementById("overlay-onboarding-root") : null;
+
   return (
     <main className="dashboard">
-      {showOnboarding && (
-        <PermissionsOnboarding
-          report={report}
-          isChecking={isChecking}
-          onRequestCamera={requestCamera}
-          onRequestMedia={requestMedia}
-          onRequestScreenRecording={requestScreenRecording}
-          onRecheck={recheck}
-          onRelaunch={relaunchApp}
-          onOpenSettings={openPrivacySettings}
-          onDismiss={() => setOnboardingDismissed(true)}
-        />
-      )}
+      {onboardingNode &&
+        (onboardingRoot ? createPortal(onboardingNode, onboardingRoot) : onboardingNode)}
       <header className="dashboard__header">
         <div>
           <h1 className="dashboard__brand">{APP_NAME}</h1>
