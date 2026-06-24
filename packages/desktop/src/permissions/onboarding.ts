@@ -107,6 +107,7 @@ export function planPermissionOnboarding(report: readonly CapabilityReadiness[])
   });
 
   const pending = steps.filter((step) => !step.done);
+  const requiredPending = pending.filter((step) => !step.optional);
   return {
     steps,
     batchRequestablePending: pending
@@ -118,10 +119,10 @@ export function planPermissionOnboarding(report: readonly CapabilityReadiness[])
     manualPending: pending
       .filter((step) => step.action === "open-settings")
       .map((step) => step.capability.id),
-    // STUB: real classification lands in the green commit.
-    optionalPending: [],
+    optionalPending: pending.filter((step) => step.optional).map((step) => step.capability.id),
     allReady: steps.length > 0 && pending.length === 0,
-    requiredReady: false,
+    // Optional grants (Screen Recording) never gate the core loop.
+    requiredReady: steps.length > 0 && requiredPending.length === 0,
     needsOnboarding: pending.length > 0,
   };
 }
