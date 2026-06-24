@@ -434,29 +434,37 @@ struct HeadPointerMotion {
         let centerX = signal.faceCenter.x - neutral.faceCenter.x
         let centerY = signal.faceCenter.y - neutral.faceCenter.y
 
+        // 2.5x gain amplifier: small head rotations now produce a proportionally
+        // larger control vector so the cursor reaches screen edges without the user
+        // having to make large, exhausting head movements.
+        let gain = 2.5
+
         switch config.movementMode {
         case .edge:
             return SignalVector(
-                x: noseX * 0.75 + yaw * 0.55 + centerX * 0.25,
-                y: noseY * 0.75 + pitch * 0.55 + centerY * 0.25
+                x: (noseX * 0.75 + yaw * 0.55 + centerX * 0.25) * gain,
+                y: (noseY * 0.75 + pitch * 0.55 + centerY * 0.25) * gain
             )
         case .relative:
             let scale = max(neutral.faceBox.width, 0.1)
             return SignalVector(
-                x: centerX / scale + noseX * 0.25,
-                y: centerY / scale + noseY * 0.25
+                x: (centerX / scale + noseX * 0.25) * gain,
+                y: (centerY / scale + noseY * 0.25) * gain
             )
         }
     }
 
     private func smoothingAlpha(rawVector: SignalVector, dt: Double) -> Double {
+        // Higher alpha = less smoothing = faster cursor response.
+        // Clamp max raised from 0.52 → 0.85 so fast head movements pass through nearly
+        // unfiltered; the floor of 0.25 (was 0.10) prevents jitter on very slow signals.
         let speed = (rawVector - previousVector).magnitude / max(dt, 0.001)
-        return clamp(0.10 + rawVector.magnitude * 0.55 + min(speed * 0.025, 0.28), 0.10...0.52)
+        return clamp(0.25 + rawVector.magnitude * 0.70 + min(speed * 0.04, 0.40), 0.25...0.85)
     }
 
     private mutating func pointerVelocity(rawVector: SignalVector, smoothedVector: SignalVector) -> SignalVector {
         let outer = max(config.distanceToEdge, 0.01)
-        let inner = outer * 0.55
+        let inner = outer * 0.45  // was 0.55 — tighter hysteresis, cursor activates sooner
         let rawMagnitude = rawVector.magnitude
 
         if movementActive {
@@ -474,8 +482,12 @@ struct HeadPointerMotion {
 
         let excess = max(driveVector.magnitude - inner, 0)
         let normalized = min(excess / max(1 - inner, 0.001), 1)
-        let gain = pow(normalized, 1.35)
-        let maxPixelsPerSecond = 180 + config.speed * 90
+        // pow(x, 0.7) is a concave curve: small head movements produce a proportionally
+        // larger cursor jump than before (was pow(x, 1.35) which was convex and crushed
+        // small movements). This makes the cursor feel much more responsive at low displacement.
+        let gain = pow(normalized, 0.7)
+        // Max speed raised: was 180 + speed*90; now 320 + speed*120 for snappier response.
+        let maxPixelsPerSecond = 320 + config.speed * 120
         let scalar = maxPixelsPerSecond * gain / driveVector.magnitude
         return driveVector.scaled(scalar)
     }
