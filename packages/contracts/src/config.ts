@@ -14,7 +14,7 @@ import { z } from "zod";
 // User-facing labels deliberately avoid the provider names; see SettingsPanel.
 
 export const STT_PROVIDERS = ["native", "assemblyai"] as const;
-export const HEAD_POINTER_MOVEMENT_MODES = ["edge", "relative"] as const;
+export const HEAD_POINTER_MOVEMENT_MODES = ["edge", "relative", "absolute"] as const;
 
 export const sttProviderSchema = z.enum(STT_PROVIDERS);
 export type SttProvider = z.infer<typeof sttProviderSchema>;

@@ -38,6 +38,8 @@ pub enum HeadPointerMovementMode {
     Edge,
     #[serde(rename = "relative")]
     Relative,
+    #[serde(rename = "absolute")]
+    Absolute,
 }
 
 impl Default for LocalConfig {

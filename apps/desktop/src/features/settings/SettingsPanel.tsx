@@ -28,6 +28,7 @@ const STT_PROVIDER_LABELS: Record<SttProvider, string> = {
 const HEAD_POINTER_MOVEMENT_LABELS: Record<HeadPointerMovementMode, string> = {
   edge: "Edge",
   relative: "Relative",
+  absolute: "Absolute (hold to aim)",
 };
 
 interface SettingsPanelProps {
