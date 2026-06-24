@@ -2,9 +2,13 @@ import { z } from "zod";
 
 import { surfaceSnapshotSchema } from "./surface";
 
-export const RISK_LEVELS = ["read_only", "reversible", "mutating", "destructive"] as const;
+export const RISK_LEVELS = ["read_only", "reversible", "mutating", "destructive_external"] as const;
 export const riskLevelSchema = z.enum(RISK_LEVELS);
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
+
+export function riskLevelRequiresApproval(riskLevel: RiskLevel): boolean {
+  return riskLevel === "mutating" || riskLevel === "destructive_external";
+}
 
 export const TARGET_AGENTS = ["cua-driver", "none"] as const;
 export const targetAgentSchema = z.enum(TARGET_AGENTS);
@@ -62,9 +66,9 @@ const actionPlanBaseSchema = z.object({
   action_plan: z.array(actionStepSchema),
 });
 export const actionPlanSchema = actionPlanBaseSchema.refine(
-  (plan) => plan.risk_level !== "destructive",
+  (plan) => plan.requires_approval === riskLevelRequiresApproval(plan.risk_level),
   {
-    message: "destructive actions are unsupported in this slice",
+    message: "requires_approval must match risk_level",
   },
 );
 export type ActionPlan = z.infer<typeof actionPlanSchema>;

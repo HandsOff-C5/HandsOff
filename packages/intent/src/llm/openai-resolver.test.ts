@@ -149,6 +149,33 @@ describe("resolveWithOpenAi", () => {
     });
   });
 
+  it("derives approval for destructive or external risk from model output", async () => {
+    const { client } = clientWith({
+      finish_reason: "stop",
+      message: {
+        parsed: readyOutput({
+          risk_level: "destructive_external",
+          requires_approval: false,
+          action_plan: {
+            ...readyOutput().action_plan!,
+            risk_level: "destructive_external",
+            requires_approval: false,
+          },
+        }),
+      },
+    });
+
+    await expect(resolveWithOpenAi(input(), { client })).resolves.toMatchObject({
+      status: "ready",
+      risk_level: "destructive_external",
+      requires_approval: true,
+      action_plan: {
+        risk_level: "destructive_external",
+        requires_approval: true,
+      },
+    });
+  });
+
   it("normalizes launch-app steps from structured SDK output", async () => {
     const { client } = clientWith({
       finish_reason: "stop",
@@ -293,16 +320,15 @@ describe("resolveWithOpenAi", () => {
   });
 
   it("downgrades parsed output that fails the real action-plan contract", async () => {
-    const destructive = readyOutput({
-      risk_level: "destructive",
+    const malformed = readyOutput({
       action_plan: {
         ...readyOutput().action_plan!,
-        risk_level: "destructive",
+        summary: "",
       },
     });
     const { client } = clientWith({
       finish_reason: "stop",
-      message: { parsed: destructive },
+      message: { parsed: malformed },
     });
 
     await expect(resolveWithOpenAi(input(), { client })).resolves.toMatchObject({
