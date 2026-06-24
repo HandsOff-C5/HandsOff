@@ -1,6 +1,6 @@
 // HandsOff desktop shell entry point.
 //
-// Opens the mission-control dashboard window and wires the commands the frontend
+// Opens the home-dashboard dashboard window and wires the commands the frontend
 // invokes. Readiness reports host capability state; storage keeps non-secret
 // local preferences for settings. CUA exposes a typed unavailable state until
 // the live driver transport lands.
