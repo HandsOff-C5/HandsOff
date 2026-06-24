@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { CalibrationGate } from "../calibration/CalibrationGate";
+import type { CalibrationView } from "../calibration/calibration-flow";
 import { AgentBanner } from "./AgentBanner";
 import { FusionHud } from "./FusionHud";
 import { PerceptionPanel } from "./PerceptionPanel";
@@ -28,6 +30,9 @@ export type OverlayListen = (
 // like the others so the overlay window uses Tauri `listen` while tests push directly.
 export type SupervisorListen = (onSnapshot: (snapshot: SupervisorSnapshot) => void) => () => void;
 
+// Subscribes the overlay to the engine's startup calibration view (null = not running).
+export type CalibrationListen = (onView: (view: CalibrationView | null) => void) => () => void;
+
 export function useOverlaySignal(listen?: OverlayListen): OverlaySignal {
   const [signal, setSignal] = useState<OverlaySignal>(IDLE_OVERLAY_SIGNAL);
   useEffect(() => {
@@ -49,6 +54,15 @@ export function useSupervisorSignal(listen?: SupervisorListen): SupervisorSnapsh
   return snapshot;
 }
 
+export function useCalibrationSignal(listen?: CalibrationListen): CalibrationView | null {
+  const [view, setView] = useState<CalibrationView | null>(null);
+  useEffect(() => {
+    if (!listen) return;
+    return listen((next) => setView(next));
+  }, [listen]);
+  return view;
+}
+
 interface PointingOverlayProps {
   // Presentational override (tests). When omitted, the live signal from `listen` is used.
   signal?: OverlaySignal;
@@ -66,6 +80,12 @@ interface PointingOverlayProps {
   // voice is the other path). Wired to the engine's CUA approval controller.
   onApprove?: () => void;
   onDeny?: () => void;
+  // Startup calibration: the dots-to-touch view (override for tests) + live subscription,
+  // and the skip control sent back to the engine. While a view is active the gate is
+  // shown INSTEAD of the HUD.
+  calibration?: CalibrationView | null;
+  calibrationListen?: CalibrationListen;
+  onCalibrationSkip?: () => void;
 }
 
 // Clamp a normalized [0,1] point to a CSS percent position, or hide it off-frame.
@@ -143,12 +163,17 @@ export function PointingOverlay({
   supervisorListen,
   onApprove,
   onDeny,
+  calibration: calibrationProp,
+  calibrationListen,
+  onCalibrationSkip,
 }: PointingOverlayProps) {
   const live = useOverlaySignal(listen);
   const signal = signalProp ?? live;
   const fusion = useFusionSignal(fusionListen);
   const liveSupervisor = useSupervisorSignal(supervisorListen);
   const supervisor = supervisorProp ?? liveSupervisor;
+  const liveCalibration = useCalibrationSignal(calibrationListen);
+  const calibration = calibrationProp ?? liveCalibration;
 
   // The shared bundle's body is opaque dark (dashboard theme); the overlay window must
   // be see-through, so clear the background while this layer is mounted.
@@ -162,6 +187,21 @@ export function PointingOverlay({
       documentElement.style.background = prev.html;
     };
   }, []);
+
+  // Startup calibration takes over the whole overlay until it's done/skipped: the
+  // operator touches the dots (hand, then eyes) before the HUD goes live. The live
+  // cursor shown is the active phase's tracker, reused from the supervisor snapshot.
+  if (calibration?.active) {
+    const cursor =
+      calibration.phase === "hand"
+        ? (supervisor?.hand.point ?? null)
+        : (supervisor?.gaze.point ?? null);
+    return (
+      <div className="pointing-overlay pointing-overlay--calibrating">
+        <CalibrationGate view={calibration} cursor={cursor} onSkip={() => onCalibrationSkip?.()} />
+      </div>
+    );
+  }
 
   if (supervisor) {
     return (

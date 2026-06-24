@@ -1,6 +1,8 @@
 import { PointingOverlay } from "./features/overlay/PointingOverlay";
 import {
+  emitCalibrationControl,
   emitOverlayApproval,
+  tauriCalibrationListen,
   tauriFusionListen,
   tauriOverlayListen,
   tauriSupervisorListen,
@@ -37,6 +39,8 @@ export function App() {
       supervisorListen={tauriSupervisorListen}
       onApprove={() => emitOverlayApproval("allow")}
       onDeny={() => emitOverlayApproval("deny")}
+      calibrationListen={tauriCalibrationListen}
+      onCalibrationSkip={() => emitCalibrationControl("skip")}
     />
   ) : (
     <Dashboard />

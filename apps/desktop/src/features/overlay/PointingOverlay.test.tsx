@@ -136,5 +136,23 @@ describe("PointingOverlay", () => {
       expect(screen.getByTestId("perception-row-hand")).toBeInTheDocument();
       expect(screen.getByTestId("cursor-gaze")).toBeInTheDocument();
     });
+
+    it("shows the calibration gate instead of the HUD while calibration is active", () => {
+      const calibration = {
+        active: true as const,
+        phase: "hand" as const,
+        step: 1,
+        totalSteps: 2,
+        targets: Array.from({ length: 9 }, () => [0.1, 0.1] as [number, number]),
+        currentIndex: 0,
+        dwellProgress: 0,
+        quality: null,
+      };
+      render(<PointingOverlay supervisor={snapshot} calibration={calibration} />);
+      // The gate wins over the HUD.
+      expect(screen.getByText(/step 1 of 2/i)).toBeInTheDocument();
+      expect(screen.getAllByTestId("calib-dot")).toHaveLength(9);
+      expect(screen.queryByTestId("perception-row-hand")).not.toBeInTheDocument();
+    });
   });
 });

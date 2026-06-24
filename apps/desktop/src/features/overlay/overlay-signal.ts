@@ -20,6 +20,11 @@ export const OVERLAY_SUPERVISOR_EVENT = "overlay://supervisor";
 // The overlay's approve/deny decision for the agent's pending step, sent back to
 // the engine window so a click on the (separate-window) chip resolves the CUA gate.
 export const OVERLAY_APPROVAL_EVENT = "overlay://approval";
+// The startup calibration view (engine → overlay): the dots + active dwell to draw,
+// or null when calibration isn't running (the overlay then shows the HUD).
+export const OVERLAY_CALIBRATION_EVENT = "overlay://calibration";
+// Calibration control (overlay → engine): "skip" bails to the HUD, "redo" restarts it.
+export const OVERLAY_CALIBRATION_CONTROL_EVENT = "overlay://calibration-control";
 
 // listening = mic open, heard = final utterance in, acting = plan executing.
 export type OverlayVoiceState = "idle" | "listening" | "heard" | "acting";

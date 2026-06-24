@@ -2,9 +2,12 @@ import type { PointingEvidence } from "@handsoff/contracts";
 import { emit, listen } from "@tauri-apps/api/event";
 
 import { hasTauriBackend } from "../../lib/tauri";
+import type { CalibrationView } from "../calibration/calibration-flow";
 import type { OverlayListen, SupervisorListen } from "./PointingOverlay";
 import {
   OVERLAY_APPROVAL_EVENT,
+  OVERLAY_CALIBRATION_CONTROL_EVENT,
+  OVERLAY_CALIBRATION_EVENT,
   OVERLAY_FUSION_EVENT,
   OVERLAY_POINTER_EVENT,
   OVERLAY_SUPERVISOR_EVENT,
@@ -17,6 +20,11 @@ import type { FusionListen } from "./useFusionSignal";
 
 // The overlay's verdict on the agent's pending step (sent back to the engine).
 export type OverlayApprovalDecision = "allow" | "deny";
+
+// Calibration control sent overlay → engine.
+export type CalibrationControl = "skip" | "redo";
+// The overlay's subscription to the engine's calibration view (null = not running).
+export type CalibrationListen = (onView: (view: CalibrationView | null) => void) => () => void;
 
 // Thin Tauri I/O shell for the overlay signal. The main (dashboard) window emits; the
 // overlay window listens. No-ops outside Tauri (browser/tests) so callers stay unguarded.
@@ -105,6 +113,50 @@ export function listenOverlayApproval(
   let unlisten: (() => void) | undefined;
   void listen<OverlayApprovalDecision>(OVERLAY_APPROVAL_EVENT, (event) =>
     onDecision(event.payload),
+  ).then((fn) => {
+    if (cancelled) fn();
+    else unlisten = fn;
+  });
+  return () => {
+    cancelled = true;
+    unlisten?.();
+  };
+}
+
+// Calibration view: the engine emits the current view (or null when done); the
+// overlay subscribes via `tauriCalibrationListen`.
+export function emitOverlayCalibration(view: CalibrationView | null): void {
+  if (hasTauriBackend()) void emit(OVERLAY_CALIBRATION_EVENT, view);
+}
+
+export const tauriCalibrationListen: CalibrationListen = (onView) => {
+  let cancelled = false;
+  let unlisten: (() => void) | undefined;
+  void listen<CalibrationView | null>(OVERLAY_CALIBRATION_EVENT, (event) =>
+    onView(event.payload),
+  ).then((fn) => {
+    if (cancelled) fn();
+    else unlisten = fn;
+  });
+  return () => {
+    cancelled = true;
+    unlisten?.();
+  };
+};
+
+// Calibration control: the overlay emits skip/redo; the engine listens.
+export function emitCalibrationControl(control: CalibrationControl): void {
+  if (hasTauriBackend()) void emit(OVERLAY_CALIBRATION_CONTROL_EVENT, control);
+}
+
+export function listenCalibrationControl(
+  onControl: (control: CalibrationControl) => void,
+): () => void {
+  if (!hasTauriBackend()) return () => {};
+  let cancelled = false;
+  let unlisten: (() => void) | undefined;
+  void listen<CalibrationControl>(OVERLAY_CALIBRATION_CONTROL_EVENT, (event) =>
+    onControl(event.payload),
   ).then((fn) => {
     if (cancelled) fn();
     else unlisten = fn;
