@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ComputerAction } from "@handsoff/contracts";
+import type { CuaAgentAction } from "@handsoff/contracts";
 
 import {
   runComputerUseLoop,
@@ -25,14 +25,14 @@ function scriptedBrain(steps: BrainStep[]): ComputerUseBrain & { calls: number }
 }
 
 const done = (text = "Task complete"): BrainStep => ({ text, actions: [], stopReason: "end_turn" });
-const act = (id: string, action: ComputerAction): BrainStep => ({
+const act = (id: string, action: CuaAgentAction): BrainStep => ({
   text: "",
   actions: [{ id, action }],
   stopReason: "tool_use",
 });
 
-function okEnv(screenshot = "shot"): ComputerEnv & { executed: ComputerAction[] } {
-  const executed: ComputerAction[] = [];
+function okEnv(screenshot = "shot"): ComputerEnv & { executed: CuaAgentAction[] } {
+  const executed: CuaAgentAction[] = [];
   return {
     executed,
     async execute(action) {
@@ -60,12 +60,12 @@ describe("computer-use agent loop", () => {
     const env = okEnv();
     const result = await runComputerUseLoop({
       goal: "look",
-      brain: scriptedBrain([act("t1", { action: "screenshot" }), done()]),
+      brain: scriptedBrain([act("t1", { kind: "snapshot" }), done()]),
       env,
     });
 
     expect(result.status).toBe("succeeded");
-    expect(env.executed).toEqual([{ action: "screenshot" }]);
+    expect(env.executed).toEqual([{ kind: "snapshot" }]);
     expect(result.transcript.filter((e) => e.kind === "action")).toHaveLength(1);
   });
 
@@ -73,7 +73,7 @@ describe("computer-use agent loop", () => {
     const env = okEnv();
     const result = await runComputerUseLoop({
       goal: "click",
-      brain: scriptedBrain([act("t1", { action: "left_click", coordinate: [5, 5] }), done()]),
+      brain: scriptedBrain([act("t1", { kind: "click", elementIndex: 5 }), done()]),
       env,
     });
 
@@ -87,17 +87,17 @@ describe("computer-use agent loop", () => {
     const approve = vi.fn().mockResolvedValue("allow");
     const result = await runComputerUseLoop({
       goal: "click",
-      brain: scriptedBrain([act("t1", { action: "left_click", coordinate: [5, 5] }), done()]),
+      brain: scriptedBrain([act("t1", { kind: "click", elementIndex: 5 }), done()]),
       env,
       approve,
     });
 
     expect(result.status).toBe("succeeded");
-    expect(env.executed).toEqual([{ action: "left_click", coordinate: [5, 5] }]);
+    expect(env.executed).toEqual([{ kind: "click", elementIndex: 5 }]);
     expect(approve).toHaveBeenCalledWith(
       expect.objectContaining({
         risk: "mutating",
-        action: { action: "left_click", coordinate: [5, 5] },
+        action: { kind: "click", elementIndex: 5 },
       }),
     );
   });
@@ -118,7 +118,7 @@ describe("computer-use agent loop", () => {
 
   it("stops at maxSteps when the brain never finishes", async () => {
     const env = okEnv();
-    const brain = scriptedBrain([act("t1", { action: "screenshot" })]); // always wants another shot
+    const brain = scriptedBrain([act("t1", { kind: "snapshot" })]); // always wants another shot
     const result = await runComputerUseLoop({ goal: "loop", brain, env, maxSteps: 3 });
 
     expect(result.status).toBe("max_steps");
@@ -133,7 +133,7 @@ describe("computer-use agent loop", () => {
     };
     const result = await runComputerUseLoop({
       goal: "screenshot that fails",
-      brain: scriptedBrain([act("t1", { action: "screenshot" }), done("recovered")]),
+      brain: scriptedBrain([act("t1", { kind: "snapshot" }), done("recovered")]),
       env: failing,
     });
 

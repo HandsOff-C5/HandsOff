@@ -1,16 +1,16 @@
-import type { ComputerAction, RiskLevel } from "@handsoff/contracts";
+import type { CuaAgentAction, RiskLevel } from "@handsoff/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RunComputerUseLoopArgs } from "../runner/computer-use-loop";
 import type { ApprovalController, PendingApproval } from "./approval-controller";
 import { createApprovalController } from "./approval-controller";
 
-const clickEntry: { action: ComputerAction; risk: RiskLevel } = {
-  action: { action: "left_click", coordinate: [1, 2] },
+const clickEntry: { action: CuaAgentAction; risk: RiskLevel } = {
+  action: { kind: "click", elementIndex: 1 },
   risk: "mutating",
 };
-const typeEntry: { action: ComputerAction; risk: RiskLevel } = {
-  action: { action: "type", text: "hi" },
+const typeEntry: { action: CuaAgentAction; risk: RiskLevel } = {
+  action: { kind: "type_text", elementIndex: 0, text: "hi" },
   risk: "mutating",
 };
 
@@ -45,7 +45,7 @@ describe("createApprovalController", () => {
     const controller = createApprovalController();
     void controller.approve(clickEntry);
     expect(firstPending(controller)).toMatchObject({
-      action: { action: "left_click", coordinate: [1, 2] },
+      action: { kind: "click", elementIndex: 1 },
       risk: "mutating",
     });
   });

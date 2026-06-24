@@ -1,12 +1,12 @@
-import type { ComputerAction, RiskLevel } from "@handsoff/contracts";
+import type { CuaAgentAction, RiskLevel } from "@handsoff/contracts";
 import { createApprovalController } from "@handsoff/cua";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { useCuaApproval } from "./useCuaApproval";
 
-const clickEntry: { action: ComputerAction; risk: RiskLevel } = {
-  action: { action: "left_click", coordinate: [1, 2] },
+const clickEntry: { action: CuaAgentAction; risk: RiskLevel } = {
+  action: { kind: "click", elementIndex: 1 },
   risk: "mutating",
 };
 
@@ -24,7 +24,7 @@ describe("useCuaApproval", () => {
       void controller.approve(clickEntry);
     });
     expect(result.current.pending).toHaveLength(1);
-    expect(result.current.pending[0]?.action.action).toBe("left_click");
+    expect(result.current.pending[0]?.action.kind).toBe("click");
   });
 
   it("decide(id, allow) resolves the loop's awaited promise and clears the queue", async () => {

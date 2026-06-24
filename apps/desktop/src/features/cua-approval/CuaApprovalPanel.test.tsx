@@ -6,7 +6,7 @@ import { CuaApprovalPanel } from "./CuaApprovalPanel";
 
 const clickPending: PendingApproval = {
   id: "approval-1",
-  action: { action: "left_click", coordinate: [10, 20] },
+  action: { kind: "click", elementIndex: 10 },
   risk: "mutating",
 };
 
@@ -18,7 +18,7 @@ describe("CuaApprovalPanel", () => {
 
   it("renders the pending action verb and its risk", () => {
     render(<CuaApprovalPanel pending={[clickPending]} />);
-    expect(screen.getByText(/left_click/)).toBeInTheDocument();
+    expect(screen.getByText(/click/)).toBeInTheDocument();
     expect(screen.getByText(/mutating/)).toBeInTheDocument();
   });
 

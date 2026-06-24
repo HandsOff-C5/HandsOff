@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { COMPUTER_USE_BETA, COMPUTER_USE_MODEL, buildComputerUseTool } from "./anthropic-brain";
+import { CUA_AGENT_MODEL, CUA_AGENT_TOOL_NAME, buildCuaAgentTool } from "./ax-brain";
 import {
   createAnthropicBrain,
   type AnthropicMessage,
@@ -9,9 +9,9 @@ import {
 } from "./anthropic-brain-adapter";
 import type { LoopEntry } from "./computer-use-loop";
 
-const tool = buildComputerUseTool({ widthPx: 1440, heightPx: 900 });
+const tool = buildCuaAgentTool();
 
-// A click the model asks for, then an end_turn once it sees the screenshot.
+// A click the model asks for, then an end_turn once it sees the refreshed state.
 const clickResponse = {
   stop_reason: "tool_use",
   content: [
@@ -19,8 +19,8 @@ const clickResponse = {
     {
       type: "tool_use",
       id: "tu_1",
-      name: "computer",
-      input: { action: "left_click", coordinate: [5, 6] },
+      name: CUA_AGENT_TOOL_NAME,
+      input: { kind: "click", elementIndex: 6 },
     },
   ],
 };
@@ -59,7 +59,7 @@ function messageAt(
 }
 
 describe("createAnthropicBrain", () => {
-  it("opens the conversation with the goal as a user text message, pinned model/beta/tool", async () => {
+  it("opens the conversation with the goal as a user text message; pinned model, no beta, AX tool", async () => {
     const { client, requests } = fakeClient([clickResponse]);
     const brain = createAnthropicBrain({ client, tool });
 
@@ -68,13 +68,14 @@ describe("createAnthropicBrain", () => {
     expect(step.stopReason).toBe("tool_use");
     expect(step.actions[0]).toMatchObject({
       id: "tu_1",
-      action: { action: "left_click", coordinate: [5, 6] },
+      action: { kind: "click", elementIndex: 6 },
     });
 
     const request = requests[0];
     if (!request) throw new Error("expected a request");
-    expect(request.model).toBe(COMPUTER_USE_MODEL);
-    expect(request.betas).toContain(COMPUTER_USE_BETA);
+    expect(request.model).toBe(CUA_AGENT_MODEL);
+    // A custom tool needs no beta header.
+    expect(request.betas).toEqual([]);
     expect(request.tools).toEqual([tool]);
     expect(request.messages).toEqual([
       { role: "user", content: [{ type: "text", text: "open Cursor" }] },
@@ -87,12 +88,12 @@ describe("createAnthropicBrain", () => {
 
     await brain.next({ goal: "open Cursor", transcript: [] });
 
-    // The loop executed the click and recorded a screenshot outcome.
+    // The loop executed the click and recorded a (refreshed) screenshot outcome.
     const transcript: LoopEntry[] = [
       { kind: "assistant", text: "clicking the icon" },
       {
         kind: "action",
-        action: { action: "left_click", coordinate: [5, 6] },
+        action: { kind: "click", elementIndex: 6 },
         risk: "mutating",
         outcome: { status: "ok", screenshot: "BASE64PNG" },
       },
@@ -125,9 +126,9 @@ describe("createAnthropicBrain", () => {
     const transcript: LoopEntry[] = [
       {
         kind: "action",
-        action: { action: "left_click", coordinate: [5, 6] },
+        action: { kind: "click", elementIndex: 6 },
         risk: "mutating",
-        outcome: { status: "error", error: "driver offline" },
+        outcome: { status: "error", error: "stale element" },
       },
     ];
     await brain.next({ goal: "g", transcript });
@@ -136,17 +137,17 @@ describe("createAnthropicBrain", () => {
     expect(block).toMatchObject({ type: "tool_result", tool_use_id: "tu_1", is_error: true });
     expect((block?.content as AnthropicContentBlockArray)[0]).toMatchObject({
       type: "text",
-      text: "driver offline",
+      text: "stale element",
     });
   });
 
-  it("honors model/beta/maxTokens overrides", async () => {
+  it("honors model/betas/maxTokens overrides", async () => {
     const { client, requests } = fakeClient([doneResponse]);
     const brain = createAnthropicBrain({
       client,
       tool,
       model: "claude-sonnet-4-6",
-      beta: "beta-x",
+      betas: ["beta-x"],
       maxTokens: 2048,
     });
     await brain.next({ goal: "g", transcript: [] });

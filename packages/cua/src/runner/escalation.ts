@@ -1,4 +1,4 @@
-import type { ComputerAction, RiskLevel } from "@handsoff/contracts";
+import type { CuaAgentAction, RiskLevel } from "@handsoff/contracts";
 
 import {
   runComputerUseLoop,
@@ -7,12 +7,20 @@ import {
   type GateDecision,
   type LoopResult,
 } from "./computer-use-loop";
+import type { CuaAgentTarget } from "./ax-env";
 
 // What the user pointed at, resolved by fusion/perception — injected into the
 // brain's goal so the agent starts grounded instead of hunting the whole screen.
 export type CuaReferent = { app: string; title?: string; pointer?: { x: number; y: number } };
 
-export type CuaEscalationRequest = { command: string; referent?: CuaReferent };
+// The concrete window the agent operates within (`CuaAgentTarget`, from ax-env)
+// is resolved upstream from the referent. Optional so a request can fall back to
+// the host-resolved active window when perception couldn't pin one.
+export type CuaEscalationRequest = {
+  command: string;
+  referent?: CuaReferent;
+  target?: CuaAgentTarget;
+};
 
 // Build the computer-use goal for an escalated request. The research is explicit
 // that a pixel-only agent's native ceiling is low and that the *pointed-at
@@ -31,8 +39,9 @@ export function buildCuaInstruction(req: CuaEscalationRequest): string {
   }
 
   lines.push(
-    "Complete the request by operating the screen. Take a screenshot first to see the current " +
-      "state, and after each step take a screenshot and verify the result before continuing.",
+    "Complete the request by operating the active window. Take a snapshot first to read its " +
+      "elements, act by elementIndex, and after each step re-check the snapshot to verify the " +
+      "result before continuing.",
   );
 
   return lines.join(" ");
@@ -42,7 +51,7 @@ export type RunCuaEscalationArgs = CuaEscalationRequest & {
   brain: ComputerUseBrain;
   env: ComputerEnv;
   approve?: (entry: {
-    action: ComputerAction;
+    action: CuaAgentAction;
     risk: RiskLevel;
   }) => Promise<GateDecision> | GateDecision;
   maxSteps?: number;

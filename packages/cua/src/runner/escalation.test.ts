@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ComputerAction } from "@handsoff/contracts";
+import type { CuaAgentAction } from "@handsoff/contracts";
 
 import type { BrainStep, ComputerEnv, ComputerUseBrain } from "./computer-use-loop";
 import { buildCuaInstruction, runCuaEscalation } from "./escalation";
@@ -28,7 +28,7 @@ function recordingBrain(steps: BrainStep[]): ComputerUseBrain & { goals: string[
 }
 
 const done = (text = "done"): BrainStep => ({ text, actions: [], stopReason: "end_turn" });
-const act = (action: ComputerAction): BrainStep => ({
+const act = (action: CuaAgentAction): BrainStep => ({
   text: "",
   actions: [{ id: "t", action }],
   stopReason: "tool_use",
@@ -61,7 +61,7 @@ describe("buildCuaInstruction", () => {
   it("still produces a usable instruction with no referent", () => {
     const instruction = buildCuaInstruction({ command: "open settings" });
     expect(instruction).toContain("open settings");
-    expect(instruction.toLowerCase()).toContain("screenshot");
+    expect(instruction.toLowerCase()).toContain("snapshot");
   });
 });
 
@@ -81,7 +81,7 @@ describe("runCuaEscalation", () => {
   });
 
   it("drives the loop end to end (screenshot then finish) with the default gate", async () => {
-    const brain = recordingBrain([act({ action: "screenshot" }), done()]);
+    const brain = recordingBrain([act({ kind: "snapshot" }), done()]);
     const result = await runCuaEscalation({ command: "look around", brain, env: okEnv });
 
     expect(result.status).toBe("succeeded");

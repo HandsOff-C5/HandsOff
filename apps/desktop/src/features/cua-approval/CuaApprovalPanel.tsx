@@ -29,7 +29,7 @@ export function CuaApprovalPanel({ pending, onApprove, onDeny }: CuaApprovalPane
       <ul className="cua-approval__queue">
         {pending.map((request) => (
           <li key={request.id} className="cua-approval__item">
-            <span className="cua-approval__action">{request.action.action}</span>
+            <span className="cua-approval__action">{request.action.kind}</span>
             <span className="cua-approval__risk" data-risk={request.risk}>
               {request.risk}
             </span>

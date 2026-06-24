@@ -42,7 +42,7 @@ describe("SessionsPanel", () => {
         actionId: "plan-1",
         stepId: "cua-step-1",
         recordedAt: "2026-06-22T12:00:00.000Z",
-        action: { action: "type", text: "secret" },
+        action: { kind: "type_text", elementIndex: 0, text: "secret" },
         risk: "mutating",
         status: "blocked",
         detail: "pending approval",
@@ -61,6 +61,6 @@ describe("SessionsPanel", () => {
       />,
     );
 
-    expect(screen.getByText("CUA type: blocked — pending approval")).toBeInTheDocument();
+    expect(screen.getByText("CUA type_text: blocked — pending approval")).toBeInTheDocument();
   });
 });

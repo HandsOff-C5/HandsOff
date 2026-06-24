@@ -118,14 +118,14 @@ describe("supervision audit event contract", () => {
     expect(result.success).toBe(false);
   });
 
-  it("round-trips a CUA agent action event (pixel-level, no screenshot in the trail)", () => {
+  it("round-trips a CUA agent action event (AX element-index, no screenshot in the trail)", () => {
     const event = {
       kind: "cua_agent_action",
       sessionId: "session-1",
       actionId: "action-1",
       stepId: "cua-step-1",
       recordedAt: "2026-06-22T12:00:00.000Z",
-      action: { action: "left_click", coordinate: [12, 34] },
+      action: { kind: "click", elementIndex: 12 },
       risk: "mutating",
       status: "ran",
     };
@@ -143,7 +143,7 @@ describe("supervision audit event contract", () => {
       actionId: "action-1",
       stepId: "cua-step-2",
       recordedAt: "2026-06-22T12:00:00.000Z",
-      action: { action: "type", text: "secret" },
+      action: { kind: "type_text", elementIndex: 4, text: "secret" },
       risk: "mutating",
       status: "blocked",
       detail: "pending approval",
@@ -159,7 +159,7 @@ describe("supervision audit event contract", () => {
       actionId: "action-1",
       stepId: "cua-step-3",
       recordedAt: "2026-06-22T12:00:00.000Z",
-      action: { action: "screenshot" },
+      action: { kind: "snapshot" },
       risk: "read_only",
       status: "ran",
       screenshot: "BASE64",

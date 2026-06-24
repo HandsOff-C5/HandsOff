@@ -1,11 +1,11 @@
-import type { ComputerAction, RiskLevel } from "@handsoff/contracts";
+import type { CuaAgentAction, RiskLevel } from "@handsoff/contracts";
 
 import type { GateDecision } from "../runner/computer-use-loop";
 
 // One action awaiting a human decision, surfaced to the approval UI.
 export type PendingApproval = {
   id: string;
-  action: ComputerAction;
+  action: CuaAgentAction;
   risk: RiskLevel;
 };
 
@@ -15,7 +15,7 @@ export type PendingApproval = {
 // loop's injected `approve` port into a queue a React panel can render and
 // resolve, without the loop or the controller knowing about the framework.
 export type ApprovalController = {
-  approve(entry: { action: ComputerAction; risk: RiskLevel }): Promise<GateDecision>;
+  approve(entry: { action: CuaAgentAction; risk: RiskLevel }): Promise<GateDecision>;
   pending(): readonly PendingApproval[];
   resolve(id: string, decision: GateDecision): void;
   subscribe(listener: () => void): () => void;

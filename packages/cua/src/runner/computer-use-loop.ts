@@ -1,10 +1,10 @@
-import type { ComputerAction, RiskLevel } from "@handsoff/contracts";
+import type { CuaAgentAction, RiskLevel } from "@handsoff/contracts";
 
-import { classifyComputerAction } from "../safety/blast-radius";
+import { classifyCuaAgentAction } from "../safety/blast-radius";
 
-// One computer-use tool call the brain wants to run, carrying the model's
-// tool_use id so a host adapter can pair it with the tool_result it sends back.
-export type BrainToolUse = { id: string; action: ComputerAction };
+// One agent tool call the brain wants to run, carrying the model's tool_use id
+// so a host adapter can pair it with the tool_result it sends back.
+export type BrainToolUse = { id: string; action: CuaAgentAction };
 
 // The brain's decision for one turn of the loop, abstracted from the Anthropic
 // SDK. `actions` empty + stopReason "end_turn" => the task is complete.
@@ -26,15 +26,15 @@ export type ActionOutcome =
   | { status: "error"; error: string };
 
 export type ComputerEnv = {
-  execute(action: ComputerAction): Promise<ActionOutcome>;
+  execute(action: CuaAgentAction): Promise<ActionOutcome>;
 };
 
 export type GateDecision = "allow" | "deny";
 
 export type LoopEntry =
   | { kind: "assistant"; text: string }
-  | { kind: "action"; action: ComputerAction; risk: RiskLevel; outcome: ActionOutcome }
-  | { kind: "blocked"; action: ComputerAction; risk: RiskLevel; reason: string };
+  | { kind: "action"; action: CuaAgentAction; risk: RiskLevel; outcome: ActionOutcome }
+  | { kind: "blocked"; action: CuaAgentAction; risk: RiskLevel; reason: string };
 
 export type LoopStatus = "succeeded" | "blocked" | "failed" | "max_steps";
 
@@ -49,7 +49,7 @@ export type RunComputerUseLoopArgs = {
   brain: ComputerUseBrain;
   env: ComputerEnv;
   approve?: (entry: {
-    action: ComputerAction;
+    action: CuaAgentAction;
     risk: RiskLevel;
   }) => Promise<GateDecision> | GateDecision;
   maxSteps?: number;
@@ -91,10 +91,10 @@ export async function runComputerUseLoop(args: RunComputerUseLoopArgs): Promise<
     }
 
     for (const toolUse of turn.actions) {
-      const risk = classifyComputerAction(toolUse.action);
+      const risk = classifyCuaAgentAction(toolUse.action);
       const decision = await approve({ action: toolUse.action, risk });
       if (decision === "deny") {
-        const reason = `Blocked ${toolUse.action.action} (${risk}) pending approval`;
+        const reason = `Blocked ${toolUse.action.kind} (${risk}) pending approval`;
         transcript.push({ kind: "blocked", action: toolUse.action, risk, reason });
         return { status: "blocked", summary: reason, transcript };
       }

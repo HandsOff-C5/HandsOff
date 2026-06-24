@@ -15,7 +15,7 @@ describe("cuaTranscriptToAuditEvents", () => {
     const transcript: LoopEntry[] = [
       {
         kind: "action",
-        action: { action: "left_click", coordinate: [1, 2] },
+        action: { kind: "click", elementIndex: 1 },
         risk: "mutating",
         outcome: { status: "ok" },
       },
@@ -26,7 +26,7 @@ describe("cuaTranscriptToAuditEvents", () => {
       sessionId: "session-1",
       actionId: "action-1",
       stepId: "cua-step-1",
-      action: { action: "left_click", coordinate: [1, 2] },
+      action: { kind: "click", elementIndex: 1 },
       risk: "mutating",
       status: "ran",
     });
@@ -36,7 +36,7 @@ describe("cuaTranscriptToAuditEvents", () => {
     const transcript: LoopEntry[] = [
       {
         kind: "action",
-        action: { action: "screenshot" },
+        action: { kind: "snapshot" },
         risk: "read_only",
         outcome: { status: "error", error: "display locked" },
       },
@@ -49,7 +49,7 @@ describe("cuaTranscriptToAuditEvents", () => {
     const transcript: LoopEntry[] = [
       {
         kind: "blocked",
-        action: { action: "type", text: "x" },
+        action: { kind: "type_text", elementIndex: 0, text: "x" },
         risk: "mutating",
         reason: "Blocked type (mutating) pending approval",
       },
@@ -66,14 +66,14 @@ describe("cuaTranscriptToAuditEvents", () => {
       { kind: "assistant", text: "thinking" },
       {
         kind: "action",
-        action: { action: "screenshot" },
+        action: { kind: "snapshot" },
         risk: "read_only",
         outcome: { status: "ok" },
       },
       { kind: "assistant", text: "clicking" },
       {
         kind: "action",
-        action: { action: "left_click", coordinate: [3, 4] },
+        action: { kind: "click", elementIndex: 3 },
         risk: "mutating",
         outcome: { status: "ok" },
       },
@@ -91,13 +91,13 @@ describe("cuaTranscriptToAuditEvents", () => {
     const transcript: LoopEntry[] = [
       {
         kind: "action",
-        action: { action: "left_click", coordinate: [1, 2] },
+        action: { kind: "click", elementIndex: 1 },
         risk: "mutating",
         outcome: { status: "ok" },
       },
       {
         kind: "blocked",
-        action: { action: "type", text: "x" },
+        action: { kind: "type_text", elementIndex: 0, text: "x" },
         risk: "mutating",
         reason: "pending approval",
       },

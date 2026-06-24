@@ -1,5 +1,5 @@
 import type { ActionOutcome, ComputerUseBrain } from "./computer-use-loop";
-import { COMPUTER_USE_BETA, COMPUTER_USE_MODEL, parseBrainStep } from "./anthropic-brain";
+import { CUA_AGENT_MODEL, parseCuaAgentStep } from "./ax-brain";
 
 // A single Anthropic message in the running computer-use conversation. Kept
 // structural so this module doesn't depend on the SDK types; the host adapter
@@ -73,7 +73,7 @@ export function createAnthropicBrain(opts: {
   client: ComputerUseClient;
   tool: Record<string, unknown>;
   model?: string;
-  beta?: string;
+  betas?: readonly string[];
   maxTokens?: number;
 }): ComputerUseBrain {
   const messages: AnthropicMessage[] = [];
@@ -101,8 +101,8 @@ export function createAnthropicBrain(opts: {
       consumed = transcript.length;
 
       const raw = await opts.client.createMessage({
-        model: opts.model ?? COMPUTER_USE_MODEL,
-        betas: [opts.beta ?? COMPUTER_USE_BETA],
+        model: opts.model ?? CUA_AGENT_MODEL,
+        betas: opts.betas ?? [],
         tools: [opts.tool],
         messages: [...messages],
         max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -114,7 +114,7 @@ export function createAnthropicBrain(opts: {
         .filter((block) => block.type === "tool_use")
         .map((block) => (typeof block.id === "string" ? block.id : ""));
 
-      return parseBrainStep(raw);
+      return parseCuaAgentStep(raw);
     },
   };
 }

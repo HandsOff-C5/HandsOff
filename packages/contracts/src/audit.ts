@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { approvalDecisionSchema, executionStatusSchema, riskLevelSchema } from "./action-plan";
-import { computerActionSchema } from "./computer-use";
+import { cuaAgentActionSchema } from "./cua-agent";
 import { cuaActionRequestSchema, cuaActionResultSchema, cuaWindowStateSchema } from "./cua";
 import { resolvedIntentSchema } from "./intent";
 import { selectedReferentSchema } from "./referent";
@@ -74,7 +74,7 @@ export const supervisionAuditEventSchema = z.discriminatedUnion("kind", [
   auditEventBaseSchema.extend({
     kind: z.literal("cua_agent_action"),
     stepId: z.string().min(1),
-    action: computerActionSchema,
+    action: cuaAgentActionSchema,
     risk: riskLevelSchema,
     status: z.enum(["ran", "blocked", "failed"]),
     detail: z.string().min(1).optional(),
