@@ -21,4 +21,14 @@ describe("overlayShouldBeInteractive", () => {
   it("stays interactive when both sources want it (no clobber)", () => {
     expect(overlayShouldBeInteractive({ pendingApprovals: 2, showOnboarding: true })).toBe(true);
   });
+
+  it("becomes interactive while the calibration gate is active (its Skip needs clicks)", () => {
+    expect(
+      overlayShouldBeInteractive({
+        pendingApprovals: 0,
+        showOnboarding: false,
+        calibrationActive: true,
+      }),
+    ).toBe(true);
+  });
 });

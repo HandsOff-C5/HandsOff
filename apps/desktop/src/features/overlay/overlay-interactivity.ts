@@ -11,6 +11,9 @@ export interface OverlayInteractivityInput {
   readonly pendingApprovals: number;
   // The first-run permission onboarding modal is showing.
   readonly showOnboarding: boolean;
+  // The calibration gate is active (its Skip control needs clicks too). Optional
+  // so existing callers/tests need no change.
+  readonly calibrationActive?: boolean;
 }
 
 export function overlayShouldBeInteractive(input: OverlayInteractivityInput): boolean {
