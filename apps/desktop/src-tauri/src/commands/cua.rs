@@ -46,10 +46,21 @@ pub struct CuaWindow {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CuaScreenshot {
+    pub png_base64: String,
+    pub mime_type: String,
+    pub width: u64,
+    pub height: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CuaWindowState {
     pub surface: CuaWindow,
     pub element_count: u64,
     pub elements: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screenshot: Option<CuaScreenshot>,
 }
 
 #[derive(Debug, Serialize)]
@@ -184,6 +195,34 @@ fn map_elements(raw: &Value) -> Vec<Value> {
         .collect()
 }
 
+// Map cua-driver's `som` capture screenshot fields into the visual half of the
+// window state. The Set-of-Marks capture returns a window-local PNG
+// (`screenshot_png_b64`) plus its mime type and pixel dimensions; an `ax`-only
+// capture omits them, so this returns None when the base64 image is missing or
+// empty. The brain grounds on `elements` first and uses the pixels as a fallback.
+fn map_screenshot(raw: &Value) -> Option<CuaScreenshot> {
+    let png_base64 = raw.get("screenshot_png_b64").and_then(Value::as_str)?;
+    if png_base64.is_empty() {
+        return None;
+    }
+    Some(CuaScreenshot {
+        png_base64: png_base64.to_string(),
+        mime_type: raw
+            .get("screenshot_mime_type")
+            .and_then(Value::as_str)
+            .unwrap_or("image/png")
+            .to_string(),
+        width: raw
+            .get("screenshot_width")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        height: raw
+            .get("screenshot_height")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    })
+}
+
 #[tauri::command]
 pub fn cua_permissions() -> CuaPermissionReport {
     match run_cua(&["permissions", "status", "--json"]).and_then(|value| {
@@ -219,11 +258,14 @@ pub fn cua_list_windows() -> Result<Vec<CuaWindow>, String> {
 
 #[tauri::command]
 pub fn cua_get_window_state(pid: u32, window_id: u32) -> Result<CuaWindowState, String> {
+    // `som` (Set-of-Marks) gives the AX elements AND the window screenshot in one
+    // round-trip, so the hybrid brain gets both halves of perception per snapshot.
     let raw = call_tool(
         "get_window_state",
-        json!({ "pid": pid, "window_id": window_id, "capture_mode": "ax" }),
+        json!({ "pid": pid, "window_id": window_id, "capture_mode": "som" }),
     )?;
     let elements = map_elements(&raw);
+    let screenshot = map_screenshot(&raw);
     let window = cua_list_windows()?
         .into_iter()
         .find(|window| window.pid == pid && window.window_id == window_id)
@@ -233,6 +275,7 @@ pub fn cua_get_window_state(pid: u32, window_id: u32) -> Result<CuaWindowState, 
         surface: window,
         element_count: element_count(&raw),
         elements,
+        screenshot,
     })
 }
 
@@ -389,6 +432,35 @@ mod tests {
         // No element_token → synthesized id from the index.
         assert_eq!(elements[1]["id"], json!("el-16"));
         assert_eq!(elements[1]["label"], json!("Add"));
+    }
+
+    #[test]
+    fn maps_the_som_window_screenshot_when_present() {
+        let raw = json!({
+            "element_count": 1,
+            "screenshot_png_b64": "iVBORw0KGgoAAAANSUhEUgAA",
+            "screenshot_mime_type": "image/png",
+            "screenshot_width": 230,
+            "screenshot_height": 408
+        });
+        let shot = map_screenshot(&raw).expect("som capture carries a screenshot");
+        assert_eq!(shot.png_base64, "iVBORw0KGgoAAAANSUhEUgAA");
+        assert_eq!(shot.mime_type, "image/png");
+        assert_eq!(shot.width, 230);
+        assert_eq!(shot.height, 408);
+    }
+
+    #[test]
+    fn omits_the_screenshot_for_ax_only_captures() {
+        // An `ax` capture (or any payload missing the png) yields no image half.
+        assert!(map_screenshot(&json!({ "element_count": 1 })).is_none());
+        assert!(map_screenshot(&json!({
+            "screenshot_png_b64": "",
+            "screenshot_mime_type": "image/png",
+            "screenshot_width": 230,
+            "screenshot_height": 408
+        }))
+        .is_none());
     }
 
     #[test]
