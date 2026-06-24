@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 
+import { AgentBanner } from "./AgentBanner";
 import { FusionHud } from "./FusionHud";
+import { PerceptionPanel } from "./PerceptionPanel";
+import { VoicePill } from "./VoicePill";
 import { useFusionSignal, type FusionListen } from "./useFusionSignal";
 import {
   IDLE_OVERLAY_SIGNAL,
@@ -10,6 +13,7 @@ import {
   type OverlaySignal,
   type OverlayVoiceState,
 } from "./overlay-signal";
+import type { SupervisorSnapshot } from "./supervisor-signal";
 
 // Subscribes the overlay to the main window's streams: pointer updates (geometry +
 // confidence + lock) and voice-state changes. Injected so the window wiring uses Tauri
@@ -18,6 +22,11 @@ export type OverlayListen = (
   onPointer: (update: OverlayPointerUpdate) => void,
   onVoice: (voiceState: OverlayVoiceState) => void,
 ) => () => void;
+
+// Subscribes the overlay to the engine's per-model supervisor snapshot (each
+// tracker's cursor/confidence/fps/lock + voice transcript + agent action). Injected
+// like the others so the overlay window uses Tauri `listen` while tests push directly.
+export type SupervisorListen = (onSnapshot: (snapshot: SupervisorSnapshot) => void) => () => void;
 
 export function useOverlaySignal(listen?: OverlayListen): OverlaySignal {
   const [signal, setSignal] = useState<OverlaySignal>(IDLE_OVERLAY_SIGNAL);
@@ -31,6 +40,15 @@ export function useOverlaySignal(listen?: OverlayListen): OverlaySignal {
   return signal;
 }
 
+export function useSupervisorSignal(listen?: SupervisorListen): SupervisorSnapshot | null {
+  const [snapshot, setSnapshot] = useState<SupervisorSnapshot | null>(null);
+  useEffect(() => {
+    if (!listen) return;
+    return listen((next) => setSnapshot(next));
+  }, [listen]);
+  return snapshot;
+}
+
 interface PointingOverlayProps {
   // Presentational override (tests). When omitted, the live signal from `listen` is used.
   signal?: OverlaySignal;
@@ -40,20 +58,97 @@ interface PointingOverlayProps {
   // listener). Drives the on-screen FusionHud so every model's live confidence + vote +
   // the disagreement "drag" is visible on the real desktop, not just in the dashboard.
   fusionListen?: FusionListen;
+  // The richer per-model supervisor snapshot (override for tests).
+  supervisor?: SupervisorSnapshot;
+  // Live supervisor-snapshot subscription (the overlay window passes the Tauri listener).
+  supervisorListen?: SupervisorListen;
+  // Approve / deny the agent's pending mutating step from the overlay chip (click path;
+  // voice is the other path). Wired to the engine's CUA approval controller.
+  onApprove?: () => void;
+  onDeny?: () => void;
 }
 
-// Full-screen pointing overlay (#25 cursor seam) — the layer that draws where you point
-// on the REAL desktop, in its own transparent, click-through, always-on-top window. It
-// shows the fused pointer (dot + confidence glow), the locked target, and the voice
-// engagement state, so the operator sees all three signals without the dashboard.
+// Clamp a normalized [0,1] point to a CSS percent position, or hide it off-frame.
+function cursorPosition(point: [number, number] | null): { left: string; top: string } | null {
+  if (!point) return null;
+  const clamp = (v: number): number => Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0));
+  return { left: `${clamp(point[0]) * 100}%`, top: `${clamp(point[1]) * 100}%` };
+}
+
+// The supervisor HUD: the full overlay-as-UI surface. Two live desktop cursors
+// (cyan dot = hand, amber ring = eyes), the per-model perception panel, the fused
+// row, the voice pill, and the agent banner — every model's tracking + accuracy
+// AND the CUA's actions, painted on the real desktop.
+function SupervisorHud({
+  supervisor,
+  fusion,
+  onApprove,
+  onDeny,
+}: {
+  supervisor: SupervisorSnapshot;
+  fusion: ReturnType<typeof useFusionSignal>;
+  onApprove?: () => void;
+  onDeny?: () => void;
+}) {
+  const hand = cursorPosition(supervisor.hand.point);
+  const gaze = cursorPosition(supervisor.gaze.point);
+  return (
+    <>
+      {hand && supervisor.hand.point && (
+        <div
+          data-testid="cursor-hand"
+          className="overlay-cursor overlay-cursor--hand"
+          style={{
+            ...hand,
+            ...overlayMarkerStyle(supervisor.hand.point, supervisor.hand.confidence),
+          }}
+          aria-hidden="true"
+        />
+      )}
+      {gaze && (
+        <div
+          data-testid="cursor-gaze"
+          className="overlay-cursor overlay-cursor--gaze"
+          style={gaze}
+          aria-hidden="true"
+        />
+      )}
+      <div className="supervisor-hud__voice">
+        <VoicePill voice={supervisor.voice} />
+      </div>
+      <div className="supervisor-hud__perception">
+        <PerceptionPanel snapshot={supervisor} />
+        <FusionHud fusion={fusion} />
+      </div>
+      <div className="supervisor-hud__agent">
+        <AgentBanner
+          agent={supervisor.agent}
+          {...(onApprove ? { onApprove } : {})}
+          {...(onDeny ? { onDeny } : {})}
+        />
+      </div>
+    </>
+  );
+}
+
+// Full-screen pointing overlay (#25 cursor seam), now the overlay-as-UI surface. In its
+// own transparent, click-through, always-on-top window over the real desktop. With a
+// supervisor snapshot it renders the full HUD (two cursors + perception + fusion + voice
+// + agent); without one it falls back to the bare single-pointer layer (legacy/tests).
 export function PointingOverlay({
   signal: signalProp,
   listen,
   fusionListen,
+  supervisor: supervisorProp,
+  supervisorListen,
+  onApprove,
+  onDeny,
 }: PointingOverlayProps) {
   const live = useOverlaySignal(listen);
   const signal = signalProp ?? live;
   const fusion = useFusionSignal(fusionListen);
+  const liveSupervisor = useSupervisorSignal(supervisorListen);
+  const supervisor = supervisorProp ?? liveSupervisor;
 
   // The shared bundle's body is opaque dark (dashboard theme); the overlay window must
   // be see-through, so clear the background while this layer is mounted.
@@ -67,6 +162,19 @@ export function PointingOverlay({
       documentElement.style.background = prev.html;
     };
   }, []);
+
+  if (supervisor) {
+    return (
+      <div className="pointing-overlay pointing-overlay--supervisor">
+        <SupervisorHud
+          supervisor={supervisor}
+          fusion={fusion}
+          {...(onApprove ? { onApprove } : {})}
+          {...(onDeny ? { onDeny } : {})}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="pointing-overlay" aria-hidden="true">

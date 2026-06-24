@@ -947,3 +947,264 @@ body {
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* ── Overlay-as-UI: the supervisor HUD ───────────────────────────────────────
+   The transparent, click-through layer IS the app. Two live desktop cursors,
+   a per-model perception panel, the fused row, a voice pill, and the agent
+   banner — painted over the real desktop. Click-through everywhere except the
+   approval chip (pointer-events:auto) so real apps stay usable underneath. */
+.pointing-overlay--supervisor {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  font-family: var(--font, system-ui, -apple-system, sans-serif);
+}
+
+/* Two cursors: cyan dot = where the HAND points, amber ring = where the EYES look. */
+.overlay-cursor {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+
+.overlay-cursor--hand {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(56, 189, 248, 0.95);
+}
+
+.overlay-cursor--gaze {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid rgba(251, 191, 36, 0.9);
+  box-shadow: 0 0 16px 4px rgba(251, 191, 36, 0.35);
+}
+
+/* Voice pill — top center. */
+.supervisor-hud__voice {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* Perception panel + fused row — top right. */
+.supervisor-hud__perception {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Agent banner — bottom center. */
+.supervisor-hud__agent {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 80vw;
+}
+
+/* Perception panel. */
+.perception {
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(13, 16, 23, 0.82);
+  color: #e7e9ee;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+
+.perception__head {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #8b93a7;
+  margin-bottom: 8px;
+}
+
+.perception__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.perception__row {
+  display: grid;
+  grid-template-columns: 10px 18px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.perception__row .perception__lock {
+  grid-column: 3 / -1;
+  font-size: 11px;
+  color: #9aa3b5;
+}
+
+.perception__lamp {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4b5365;
+}
+
+.perception__row--live .perception__lamp {
+  background: #34d399;
+  box-shadow: 0 0 8px 1px rgba(52, 211, 153, 0.7);
+}
+
+.perception__row--weak .perception__lamp {
+  background: #fbbf24;
+}
+
+.perception__row--lost {
+  color: #f87171;
+}
+
+.perception__row--lost .perception__lamp {
+  background: #ef4444;
+}
+
+.perception__row--idle {
+  opacity: 0.5;
+}
+
+.perception__name {
+  font-weight: 600;
+}
+
+.perception__pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.perception__fps,
+.perception__voice-state {
+  font-size: 11px;
+  color: #9aa3b5;
+  font-variant-numeric: tabular-nums;
+}
+
+.perception__lock-arrow {
+  margin-right: 4px;
+}
+
+/* Voice pill. */
+.voice-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-radius: 999px;
+  background: rgba(13, 16, 23, 0.8);
+  color: #e7e9ee;
+  font-size: 12px;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+.voice-pill__lamp {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4b5365;
+}
+
+.voice-pill--listening .voice-pill__lamp,
+.voice-pill--heard .voice-pill__lamp,
+.voice-pill--acting .voice-pill__lamp {
+  background: #38bdf8;
+  box-shadow: 0 0 8px 1px rgba(56, 189, 248, 0.7);
+}
+
+.voice-pill--idle {
+  opacity: 0.6;
+}
+
+.voice-pill__transcript {
+  color: #9aa3b5;
+  font-weight: 500;
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Agent banner. */
+.agent-banner {
+  border-radius: 14px;
+  padding: 12px 16px;
+  background: rgba(13, 16, 23, 0.86);
+  color: #e7e9ee;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.agent-banner[data-pending="false"] {
+  opacity: 0.78;
+}
+
+.agent-banner__action {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.agent-banner__glyph {
+  color: #fbbf24;
+}
+
+.agent-banner__chip {
+  /* The ONE interactive island on the click-through overlay. */
+  pointer-events: auto;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.agent-banner__ask {
+  font-size: 13px;
+  color: #c9cedb;
+}
+
+.agent-banner__approve,
+.agent-banner__deny {
+  border: none;
+  border-radius: 999px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.agent-banner__approve {
+  background: #34d399;
+  color: #04140c;
+}
+
+.agent-banner__deny {
+  background: #f87171;
+  color: #1a0606;
+}
+
+.agent-banner__hint {
+  font-size: 11px;
+  color: #8b93a7;
+}

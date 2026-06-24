@@ -1,10 +1,11 @@
 import type { PointingEvidence } from "@handsoff/contracts";
-import { act, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
-import { PointingOverlay, type OverlayListen } from "./PointingOverlay";
+import { PointingOverlay, type OverlayListen, type SupervisorListen } from "./PointingOverlay";
 import type { FusionListen } from "./useFusionSignal";
 import type { OverlaySignal } from "./overlay-signal";
+import type { SupervisorSnapshot } from "./supervisor-signal";
 
 function signal(overrides: Partial<OverlaySignal> = {}): OverlaySignal {
   return { point: [0.5, 0.5], confidence: 1, targetLabel: null, voiceState: "idle", ...overrides };
@@ -92,5 +93,48 @@ describe("PointingOverlay", () => {
     expect(screen.getByLabelText("Fusion HUD")).toBeInTheDocument();
     expect(screen.getByTestId("fusion-decision")).toBeInTheDocument();
     expect(screen.getByTestId("fusion-target")).toBeInTheDocument();
+  });
+
+  describe("supervisor HUD (overlay-as-UI)", () => {
+    const snapshot: SupervisorSnapshot = {
+      hand: { point: [0.3, 0.4], confidence: 0.92, fps: 30, lock: "Calculator" },
+      gaze: { point: [0.6, 0.2], confidence: 0.61, fps: 24, lock: "Mail" },
+      voice: { state: "listening", transcript: "press seven" },
+      agent: { action: "click Equals", pendingApproval: true },
+    };
+
+    it("paints two desktop cursors, the perception panel, voice pill, and agent banner", () => {
+      render(<PointingOverlay supervisor={snapshot} />);
+      expect(screen.getByTestId("cursor-hand").style.left).toBe("30%");
+      expect(screen.getByTestId("cursor-gaze").style.left).toBe("60%");
+      expect(screen.getByTestId("perception-row-hand")).toBeInTheDocument();
+      expect(screen.getByTestId("perception-row-gaze")).toBeInTheDocument();
+      expect(screen.getByTestId("voice-pill")).toHaveAttribute("data-voice-state", "listening");
+      expect(screen.getByText("Acting: click Equals")).toBeInTheDocument();
+    });
+
+    it("routes the on-overlay approve/deny chip to the engine callbacks", () => {
+      const onApprove = vi.fn();
+      const onDeny = vi.fn();
+      render(<PointingOverlay supervisor={snapshot} onApprove={onApprove} onDeny={onDeny} />);
+      fireEvent.click(screen.getByRole("button", { name: /approve/i }));
+      fireEvent.click(screen.getByRole("button", { name: /deny/i }));
+      expect(onApprove).toHaveBeenCalledTimes(1);
+      expect(onDeny).toHaveBeenCalledTimes(1);
+    });
+
+    it("subscribes to the live supervisor listener", () => {
+      let push: ((s: SupervisorSnapshot) => void) | undefined;
+      const supervisorListen: SupervisorListen = (onSnapshot) => {
+        push = onSnapshot;
+        return () => {};
+      };
+      render(<PointingOverlay supervisorListen={supervisorListen} />);
+      // Nothing supervisor-shaped until the first snapshot arrives.
+      expect(screen.queryByTestId("perception-row-hand")).not.toBeInTheDocument();
+      act(() => push?.(snapshot));
+      expect(screen.getByTestId("perception-row-hand")).toBeInTheDocument();
+      expect(screen.getByTestId("cursor-gaze")).toBeInTheDocument();
+    });
   });
 });
