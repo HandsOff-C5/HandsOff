@@ -1,5 +1,6 @@
 export * from "./attention/candidates";
 export * from "./clarification/decide";
+export * from "./escalation-policy";
 export * from "./fuse-intent";
 export * from "./fusion/channel-controls";
 export * from "./fusion/fuse-evidence";
