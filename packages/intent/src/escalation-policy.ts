@@ -26,7 +26,8 @@ export function routeByConfidence(
   confidence: number,
   thresholds: EscalationThresholds = DEFAULT_ESCALATION_THRESHOLDS,
 ): EscalationRoute {
-  // Stub for the red commit — the band logic lands in the green commit. References
-  // both params so it type/lint-checks while failing the spec.
-  return confidence + thresholds.actAt < 0 ? "act" : "clarify";
+  if (Number.isNaN(confidence)) return "clarify";
+  if (confidence >= thresholds.actAt) return "act";
+  if (confidence >= thresholds.escalateAt) return "escalate_to_agent";
+  return "clarify";
 }
