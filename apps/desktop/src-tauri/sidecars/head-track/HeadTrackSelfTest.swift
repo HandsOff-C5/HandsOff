@@ -195,6 +195,7 @@ func testControlCommandParsing() {
     expect(parseControlCommand(#"{"kind":"recenter"}"#) == .recenter, "recenter command parses")
     let command = parseControlCommand(#"{"kind":"config","headPointer":{"movementMode":"relative","speed":7,"distanceToEdge":0.2}}"#)
     expect(command == .config(HeadPointerConfig(movementMode: .relative, speed: 7, distanceToEdge: 0.2)), "config command parses")
+    expect(parseControlCommand(#"{"kind":"debugPreview","on":true}"#) == .debugPreview(true), "debugPreview command parses")
 }
 
 func testAbsolutePointerMode() {

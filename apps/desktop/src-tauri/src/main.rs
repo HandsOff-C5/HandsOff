@@ -65,6 +65,7 @@ fn main() {
             commands::head_track::head_track_start,
             commands::head_track::head_track_stop,
             commands::head_track::head_track_recenter,
+            commands::head_track::head_track_set_debug_preview,
             commands::stt_ondevice::stt_ondevice_start,
             commands::stt_ondevice::stt_ondevice_stop,
             commands::cua::cua_permissions,

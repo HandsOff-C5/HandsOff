@@ -86,6 +86,14 @@ pub fn head_track_recenter(state: State<'_, HeadTrackState>) -> Result<(), Strin
     write_control_line(&state, recenter_control_line()?)
 }
 
+#[tauri::command]
+pub fn head_track_set_debug_preview(
+    state: State<'_, HeadTrackState>,
+    on: bool,
+) -> Result<(), String> {
+    write_control_line(&state, debug_preview_control_line(on)?)
+}
+
 fn stop_child(state: &HeadTrackState) -> Result<(), String> {
     let child = state
         .child
@@ -139,6 +147,10 @@ fn config_control_line(head_pointer: &HeadPointerConfig) -> Result<Vec<u8>, Stri
 
 fn recenter_control_line() -> Result<Vec<u8>, String> {
     control_line(json!({ "kind": "recenter" }))
+}
+
+fn debug_preview_control_line(on: bool) -> Result<Vec<u8>, String> {
+    control_line(json!({ "kind": "debugPreview", "on": on }))
 }
 
 fn control_line(value: serde_json::Value) -> Result<Vec<u8>, String> {

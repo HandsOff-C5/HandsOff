@@ -34,6 +34,7 @@ struct HeadPointerConfig: Equatable {
 enum ControlCommand: Equatable {
     case config(HeadPointerConfig)
     case recenter
+    case debugPreview(Bool)
 }
 
 func doubleValue(_ value: Any?) -> Double? {
@@ -60,6 +61,8 @@ func parseControlCommand(_ line: String) -> ControlCommand? {
     switch kind {
     case "recenter":
         return .recenter
+    case "debugPreview":
+        return .debugPreview(object["on"] as? Bool ?? false)
     case "config":
         guard let headPointer = object["headPointer"] as? [String: Any] else { return nil }
         let modeRaw = headPointer["movementMode"] as? String ?? MovementMode.edge.rawValue

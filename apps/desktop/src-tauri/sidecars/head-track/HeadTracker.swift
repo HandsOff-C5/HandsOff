@@ -9,6 +9,8 @@ import Vision
 final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private let writer: EventWriter
     private let overlay = GoldenCursorOverlay()
+    private let debugPreview = DebugPreviewWindow()
+    private let ciContext = CIContext()
     private let sessionQueue = DispatchQueue(label: "com.handsoff.headtrack.session")
     private let videoQueue = DispatchQueue(label: "com.handsoff.headtrack.video")
     private let minFrameInterval = 1.0 / 20.0
@@ -17,6 +19,7 @@ final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     private var session: AVCaptureSession?
     private var wantsRunning = false
     private var running = false
+    private var debugOn = false
     private var lastFrameTime = 0.0
     private var trackingModel = HeadTrackingModel()
 
@@ -53,7 +56,10 @@ final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
 
     func stop() {
         let hadStarted = requestStop()
-        DispatchQueue.main.async { [overlay] in overlay.hide() }
+        DispatchQueue.main.async { [overlay, debugPreview] in
+            overlay.hide()
+            debugPreview.hide()
+        }
         guard hadStarted else { return }
         sessionQueue.async { [weak self] in
             guard let self else { return }
@@ -73,6 +79,25 @@ final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         videoQueue.async { [weak self] in
             self?.trackingModel.requestRecenter()
         }
+    }
+
+    func setDebugPreview(_ on: Bool) {
+        stateLock.lock()
+        debugOn = on
+        stateLock.unlock()
+        DispatchQueue.main.async { [debugPreview] in
+            if on {
+                debugPreview.show()
+            } else {
+                debugPreview.hide()
+            }
+        }
+    }
+
+    private func isDebugOn() -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return debugOn
     }
 
     private func startAuthorized() {
@@ -194,6 +219,24 @@ final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
 
         DispatchQueue.main.async { [overlay] in overlay.show(at: point) }
         writer.point(x: point.x, y: point.y, yaw: signal.yaw, pitch: signal.pitch, confidence: signal.confidence)
+
+        // Debug preview: only convert the frame when the window is open, so the
+        // tracking path is untouched when it's off. Reuses the captured buffer (no
+        // second camera). trackingModel is read on this same videoQueue — safe.
+        if isDebugOn() {
+            let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+            if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
+                let neutral = trackingModel.neutralNoseOffset
+                DispatchQueue.main.async { [debugPreview] in
+                    debugPreview.update(
+                        image: cgImage,
+                        signal: signal,
+                        neutralNoseOffset: neutral,
+                        cursor: point
+                    )
+                }
+            }
+        }
     }
 
     private func requestStart() -> Bool {
@@ -267,6 +310,8 @@ func startControlReader(tracker: HeadTracker, writer: EventWriter) {
                 tracker.applyConfig(config)
             case .recenter:
                 tracker.requestRecenter()
+            case .debugPreview(let on):
+                tracker.setDebugPreview(on)
             }
         }
     }

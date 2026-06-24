@@ -5,7 +5,10 @@ import {
   type LocalConfig,
   type SttProvider,
 } from "@handsoff/contracts";
+import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 
+import { hasTauriBackend } from "../../lib/tauri";
 import type { LocalConfigStatus } from "./useLocalConfig";
 
 const STATUS_COPY = {
@@ -42,6 +45,11 @@ interface SettingsPanelProps {
 // the transcription mode immediately re-targets the live stream) and passes it
 // down here.
 export function SettingsPanel({ config, status, updateConfig, resetConfig }: SettingsPanelProps) {
+  // Opens a debug window (in the head-track sidecar) showing the camera feed with
+  // the face box / eyes / nose / live readout it tracks — so you can see what
+  // "gaze" actually reads. No-op without the native backend.
+  const [headDebug, setHeadDebug] = useState(false);
+
   function updateHeadPointer(headPointer: LocalConfig["headPointer"]) {
     return updateConfig({ ...config, headPointer });
   }
@@ -123,6 +131,22 @@ export function SettingsPanel({ config, status, updateConfig, resetConfig }: Set
             const distanceToEdge = event.currentTarget.valueAsNumber;
             if (!Number.isNaN(distanceToEdge)) {
               void updateHeadPointer({ ...config.headPointer, distanceToEdge });
+            }
+          }}
+        />
+      </label>
+
+      <label className="settings__field" htmlFor="settings-head-debug">
+        <span>Head Tracking Debug</span>
+        <input
+          id="settings-head-debug"
+          type="checkbox"
+          checked={headDebug}
+          onChange={(event) => {
+            const on = event.currentTarget.checked;
+            setHeadDebug(on);
+            if (hasTauriBackend()) {
+              void invoke("head_track_set_debug_preview", { on });
             }
           }}
         />

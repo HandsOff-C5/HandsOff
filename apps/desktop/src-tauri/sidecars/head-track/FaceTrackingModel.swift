@@ -336,6 +336,9 @@ struct HeadPointerMotion {
         return Double(x)
     }
 
+    // The captured neutral pose's nose offset, for the debug preview readout.
+    var neutralNoseOffset: CGPoint? { neutral?.noseOffset }
+
     init(config: HeadPointerConfig) {
         self.config = config.sanitized
     }
@@ -539,6 +542,8 @@ struct HeadTrackingModel {
     mutating func requestRecenter() {
         motion.requestRecenter()
     }
+
+    var neutralNoseOffset: CGPoint? { motion.neutralNoseOffset }
 
     mutating func chooseFace(from faces: [FaceCandidate]) -> FaceCandidate? {
         faceTracker.choose(from: faces)
