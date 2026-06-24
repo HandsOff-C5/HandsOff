@@ -10,7 +10,7 @@ import {
   type SupervisionAuditEvent,
   type SurfaceSnapshot,
 } from "@handsoff/contracts";
-import type { CuaDriver } from "@handsoff/cua";
+import { cuaResultToActionResult, type CuaDriver } from "@handsoff/cua";
 import { resolveIntent, type ResolveIntentOptions } from "@handsoff/intent";
 import {
   createActionAuditStore,
@@ -44,14 +44,20 @@ function actionPortFor(driver: CuaDriver): CuaActionPort {
     launchApp: ({ appName, bundleId }: Extract<CuaActionRequest, { kind: "launch_app" }>) =>
       driver.launchApp({ appName, bundleId }),
     getWindowState: ({ target }: Extract<CuaActionRequest, { kind: "get_window_state" }>) =>
-      driver.getWindowState(target),
+      driver
+        .getWindowState(target)
+        .then((result) =>
+          cuaResultToActionResult(result, "Window state captured", (state) => state),
+        ),
     click: ({ target }: Extract<CuaActionRequest, { kind: "click" }>) => driver.click(target),
     typeText: ({ target, text }: Extract<CuaActionRequest, { kind: "type_text" }>) =>
       driver.typeText(target, text),
     setValue: ({ target, value }: Extract<CuaActionRequest, { kind: "set_value" }>) =>
       driver.setValue(target, value),
     screenshot: ({ target }: Extract<CuaActionRequest, { kind: "screenshot" }>) =>
-      driver.screenshot(target),
+      driver
+        .screenshot(target)
+        .then((result) => cuaResultToActionResult(result, "Screenshot captured")),
   };
 }
 
@@ -147,8 +153,8 @@ export function useVoiceCuaController(args: {
   // surface to "unknown" availability/access when the probe doesn't succeed.
   async function resolveActiveWindowSurface(): Promise<SurfaceSnapshot> {
     const resolved = await args.driver.getWindowState({ surface: ACTIVE_WINDOW_SURFACE });
-    return resolved.status === "succeeded" && resolved.state
-      ? resolved.state.surface
+    return resolved.status === "succeeded"
+      ? resolved.value.surface
       : {
           ...ACTIVE_WINDOW_SURFACE,
           availability: "unknown" as const,
@@ -256,7 +262,8 @@ export function useVoiceCuaController(args: {
     previousAction?: GoalLoopObservation["previousAction"],
   ): Promise<GoalLoopObservation> {
     const capturedAt = timestamp();
-    const windows = [...(await args.driver.listWindows())];
+    const windowsResult = await args.driver.listWindows();
+    const windows = windowsResult.status === "succeeded" ? [...windowsResult.value] : [];
     const focused = windows.find((window) => window.focused) ?? windows[0];
     const stateResult = focused
       ? await args.driver.getWindowState({ surface: focused })
@@ -268,9 +275,7 @@ export function useVoiceCuaController(args: {
       tick,
       capturedAt,
       windows,
-      ...(stateResult.status === "succeeded" && stateResult.state
-        ? { state: stateResult.state }
-        : {}),
+      ...(stateResult.status === "succeeded" ? { state: stateResult.value } : {}),
       ...(previousAction ? { previousAction } : {}),
     };
   }

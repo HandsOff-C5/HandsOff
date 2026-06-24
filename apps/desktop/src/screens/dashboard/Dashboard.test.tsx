@@ -166,6 +166,48 @@ describe("Dashboard", () => {
     }
   });
 
+  it("shows CUA recovery guidance while preserving the exact fake-CUA failure", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const state = fakeCuaWindowState();
+    const driver = createFakeCuaDriver({
+      state,
+      permissions: {
+        accessibility: "denied",
+        screenRecording: "granted",
+        driver: "running",
+      },
+    });
+    try {
+      render(
+        <Dashboard
+          createStream={makeFactory()}
+          cuaDriver={driver}
+          headPointing={headPointing(state.surface)}
+          now={() => "2026-06-22T12:00:00.000Z"}
+          resolveIntent={ruleResolver}
+          targetResolveDelayMs={0}
+        />,
+      );
+
+      fireEvent.pointerDown(talkButton());
+      await flush();
+      act(() => latest().emitFinal("click there", 0.95, 100));
+      clock.mockReturnValue(1400);
+      fireEvent.pointerUp(talkButton());
+      await flush();
+
+      fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+      expect(
+        await screen.findAllByText(
+          "HandsOff needs Accessibility permission before it can control the selected app. Enable Accessibility for HandsOff, then re-check readiness and retry.",
+        ),
+      ).not.toHaveLength(0);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("waits before resolving the CUA target after speech release", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
     const state = fakeCuaWindowState();

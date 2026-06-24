@@ -3,11 +3,14 @@ import type {
   CuaActionResult,
   CuaApp,
   CuaPermissionReport,
+  CuaResult,
+  CuaScreenshot,
   CuaWindow,
   CuaWindowState,
 } from "@handsoff/contracts";
 
 import type { CuaDriver } from "./driver";
+import { cuaBlocked, cuaSucceeded } from "./driver";
 
 export type FakeCuaCall =
   | { kind: "list_windows" }
@@ -52,17 +55,47 @@ export function createFakeCuaDriver(options: {
       }
     );
   };
+  const accessibilityDenied = "Accessibility permission denied";
+  const windowAvailable = (target: ActionTarget): boolean => {
+    if (target.surface.pid === undefined || target.surface.windowId === undefined) return true;
+    const windows = options.windows ?? [options.state.surface];
+    return windows.some(
+      (window) =>
+        window.pid === target.surface.pid &&
+        window.windowId === target.surface.windowId &&
+        window.availability === "available",
+    );
+  };
+  const stateResult = (target: ActionTarget): CuaResult<CuaWindowState> => {
+    if (permissions.accessibility !== "granted") return cuaBlocked(accessibilityDenied);
+    if (!windowAvailable(target)) return cuaBlocked("Target window is unavailable");
+    return cuaSucceeded(options.state);
+  };
+  const screenshotResult = (target: ActionTarget): CuaResult<CuaScreenshot> => {
+    const state = stateResult(target);
+    if (state.status !== "succeeded") return state;
+    return cuaSucceeded({
+      surface: state.value.surface,
+      capturedAt: state.value.capturedAt,
+      mimeType: "image/png",
+      width: 1,
+      height: 1,
+      pngBase64: "fake",
+    });
+  };
 
   return {
     async checkPermissions() {
-      return permissions;
+      return cuaSucceeded(permissions);
     },
     async listApps() {
-      return options.apps ?? [];
+      if (permissions.driver !== "running") return cuaBlocked("CUA driver is unavailable");
+      return cuaSucceeded(options.apps ?? []);
     },
     async listWindows() {
       record({ kind: "list_windows" });
-      return options.windows ?? [options.state.surface];
+      if (permissions.driver !== "running") return cuaBlocked("CUA driver is unavailable");
+      return cuaSucceeded(options.windows ?? [options.state.surface]);
     },
     async launchApp({ appName, bundleId }) {
       record({ kind: "launch_app", appName, bundleId });
@@ -70,7 +103,7 @@ export function createFakeCuaDriver(options: {
     },
     async getWindowState(target) {
       record({ kind: "get_window_state", target });
-      return { status: "succeeded", summary: "Window state captured", state: options.state };
+      return stateResult(target);
     },
     async click(target) {
       record({ kind: "click", target });
@@ -86,7 +119,7 @@ export function createFakeCuaDriver(options: {
     },
     async screenshot(target) {
       record({ kind: "screenshot", target });
-      return result();
+      return screenshotResult(target);
     },
     calls() {
       return [...calls];

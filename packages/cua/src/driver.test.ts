@@ -38,17 +38,43 @@ describe("CUA driver boundary", () => {
     const result = await driver.click({ surface: state().surface });
 
     expect(result).toEqual({ status: "blocked", reason: "driver missing" });
+    await expect(driver.listWindows()).resolves.toEqual({
+      status: "blocked",
+      reason: "driver missing",
+    });
   });
 
   it("records fake CUA calls and returns concrete window state", async () => {
     const driver = createFakeCuaDriver({ state: state() });
     const target = { surface: state().surface, elementIndex: 0 };
 
-    await driver.getWindowState(target);
+    const stateResult = await driver.getWindowState(target);
     const result = await driver.click(target);
 
+    expect(stateResult).toMatchObject({ status: "succeeded", value: state() });
     expect(result).toMatchObject({ status: "succeeded", state: state() });
     expect(driver.calls().map((call) => call.kind)).toEqual(["get_window_state", "click"]);
+  });
+
+  it("returns typed health results for fake permissions, apps, and windows", async () => {
+    const driver = createFakeCuaDriver({
+      state: state(),
+      apps: [{ id: "com.apple.Notes", name: "Notes", pid: 42, bundleId: "com.apple.Notes" }],
+      windows: [state().surface],
+    });
+
+    await expect(driver.checkPermissions()).resolves.toEqual({
+      status: "succeeded",
+      value: { accessibility: "granted", screenRecording: "granted", driver: "running" },
+    });
+    await expect(driver.listApps()).resolves.toEqual({
+      status: "succeeded",
+      value: [{ id: "com.apple.Notes", name: "Notes", pid: 42, bundleId: "com.apple.Notes" }],
+    });
+    await expect(driver.listWindows()).resolves.toEqual({
+      status: "succeeded",
+      value: [state().surface],
+    });
   });
 
   it("blocks fake mutating actions when Accessibility is denied", async () => {
@@ -66,6 +92,19 @@ describe("CUA driver boundary", () => {
     expect(result).toMatchObject({
       status: "blocked",
       reason: "Accessibility permission denied",
+    });
+    await expect(driver.getWindowState({ surface: state().surface })).resolves.toMatchObject({
+      status: "blocked",
+      reason: "Accessibility permission denied",
+    });
+  });
+
+  it("blocks fake state capture when the target window is unavailable", async () => {
+    const driver = createFakeCuaDriver({ state: state(), windows: [] });
+
+    await expect(driver.getWindowState({ surface: state().surface })).resolves.toEqual({
+      status: "blocked",
+      reason: "Target window is unavailable",
     });
   });
 });

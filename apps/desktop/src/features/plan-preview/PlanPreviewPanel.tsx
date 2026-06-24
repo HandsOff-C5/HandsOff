@@ -1,5 +1,6 @@
 import type { PlanRunResult } from "@handsoff/actions";
 import type { ResolvedIntent } from "@handsoff/contracts";
+import { summarizeCuaFailure } from "@handsoff/cua";
 
 import { EmptyPanel } from "../../components/EmptyPanel";
 
@@ -12,9 +13,9 @@ type PlanPreviewPanelProps = {
 
 function runSummary(runResult: PlanRunResult): string {
   if (runResult.result?.status === "blocked")
-    return `${runResult.status}: ${runResult.result.reason}`;
+    return summarizeCuaFailure(runResult.result) ?? runResult.result.reason;
   if (runResult.result?.status === "failed")
-    return `${runResult.status}: ${runResult.result.error}`;
+    return summarizeCuaFailure(runResult.result) ?? runResult.result.error;
   return runResult.status;
 }
 
