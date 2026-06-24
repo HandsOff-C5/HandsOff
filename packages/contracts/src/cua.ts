@@ -32,11 +32,24 @@ export const cuaElementSchema = z.object({
 });
 export type CuaElement = z.infer<typeof cuaElementSchema>;
 
+// The window screenshot half of the hybrid perception: the driver's Set-of-Marks
+// capture (`capture_mode: "som"`) returns a window-local PNG alongside the AX
+// elements. The brain grounds on `elements[]` first and falls back to the pixels
+// for AX-blind surfaces, so the image is optional — `ax`-only captures omit it.
+export const cuaScreenshotSchema = z.object({
+  pngBase64: z.string(),
+  mimeType: z.string(),
+  width: z.number(),
+  height: z.number(),
+});
+export type CuaScreenshot = z.infer<typeof cuaScreenshotSchema>;
+
 export const cuaWindowStateSchema = z.object({
   surface: surfaceSnapshotSchema,
   capturedAt: z.string().datetime(),
   elementCount: z.number().int().nonnegative().default(0),
   elements: z.array(cuaElementSchema).default([]),
+  screenshot: cuaScreenshotSchema.optional(),
 });
 export type CuaWindowState = z.infer<typeof cuaWindowStateSchema>;
 

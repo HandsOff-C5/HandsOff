@@ -71,4 +71,36 @@ describe("CUA contract", () => {
 
     expect(result.success).toBe(true);
   });
+
+  it("carries the window screenshot so the hybrid brain has the visual half", () => {
+    const result = safeParseCuaWindowState({
+      surface: state().surface,
+      capturedAt: "2026-06-22T12:00:00.000Z",
+      elementCount: 1,
+      elements: state().elements,
+      screenshot: {
+        pngBase64: "iVBORw0KGgoAAAANSUhEUgAA",
+        mimeType: "image/png",
+        width: 230,
+        height: 408,
+      },
+    });
+
+    expect(result.success && result.data.screenshot).toMatchObject({
+      mimeType: "image/png",
+      width: 230,
+      height: 408,
+    });
+  });
+
+  it("rejects a screenshot with a non-positive dimension", () => {
+    const result = safeParseCuaWindowState({
+      surface: state().surface,
+      capturedAt: "2026-06-22T12:00:00.000Z",
+      elementCount: 0,
+      screenshot: { pngBase64: "abc", mimeType: "image/png", width: 0, height: 408 },
+    });
+
+    expect(result.success).toBe(false);
+  });
 });
