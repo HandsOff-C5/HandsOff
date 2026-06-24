@@ -1,0 +1,39 @@
+[
+  {
+    "timestampMs": 200,
+    "cues": [
+      {
+        "id": "face-right",
+        "confidence": 0.88,
+        "box": { "x": 0.52, "y": 0.22, "width": 0.22, "height": 0.3 },
+        "center": { "x": 0.63, "y": 0.37, "z": 0, "visibility": 1 },
+        "landmarks": {
+          "leftEye": [{ "x": 0.58, "y": 0.35, "z": -0.02, "visibility": 0.95 }],
+          "rightEye": [{ "x": 0.68, "y": 0.35, "z": -0.02, "visibility": 0.95 }],
+          "nose": [{ "x": 0.69, "y": 0.43, "z": 0.01, "visibility": 0.94 }]
+        },
+        "landmarkAvailability": { "leftEye": true, "rightEye": true, "nose": true },
+        "eyeMidpoint": { "x": 0.63, "y": 0.35, "z": 0, "visibility": 1 },
+        "eyeDistance": 0.1,
+        "noseOffset": { "x": 0.6, "y": 0.8 },
+        "yaw": 0.24,
+        "pitch": -0.03
+      }
+    ],
+    "candidates": [
+      {
+        "surface": {
+          "id": "window-right",
+          "title": "Preview",
+          "app": "Safari",
+          "pid": 202,
+          "windowId": 9,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "score": 0.74,
+        "distance": 0.18
+      }
+    ]
+  }
+]

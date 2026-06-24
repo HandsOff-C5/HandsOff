@@ -1,0 +1,45 @@
+[
+  {
+    "timestampMs": 0,
+    "cues": [
+      {
+        "id": "face-center",
+        "confidence": 0.92,
+        "box": { "x": 0.4, "y": 0.2, "width": 0.24, "height": 0.32 },
+        "center": { "x": 0.52, "y": 0.36, "z": 0, "visibility": 1 },
+        "landmarks": {
+          "leftEye": [
+            { "x": 0.46, "y": 0.34, "z": -0.01, "visibility": 0.97 },
+            { "x": 0.48, "y": 0.34, "z": -0.01, "visibility": 0.96 }
+          ],
+          "rightEye": [
+            { "x": 0.56, "y": 0.34, "z": -0.01, "visibility": 0.97 },
+            { "x": 0.58, "y": 0.34, "z": -0.01, "visibility": 0.96 }
+          ],
+          "nose": [{ "x": 0.52, "y": 0.43, "z": 0, "visibility": 0.98 }]
+        },
+        "landmarkAvailability": { "leftEye": true, "rightEye": true, "nose": true },
+        "eyeMidpoint": { "x": 0.52, "y": 0.34, "z": 0, "visibility": 1 },
+        "eyeDistance": 0.1,
+        "noseOffset": { "x": 0, "y": 0.9 },
+        "yaw": null,
+        "pitch": null
+      }
+    ],
+    "candidates": [
+      {
+        "surface": {
+          "id": "window-center",
+          "title": "Editor",
+          "app": "Cursor",
+          "pid": 101,
+          "windowId": 7,
+          "availability": "available",
+          "accessStatus": "accessible"
+        },
+        "score": 0.9,
+        "distance": 0
+      }
+    ]
+  }
+]
