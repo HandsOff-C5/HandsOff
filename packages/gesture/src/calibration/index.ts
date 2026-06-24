@@ -26,6 +26,14 @@ export {
   type GridSpec,
 } from "./capture";
 export {
+  createCaptureController,
+  medianVector,
+  type CaptureConfig,
+  type CaptureController,
+  type CapturePhase,
+  type CaptureState,
+} from "./capture-controller";
+export {
   createEyeCalibration,
   type EyeCalibration,
   type EyeCalibrationConfig,
