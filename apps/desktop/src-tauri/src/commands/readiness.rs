@@ -186,9 +186,11 @@ fn speech_recognition_state() -> &'static str {
     "unknown"
 }
 
-/// Probe macOS capability readiness for the dashboard.
-#[tauri::command]
-pub async fn readiness_probe(_app: AppHandle) -> Value {
+/// Build the capability-readiness payload. Single source of truth shared by the
+/// dashboard IPC command (`readiness_probe`) and the engine bridge WS server
+/// (`commands::bridge`), so the frontend and the native sidecar can never drift on
+/// the capability set.
+pub fn readiness_payload() -> Value {
     json!({
         "capabilities": [
             { "id": "camera", "kind": "permission", "state": camera_state() },
@@ -201,9 +203,28 @@ pub async fn readiness_probe(_app: AppHandle) -> Value {
     })
 }
 
+/// Probe macOS capability readiness for the dashboard.
+#[tauri::command]
+pub async fn readiness_probe(_app: AppHandle) -> Value {
+    readiness_payload()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readiness_payload_lists_all_six_capabilities() {
+        let payload = readiness_payload();
+        let caps = payload
+            .get("capabilities")
+            .and_then(|c| c.as_array())
+            .expect("payload has a capabilities array");
+        assert_eq!(caps.len(), 6);
+        assert!(caps
+            .iter()
+            .all(|c| c.get("id").is_some() && c.get("state").is_some()));
+    }
 
     #[test]
     fn speech_recognition_state_returns_valid_states() {

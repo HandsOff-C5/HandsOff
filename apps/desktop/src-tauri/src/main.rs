@@ -39,6 +39,8 @@ fn main() {
                     }
                 }
             }
+            // Director engine bridge — loopback WS server for the native Swift sidecar (G0).
+            tauri::async_runtime::spawn(commands::bridge::serve());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
