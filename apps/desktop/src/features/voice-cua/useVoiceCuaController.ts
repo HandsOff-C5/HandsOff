@@ -125,6 +125,9 @@ export function useVoiceCuaController(args: {
   // The live gesture referent (#35): when the camera has a locked point at intent
   // time it returns gesture `PointingEvidence`; null when nothing is locked.
   getGestureEvidence?: () => PointingEvidence | null;
+  // The live gesture cursor position (even without a locked referent). Provided per-frame
+  // by the CameraPanel and combined with head/face evidence in intent fusion.
+  getGestureCursor?: () => { x: number; y: number } | null;
   maxGoalTicks?: number;
 }) {
   const [intent, setIntent] = useState<ResolvedIntent | null>(null);
@@ -158,44 +161,83 @@ export function useVoiceCuaController(args: {
     const createdAt = timestamp();
     const started = sessions.current.start(createdAt);
     const gesture = args.getGestureEvidence?.() ?? null;
+    const gestureCursor = args.getGestureCursor?.() ?? null;
     const headPointing = headPointingRef.current;
     const headCandidates = headPointing?.candidates ?? [];
-    const pointingEvidence: PointingEvidence[] = gesture?.surface
-      ? [gesture]
-      : headPointing
-        ? headCandidates.length > 0
-          ? headCandidates.map((candidate) => ({
-              source: "head" as const,
-              confidence: candidate.score,
-              strategy: "head-neighborhood",
-              surface: candidate.surface,
-              ...(headPointing.point && { cursor: headPointing.point }),
-            }))
-          : [
-              {
-                source: "head",
-                confidence: 0,
-                strategy: "head-neighborhood-empty",
-                ...(headPointing.point && { cursor: headPointing.point }),
-              },
-            ]
-        : [
-            {
-              source: "cursor",
-              confidence: 1,
-              strategy: "active-window-current-cursor",
-              surface: await resolveActiveWindowSurface(),
-            },
-          ];
+
+    // Combinative pointing evidence: combine all available signals rather than
+    // using a priority hierarchy. Gesture referent, gesture cursor position,
+    // and face tracker evidence are all included when available.
+    const pointingEvidence: PointingEvidence[] = [];
+
+    // Locked referent from gesture (highest signal quality — has a specific surface).
+    if (gesture) {
+      pointingEvidence.push(gesture);
+    }
+    // Gesture cursor position (even without a locked referent). Added when no
+    // locked gesture referent already carries a cursor.
+    if (gestureCursor && (!gesture || !gesture.cursor)) {
+      pointingEvidence.push({
+        source: "gesture",
+        confidence: gesture ? gesture.confidence : 0.3,
+        strategy: "wrist-ray-position",
+        cursor: gestureCursor,
+      });
+    }
+    // Face tracker cursor + head attention candidates.
+    if (headPointing && headPointing.point) {
+      pointingEvidence.push({
+        source: "head",
+        confidence: 0.5,
+        strategy: "face-tracker-position",
+        cursor: headPointing.point,
+      });
+    }
+    for (const candidate of headCandidates) {
+      pointingEvidence.push({
+        source: "head",
+        confidence: candidate.score,
+        strategy: "head-neighborhood",
+        surface: candidate.surface,
+        ...(headPointing?.point && { cursor: headPointing.point }),
+      });
+    }
+    // When head is present but no candidates came in yet, include a low-confidence
+    // head entry so the intent engine still sees the face tracker signal.
+    if (headPointing && headCandidates.length === 0) {
+      pointingEvidence.push({
+        source: "head",
+        confidence: 0,
+        strategy: "head-neighborhood-empty",
+        ...(headPointing.point && { cursor: headPointing.point }),
+      });
+    }
+    // Fallback to active window only when no gesture or head evidence is available.
+    if (pointingEvidence.length === 0) {
+      pointingEvidence.push({
+        source: "cursor",
+        confidence: 1,
+        strategy: "active-window-current-cursor",
+        surface: await resolveActiveWindowSurface(),
+      });
+    }
+
+    // Deduplicated surface candidates from all evidence.
+    const seenIds = new Set<string>();
+    const surfaceCandidates = pointingEvidence
+      .map((e) => e.surface)
+      .filter((s): s is NonNullable<typeof s> => {
+        if (!s) return false;
+        if (seenIds.has(s.id)) return false;
+        seenIds.add(s.id);
+        return true;
+      });
+
     const input: IntentInput = {
       sessionId: started.id,
       speech: { finalTranscript },
       pointingEvidence,
-      surfaceCandidates: gesture?.surface
-        ? [gesture.surface]
-        : headPointing
-          ? headCandidates.map((candidate) => candidate.surface)
-          : pointingEvidence.flatMap((e) => (e.surface ? [e.surface] : [])),
+      surfaceCandidates,
     };
     const run: GoalRunState = {
       sessionId: started.id,

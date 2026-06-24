@@ -11,7 +11,7 @@ final class HeadTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     private let overlay = GoldenCursorOverlay()
     private let sessionQueue = DispatchQueue(label: "com.handsoff.headtrack.session")
     private let videoQueue = DispatchQueue(label: "com.handsoff.headtrack.video")
-    private let minFrameInterval = 1.0 / 20.0
+    private let minFrameInterval = 1.0 / 30.0
     private let visionOrientation: CGImagePropertyOrientation = .upMirrored
     private let stateLock = NSLock()
     private var session: AVCaptureSession?

@@ -15,10 +15,11 @@ const PANEL_TITLES = [
   "Settings",
   "Transcript",
   "Sessions",
+  "Referents",
   "Plan preview",
 ];
-// Sessions and Plan preview still start empty before a transcript arrives.
-const EMPTY_PANEL_TITLES = ["Sessions", "Plan preview"];
+// Sessions, Referents, and Plan preview still start empty before a transcript arrives.
+const EMPTY_PANEL_TITLES = ["Sessions", "Referents", "Plan preview"];
 
 let fakes: FakeSttStream[];
 
@@ -145,11 +146,12 @@ describe("Dashboard", () => {
       fireEvent.pointerUp(talkButton());
       await flush();
 
-      expect(screen.getByText("Click selected target")).toBeInTheDocument();
-      expect(screen.getByText("Session: session-1")).toBeInTheDocument();
+      // "Click selected target" appears in both PlanPreviewPanel and ReferentsPanel action plan
+      expect(screen.getAllByText("Click selected target").length).toBeGreaterThan(0);
+      expect(screen.getByText("session-1")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
-      await waitFor(() => expect(screen.getByText(/Last run:/)).toHaveTextContent("succeeded"));
+      await waitFor(() => expect(screen.getAllByText("succeeded").length).toBeGreaterThan(0));
       expect(driver.calls().map((call) => call.kind)).toEqual([
         "list_windows",
         "get_window_state",
@@ -192,7 +194,10 @@ describe("Dashboard", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
 
-      expect(screen.getByText("Click selected target")).toBeInTheDocument();
+      // "Click selected target" appears in both PlanPreviewPanel and ReferentsPanel action plan
+      expect(screen.getAllByText("Click selected target").length).toBeGreaterThan(0);
+      // The goal loop observes the active window (list_windows + get_window_state) before
+      // stopping at the approval gate, so no plan action executes.
       expect(driver.calls().map((call) => call.kind)).toEqual(["list_windows", "get_window_state"]);
     } finally {
       clock.mockRestore();
@@ -218,9 +223,11 @@ describe("Dashboard", () => {
       fireEvent.pointerUp(talkButton());
       await flush();
 
+      // "No attention-region candidates were available" appears in both ReferentsPanel (reason)
+      // and PlanPreviewPanel (blocked reason) — use getAllByText to accept multiple matches.
       expect(
-        await screen.findByText("No attention-region candidates were available"),
-      ).toBeInTheDocument();
+        (await screen.findAllByText("No attention-region candidates were available")).length,
+      ).toBeGreaterThan(0);
       expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     } finally {
       clock.mockRestore();

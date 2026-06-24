@@ -38,6 +38,27 @@ describe("foldUtterance", () => {
     expect(before.finals.map((f) => f.text)).toEqual(["first"]);
     expect(after.finals.map((f) => f.text)).toEqual(["first", "second"]);
   });
+
+  it("checkpoints pre-pause partial when provider resets to a new utterance", () => {
+    const state = accumulate(
+      partial("open slack in the comet browser"),
+      partial("and send yes to opencode"),
+    );
+    expect(state.finals).toHaveLength(1);
+    expect(state.finals[0]?.text).toBe("open slack in the comet browser");
+    expect(state.partial).toBe("and send yes to opencode");
+  });
+
+  it("does not checkpoint when new partial extends the current", () => {
+    const state = accumulate(partial("open"), partial("open slack in the browser"));
+    expect(state.finals).toHaveLength(0);
+    expect(state.partial).toBe("open slack in the browser");
+  });
+
+  it("does not checkpoint when new partial is a shorter revision", () => {
+    const state = accumulate(partial("open slack in the browser"), partial("open Slack in the"));
+    expect(state.finals).toHaveLength(0);
+  });
 });
 
 describe("endpointUtterance", () => {
@@ -85,6 +106,15 @@ describe("endpointUtterance", () => {
     const state = accumulate(final("  open   the  "), partial("  issue  "));
     const result = endpointUtterance(state, { receivedAt: 0, includeTrailingPartial: true });
     expect(result?.text).toBe("open the issue");
+  });
+
+  it("joins speech segments across a provider-reset pause with no mid-pause final", () => {
+    const state = accumulate(
+      partial("open slack in the comet browser"),
+      partial("and send yes to opencode"),
+    );
+    const result = endpointUtterance(state, { receivedAt: 1, includeTrailingPartial: true });
+    expect(result?.text).toBe("open slack in the comet browser and send yes to opencode");
   });
 
   it("returns null when nothing intelligible was captured", () => {

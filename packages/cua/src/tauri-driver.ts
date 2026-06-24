@@ -128,33 +128,36 @@ export function createTauriCuaDriver(invoke: CuaInvoke): CuaDriver {
     },
     getWindowState,
     async click(target) {
-      return withResolvedTarget(target, (resolved) =>
-        invoke("cua_click", {
+      return withResolvedTarget(target, (resolved) => {
+        const params: Record<string, unknown> = {
           pid: resolved.surface.pid,
           windowId: resolved.surface.windowId,
-          elementIndex: resolved.elementIndex ?? 0,
-        }).then(normalizeCuaActionResult),
-      );
+        };
+        if (resolved.elementIndex !== undefined) params.elementIndex = resolved.elementIndex;
+        return invoke("cua_click", params).then(normalizeCuaActionResult);
+      });
     },
     async typeText(target, text) {
-      return withResolvedTarget(target, (resolved) =>
-        invoke("cua_type_text", {
+      return withResolvedTarget(target, (resolved) => {
+        const params: Record<string, unknown> = {
           pid: resolved.surface.pid,
           windowId: resolved.surface.windowId,
-          elementIndex: resolved.elementIndex ?? 0,
           text,
-        }).then(normalizeCuaActionResult),
-      );
+        };
+        if (resolved.elementIndex !== undefined) params.elementIndex = resolved.elementIndex;
+        return invoke("cua_type_text", params).then(normalizeCuaActionResult);
+      });
     },
     async setValue(target, value) {
-      return withResolvedTarget(target, (resolved) =>
-        invoke("cua_set_value", {
+      return withResolvedTarget(target, (resolved) => {
+        const params: Record<string, unknown> = {
           pid: resolved.surface.pid,
           windowId: resolved.surface.windowId,
-          elementIndex: resolved.elementIndex ?? 0,
           value,
-        }).then(normalizeCuaActionResult),
-      );
+        };
+        if (resolved.elementIndex !== undefined) params.elementIndex = resolved.elementIndex;
+        return invoke("cua_set_value", params).then(normalizeCuaActionResult);
+      });
     },
     screenshot: getWindowState,
   };

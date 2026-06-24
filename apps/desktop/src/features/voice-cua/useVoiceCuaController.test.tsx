@@ -241,7 +241,15 @@ describe("useVoiceCuaController", () => {
     await waitFor(() => expect(resolveIntent).toHaveBeenCalled());
     const [input, options] = resolveIntent.mock.calls[0]!;
     expect(options).toMatchObject({ resolver: "auto", createdAt: NOW });
+    // Combinative: face-tracker-position entry from headPointing.point + head-neighborhood
+    // from the candidate. Both are always included when headPointing is set.
     expect(input.pointingEvidence).toEqual([
+      {
+        source: "head",
+        confidence: 0.5,
+        strategy: "face-tracker-position",
+        cursor: { x: 10, y: 20 },
+      },
       {
         source: "head",
         confidence: 0.9,
@@ -253,7 +261,7 @@ describe("useVoiceCuaController", () => {
     expect(input.surfaceCandidates).toEqual([surface()]);
   });
 
-  it("binds locked gesture evidence before head candidates", async () => {
+  it("combines locked gesture evidence with face tracker head evidence", async () => {
     const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
     const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
     const { result } = renderHook(() =>
@@ -270,10 +278,22 @@ describe("useVoiceCuaController", () => {
     act(() => result.current.handleFinalTranscript(finalTranscript));
 
     await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
-    expect(resolveIntent.mock.calls[0]![0]).toMatchObject({
-      pointingEvidence: [gestureEvidence],
-      surfaceCandidates: [gestureEvidence.surface],
-    });
+    const input = resolveIntent.mock.calls[0]![0];
+    // Combinative: gesture evidence + face-tracker position + head neighborhood all included.
+    expect(input.pointingEvidence).toEqual(
+      expect.arrayContaining([
+        gestureEvidence,
+        expect.objectContaining({ source: "head", strategy: "face-tracker-position" }),
+        expect.objectContaining({ source: "head", strategy: "head-neighborhood" }),
+      ]),
+    );
+    // Gesture surface candidate always included; head candidate also included.
+    expect(input.surfaceCandidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "gesture-target" }),
+        expect.objectContaining({ id: surface().id }),
+      ]),
+    );
     expect(result.current.intent).toMatchObject({
       status: "ready",
       referent: { id: "gesture-target" },
@@ -338,20 +358,136 @@ describe("useVoiceCuaController", () => {
     act(() => result.current.handleFinalTranscript(finalTranscript));
 
     await waitFor(() => expect(result.current.intent?.status).toBe("clarification_required"));
+    // Combinative: with a head point but no candidates, we get face-tracker-position
+    // + head-neighborhood-empty (both from headPointing).
     expect(resolveIntent.mock.calls[0]![0]).toMatchObject({
-      pointingEvidence: [
+      pointingEvidence: expect.arrayContaining([
+        {
+          source: "head",
+          confidence: 0.5,
+          strategy: "face-tracker-position",
+          cursor: { x: 10, y: 20 },
+        },
         {
           source: "head",
           confidence: 0,
           strategy: "head-neighborhood-empty",
           cursor: { x: 10, y: 20 },
         },
-      ],
+      ]),
       surfaceCandidates: [],
     });
 
     await act(async () => result.current.approve());
     expect(driver.calls().map((call) => call.kind)).toEqual(["list_windows", "get_window_state"]);
+  });
+
+  it("includes gesture cursor evidence when getGestureCursor provides a position", async () => {
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    // Use headPointing so surfaceCandidates is not empty (ready() requires surfaceCandidates[0]).
+    const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        getGestureCursor: () => ({ x: 0.6, y: 0.4 }),
+        headPointing: headPointing(),
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+
+    await waitFor(() => expect(resolveIntent).toHaveBeenCalled());
+    const input = resolveIntent.mock.calls[0]![0];
+    expect(input.pointingEvidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "gesture",
+          strategy: "wrist-ray-position",
+          cursor: { x: 0.6, y: 0.4 },
+        }),
+      ]),
+    );
+  });
+
+  it("always includes head evidence alongside gesture when headPointing is set", async () => {
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        getGestureCursor: () => ({ x: 0.5, y: 0.5 }),
+        headPointing: headPointing(),
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+
+    await waitFor(() => expect(resolveIntent).toHaveBeenCalled());
+    const input = resolveIntent.mock.calls[0]![0];
+    // Both gesture cursor and head evidence are present in the combinative output.
+    const sources = input.pointingEvidence.map((e) => e.source);
+    expect(sources).toContain("gesture");
+    expect(sources).toContain("head");
+  });
+
+  it("auto-runs a reversible plan without waiting for approval", async () => {
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    // tick 0 hands back a reversible (no-approval) click; tick 1 reports the goal
+    // satisfied. The loop should execute the click on its own — no approve() call —
+    // and settle into a satisfied / succeeded terminal state.
+    const reversibleClick = (input: IntentInput): ResolvedIntent => ({
+      status: "ready",
+      id: "intent-1",
+      input,
+      intent_type: "click",
+      referent: { id: input.surfaceCandidates[0]!.id, source: "head", confidence: 0.9 },
+      constraints: [],
+      risk_level: "reversible",
+      requires_approval: false,
+      target_agent: "cua-driver",
+      action_plan: {
+        id: "plan-1",
+        summary: "Click selected target",
+        risk_level: "reversible",
+        requires_approval: false,
+        target_agent: "cua-driver",
+        action_plan: [
+          {
+            id: "step-1",
+            kind: "click_element",
+            label: "Click selected target",
+            target: { surface: input.surfaceCandidates[0]!, elementIndex: 0 },
+          },
+        ],
+      },
+      createdAt: NOW,
+    });
+    const resolveIntent = vi.fn(
+      async (input: IntentInput): Promise<ResolvedIntent> =>
+        input.goalSession?.tick === 0 ? reversibleClick(input) : satisfied(input),
+    );
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: headPointing(),
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+
+    // No approve() call — a reversible plan runs on its own and the loop terminates.
+    await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
+    expect(result.current.session?.status).toBe("succeeded");
+    expect(driver.calls().some((call) => call.kind === "click")).toBe(true);
   });
 
   it("uses candidates that arrive during the resolve delay", async () => {

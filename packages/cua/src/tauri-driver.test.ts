@@ -168,6 +168,32 @@ describe("Tauri CUA driver", () => {
     });
   });
 
+  it("omits elementIndex when the target has none so cua-driver types into the focused element", async () => {
+    const noIndexTarget = {
+      surface: {
+        id: "app:notes",
+        title: "Notes",
+        app: "Notes",
+        availability: "available" as const,
+        accessStatus: "accessible" as const,
+      },
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const invoke: CuaInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (command === "cua_list_windows") return [workWindow] as T;
+      if (command === "cua_type_text") return { status: "succeeded", summary: "Typed" } as T;
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await createTauriCuaDriver(invoke).typeText(noIndexTarget, "hello");
+
+    expect(calls.at(-1)).toEqual({
+      command: "cua_type_text",
+      args: { pid: 2, windowId: 20, text: "hello" },
+    });
+  });
+
   it("blocks when only CUA driver windows are available", async () => {
     const calls: string[] = [];
     const invoke: CuaInvoke = async <T>(command: string) => {
