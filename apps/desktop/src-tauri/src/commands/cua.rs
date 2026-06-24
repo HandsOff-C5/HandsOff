@@ -123,6 +123,70 @@ fn launch_app_input(app_name: String, bundle_id: Option<String>) -> Value {
     input
 }
 
+// The driver schemas forbid extra keys (`additionalProperties: false`), so each
+// encoder emits only the fields it was given — absent optionals are dropped, not
+// sent as null. window_id + element_index select the Chromium-safe AX focus path;
+// omitting them takes the default auth-message path.
+fn press_key_input(
+    pid: u32,
+    window_id: Option<u32>,
+    element_index: Option<u32>,
+    key: String,
+    modifiers: Option<Vec<String>>,
+) -> Value {
+    let mut input = json!({ "pid": pid, "key": key });
+    if let Some(window_id) = window_id {
+        input["window_id"] = json!(window_id);
+    }
+    if let Some(element_index) = element_index {
+        input["element_index"] = json!(element_index);
+    }
+    if let Some(modifiers) = modifiers {
+        input["modifiers"] = json!(modifiers);
+    }
+    input
+}
+
+fn hotkey_input(pid: u32, keys: Vec<String>, window_id: Option<u32>) -> Value {
+    let mut input = json!({ "pid": pid, "keys": keys });
+    if let Some(window_id) = window_id {
+        input["window_id"] = json!(window_id);
+    }
+    input
+}
+
+fn scroll_input(
+    pid: u32,
+    direction: String,
+    by: Option<String>,
+    amount: Option<u32>,
+    window_id: Option<u32>,
+    element_index: Option<u32>,
+) -> Value {
+    let mut input = json!({ "pid": pid, "direction": direction });
+    if let Some(by) = by {
+        input["by"] = json!(by);
+    }
+    if let Some(amount) = amount {
+        input["amount"] = json!(amount);
+    }
+    if let Some(window_id) = window_id {
+        input["window_id"] = json!(window_id);
+    }
+    if let Some(element_index) = element_index {
+        input["element_index"] = json!(element_index);
+    }
+    input
+}
+
+fn click_point_input(pid: u32, window_id: u32, x: f64, y: f64, button: Option<String>) -> Value {
+    let mut input = json!({ "pid": pid, "window_id": window_id, "x": x, "y": y });
+    if let Some(button) = button {
+        input["button"] = json!(button);
+    }
+    input
+}
+
 fn map_window(window: DriverWindow, focused: bool) -> CuaWindow {
     CuaWindow {
         id: format!("{}:{}", window.pid, window.window_id),
@@ -366,6 +430,77 @@ pub fn cua_set_value(
     })
 }
 
+#[tauri::command]
+pub fn cua_press_key(
+    pid: u32,
+    window_id: Option<u32>,
+    element_index: Option<u32>,
+    key: String,
+    modifiers: Option<Vec<String>>,
+) -> Result<CuaActionResult, String> {
+    let summary = format!("Pressed {key}");
+    call_action_tool(
+        "press_key",
+        press_key_input(pid, window_id, element_index, key, modifiers),
+    )?;
+    Ok(CuaActionResult {
+        status: "succeeded",
+        summary,
+    })
+}
+
+#[tauri::command]
+pub fn cua_hotkey(
+    pid: u32,
+    keys: Vec<String>,
+    window_id: Option<u32>,
+) -> Result<CuaActionResult, String> {
+    let summary = format!("Sent hotkey {}", keys.join("+"));
+    call_action_tool("hotkey", hotkey_input(pid, keys, window_id))?;
+    Ok(CuaActionResult {
+        status: "succeeded",
+        summary,
+    })
+}
+
+#[tauri::command]
+pub fn cua_scroll(
+    pid: u32,
+    direction: String,
+    by: Option<String>,
+    amount: Option<u32>,
+    window_id: Option<u32>,
+    element_index: Option<u32>,
+) -> Result<CuaActionResult, String> {
+    let summary = format!("Scrolled {direction}");
+    call_action_tool(
+        "scroll",
+        scroll_input(pid, direction, by, amount, window_id, element_index),
+    )?;
+    Ok(CuaActionResult {
+        status: "succeeded",
+        summary,
+    })
+}
+
+// Pixel-coordinate fallback for AX-blind surfaces (canvas / video / WebGL): the
+// brain reaches for this only when the target has no element_index. Coordinates
+// are window-local screenshot pixels from the `som` capture (top-left origin).
+#[tauri::command]
+pub fn cua_click_point(
+    pid: u32,
+    window_id: u32,
+    x: f64,
+    y: f64,
+    button: Option<String>,
+) -> Result<CuaActionResult, String> {
+    call_action_tool("click", click_point_input(pid, window_id, x, y, button))?;
+    Ok(CuaActionResult {
+        status: "succeeded",
+        summary: "Clicked at point".to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,6 +596,79 @@ mod tests {
             "screenshot_height": 408
         }))
         .is_none());
+    }
+
+    #[test]
+    fn encodes_press_key_input_dropping_absent_optionals() {
+        // Bare key press: only pid + key, no AX focus, no modifiers.
+        assert_eq!(
+            press_key_input(85545, None, None, "return".to_string(), None),
+            json!({ "pid": 85545, "key": "return" })
+        );
+        // Focused element + modifiers: the Chromium-safe auth path.
+        assert_eq!(
+            press_key_input(
+                85545,
+                Some(5833),
+                Some(12),
+                "a".to_string(),
+                Some(vec!["cmd".to_string()])
+            ),
+            json!({
+                "pid": 85545, "key": "a",
+                "window_id": 5833, "element_index": 12,
+                "modifiers": ["cmd"]
+            })
+        );
+    }
+
+    #[test]
+    fn encodes_hotkey_input_with_optional_window_path() {
+        assert_eq!(
+            hotkey_input(85545, vec!["cmd".to_string(), "c".to_string()], None),
+            json!({ "pid": 85545, "keys": ["cmd", "c"] })
+        );
+        assert_eq!(
+            hotkey_input(85545, vec!["cmd".to_string(), "z".to_string()], Some(5833)),
+            json!({ "pid": 85545, "keys": ["cmd", "z"], "window_id": 5833 })
+        );
+    }
+
+    #[test]
+    fn encodes_scroll_input_with_defaults_and_focus() {
+        // Direction only — by/amount left to the driver defaults.
+        assert_eq!(
+            scroll_input(85545, "down".to_string(), None, None, None, None),
+            json!({ "pid": 85545, "direction": "down" })
+        );
+        assert_eq!(
+            scroll_input(
+                85545,
+                "up".to_string(),
+                Some("page".to_string()),
+                Some(3),
+                Some(5833),
+                Some(12)
+            ),
+            json!({
+                "pid": 85545, "direction": "up",
+                "by": "page", "amount": 3,
+                "window_id": 5833, "element_index": 12
+            })
+        );
+    }
+
+    #[test]
+    fn encodes_click_point_input_for_the_pixel_fallback() {
+        // AX-blind surface: window-local screenshot pixels, default left button.
+        assert_eq!(
+            click_point_input(85545, 5833, 42.0, 99.5, None),
+            json!({ "pid": 85545, "window_id": 5833, "x": 42.0, "y": 99.5 })
+        );
+        assert_eq!(
+            click_point_input(85545, 5833, 10.0, 20.0, Some("right".to_string())),
+            json!({ "pid": 85545, "window_id": 5833, "x": 10.0, "y": 20.0, "button": "right" })
+        );
     }
 
     #[test]
