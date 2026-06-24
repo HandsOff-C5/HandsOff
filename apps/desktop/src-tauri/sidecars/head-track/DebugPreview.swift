@@ -44,15 +44,17 @@ final class DebugPreviewView: NSView {
             return
         }
 
-        // Normalized [0,1] (mirrored) → view pixels.
+        // Vision (.upMirrored) already returns coords in the mirrored (selfie) space —
+        // the SAME space as the mirror-drawn image above. So map nx/ny straight to
+        // pixels; do NOT flip again (the old (1-x) double-mirrored it, putting the box
+        // on the opposite side from the face).
         func toView(_ point: CGPoint) -> CGPoint {
-            CGPoint(x: (1 - point.x) * width, y: point.y * height)
+            CGPoint(x: point.x * width, y: point.y * height)
         }
 
-        // Face box (mirror the x range).
         let box = signal.faceBox
         let boxRect = CGRect(
-            x: (1 - (box.minX + box.width)) * width,
+            x: box.minX * width,
             y: box.minY * height,
             width: box.width * width,
             height: box.height * height
