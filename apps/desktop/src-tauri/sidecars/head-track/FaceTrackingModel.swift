@@ -441,10 +441,10 @@ struct HeadPointerMotion {
 
         switch config.movementMode {
         case .edge:
-            return SignalVector(
-                x: (noseX * 0.75 + yaw * 0.55 + centerX * 0.25) * gain,
-                y: (noseY * 0.75 + pitch * 0.55 + centerY * 0.25) * gain
-            )
+            // Pure nose-offset drive: nose position relative to eye midpoint,
+            // normalized by eye distance. Yaw/pitch estimation and face-center
+            // drift introduce noise that corrupts the pointing direction.
+            return SignalVector(x: noseX * gain, y: noseY * gain)
         case .relative:
             let scale = max(neutral.faceBox.width, 0.1)
             return SignalVector(
