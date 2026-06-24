@@ -64,4 +64,45 @@ describe("planPermissionOnboarding", () => {
     expect(plan.restartRequiredPending).toEqual(["screen-recording"]);
     expect(plan.needsOnboarding).toBe(true);
   });
+
+  // Screen Recording is OPTIONAL: HandsOff's own app never captures the screen
+  // (only the separately-signed cua-driver daemon does), so a denied Screen
+  // Recording grant must not gate readiness or hold `requiredReady` false. The
+  // step is still surfaced (so the user can enable it) but flagged optional.
+  it("flags screen-recording optional and keeps requiredReady independent of it", () => {
+    const plan = planPermissionOnboarding(
+      report({
+        camera: "granted",
+        microphone: "granted",
+        "speech-recognition": "granted",
+        accessibility: "granted",
+        "screen-recording": "denied",
+      }),
+    );
+    expect(plan.steps.find((s) => s.capability.id === "screen-recording")?.optional).toBe(true);
+    expect(plan.steps.find((s) => s.capability.id === "camera")?.optional).toBe(false);
+    // Every REQUIRED permission is granted, so the core loop is ready even though
+    // the optional Screen Recording grant is still pending.
+    expect(plan.requiredReady).toBe(true);
+    expect(plan.optionalPending).toEqual(["screen-recording"]);
+    // `allReady` (every covered step, incl. optional) is still false while SR pends.
+    expect(plan.allReady).toBe(false);
+    // The modal still surfaces (so the Enable button is reachable), but only the
+    // optional capability is outstanding.
+    expect(plan.needsOnboarding).toBe(true);
+  });
+
+  it("requiredReady is false while a required permission is still pending", () => {
+    const plan = planPermissionOnboarding(
+      report({
+        camera: "granted",
+        microphone: "granted",
+        "speech-recognition": "granted",
+        "screen-recording": "granted",
+        // accessibility still not-determined → required, still pending
+      }),
+    );
+    expect(plan.requiredReady).toBe(false);
+    expect(plan.optionalPending).toEqual([]);
+  });
 });

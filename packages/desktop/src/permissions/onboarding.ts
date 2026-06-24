@@ -37,6 +37,15 @@ export const RESTART_REQUIRED_PERMISSION_IDS = [
   "screen-recording",
 ] as const satisfies readonly CapabilityId[];
 
+// OPTIONAL capabilities do not gate readiness: HandsOff's own app never captures
+// the screen — only the separately-signed cua-driver daemon does, under its own
+// TCC identity. So a denied Screen Recording grant must never hold the app back
+// (`requiredReady`) or block the onboarding from completing. The step is still
+// surfaced so the user CAN enable it; it just isn't required.
+export const OPTIONAL_PERMISSION_IDS = [
+  "screen-recording",
+] as const satisfies readonly CapabilityId[];
+
 // How a pending capability gets granted: fire an OS prompt, or open Settings.
 export type PermissionAction = "request" | "open-settings";
 
@@ -47,6 +56,9 @@ export interface OnboardingStep {
   done: boolean;
   // Granting this only takes effect after an app relaunch (macOS).
   restartAfter: boolean;
+  // Optional capabilities never gate readiness — the user may enable them, but a
+  // denied grant doesn't hold the app back (Screen Recording).
+  optional: boolean;
 }
 
 export interface OnboardingPlan {
@@ -58,8 +70,13 @@ export interface OnboardingPlan {
   restartRequiredPending: CapabilityId[];
   // Manual capabilities still pending — each needs a Settings deep-link + toggle.
   manualPending: CapabilityId[];
-  // Every covered capability is granted.
+  // Optional capabilities still pending — surfaced but never gating (Screen Recording).
+  optionalPending: CapabilityId[];
+  // Every covered capability is granted (including optional ones).
   allReady: boolean;
+  // Every REQUIRED (non-optional) capability is granted — the core loop is ready
+  // even if an optional grant like Screen Recording is still outstanding.
+  requiredReady: boolean;
   // At least one covered capability is still pending — show the onboarding.
   needsOnboarding: boolean;
 }
@@ -69,6 +86,9 @@ const isRequestable = (id: CapabilityId): boolean =>
 
 const needsRestart = (id: CapabilityId): boolean =>
   (RESTART_REQUIRED_PERMISSION_IDS as readonly CapabilityId[]).includes(id);
+
+const isOptional = (id: CapabilityId): boolean =>
+  (OPTIONAL_PERMISSION_IDS as readonly CapabilityId[]).includes(id);
 
 export function planPermissionOnboarding(report: readonly CapabilityReadiness[]): OnboardingPlan {
   const byId = new Map(report.map((capability) => [capability.id, capability]));
@@ -81,6 +101,7 @@ export function planPermissionOnboarding(report: readonly CapabilityReadiness[])
         action: isRequestable(id) ? "request" : "open-settings",
         done: capability.level === "ready",
         restartAfter: needsRestart(id),
+        optional: isOptional(id),
       },
     ];
   });
@@ -97,7 +118,10 @@ export function planPermissionOnboarding(report: readonly CapabilityReadiness[])
     manualPending: pending
       .filter((step) => step.action === "open-settings")
       .map((step) => step.capability.id),
+    // STUB: real classification lands in the green commit.
+    optionalPending: [],
     allReady: steps.length > 0 && pending.length === 0,
+    requiredReady: false,
     needsOnboarding: pending.length > 0,
   };
 }
