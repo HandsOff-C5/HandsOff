@@ -1,3 +1,4 @@
+import { riskLevelRequiresApproval } from "@handsoff/contracts";
 import type { IntentType, RiskLevel } from "@handsoff/contracts";
 
 export function riskForIntent(intentType: IntentType): RiskLevel {
@@ -13,5 +14,5 @@ export function riskForIntent(intentType: IntentType): RiskLevel {
 }
 
 export function requiresApproval(riskLevel: RiskLevel): boolean {
-  return riskLevel === "mutating" || riskLevel === "destructive";
+  return riskLevelRequiresApproval(riskLevel);
 }
