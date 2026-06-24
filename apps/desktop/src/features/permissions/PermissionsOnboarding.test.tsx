@@ -140,6 +140,35 @@ describe("PermissionsOnboarding", () => {
     expect(onOpenSettings).toHaveBeenCalledWith("accessibility");
   });
 
+  it("lets the user continue when only the optional Screen Recording is pending", () => {
+    const onDismiss = vi.fn();
+    render(
+      <PermissionsOnboarding
+        report={report({
+          camera: "granted",
+          microphone: "granted",
+          "speech-recognition": "granted",
+          accessibility: "granted",
+          "screen-recording": "denied",
+        })}
+        isChecking={false}
+        onRequestCamera={asyncNoop}
+        onRequestMedia={asyncNoop}
+        onRequestScreenRecording={asyncNoop}
+        onRecheck={noop}
+        onRelaunch={noop}
+        onOpenSettings={noop}
+        onDismiss={onDismiss}
+      />,
+    );
+    // Screen Recording is optional (HandsOff itself never records the screen), so a
+    // denied grant must NOT keep onboarding from completing.
+    fireEvent.click(screen.getByRole("button", { name: /all set/i }));
+    expect(onDismiss).toHaveBeenCalled();
+    // ...and it should be visibly marked optional, not a hard "needs permission" blocker.
+    expect(screen.getByText(/optional/i)).toBeInTheDocument();
+  });
+
   it("shows a done state and a continue action when everything is granted", () => {
     const onDismiss = vi.fn();
     render(

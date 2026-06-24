@@ -66,7 +66,7 @@ export function PermissionsOnboarding({
         </p>
 
         <ul className="onboarding__steps">
-          {plan.steps.map(({ capability, action, done, restartAfter }) => (
+          {plan.steps.map(({ capability, action, done, restartAfter, optional }) => (
             <li
               key={capability.id}
               className={`onboarding__step onboarding__step--${done ? "done" : "pending"}`}
@@ -75,6 +75,7 @@ export function PermissionsOnboarding({
                 {done ? "✅" : "○"}
               </span>
               <span className="onboarding__step-label">{capability.label}</span>
+              {optional && <span className="onboarding__step-optional">optional</span>}
               <span className="onboarding__step-status">{capability.status}</span>
               {!done && action === "open-settings" && (
                 <button
@@ -120,7 +121,7 @@ export function PermissionsOnboarding({
           <button type="button" className="onboarding__relaunch" onClick={onRelaunch}>
             Relaunch {APP_NAME}
           </button>
-          {plan.allReady ? (
+          {plan.requiredReady ? (
             <button type="button" className="onboarding__continue" onClick={onDismiss}>
               All set — continue
             </button>
@@ -133,8 +134,9 @@ export function PermissionsOnboarding({
 
         {plan.restartRequiredPending.length > 0 && (
           <p className="onboarding__note">
-            Screen Recording only takes effect after a restart — Enable it, allow the macOS prompt,
-            then choose <strong>Relaunch {APP_NAME}</strong>.
+            Screen Recording is only used by the agent&apos;s own screenshots (handled by the
+            separate CuaDriver app, granted once in System Settings). {APP_NAME} itself doesn&apos;t
+            record your screen, so you can continue without it.
           </p>
         )}
         {plan.manualPending.length > 0 && (
