@@ -1,3 +1,4 @@
+import { EyeCalibrationScreen } from "./features/eye-calibration/EyeCalibrationScreen";
 import { PointingOverlay } from "./features/overlay/PointingOverlay";
 import {
   emitCalibrationControl,
@@ -33,8 +34,19 @@ function currentWindowLabel(): string {
 // throttled/suspended by WebKit (which kills hand tracking + the calibration dwell).
 // The engine emits the per-model snapshot + calibration view; PointingOverlay, in the
 // same window, listens and paints the HUD / calibration gate over the real desktop.
+// A dedicated, self-contained mode: launched with VITE_HANDSOFF_MODE=calibrate
+// (`pnpm calibrate`), the overlay window renders ONLY the per-monitor eye-calibration
+// screen — its own camera + iris loop, dots across each real monitor, live confidence —
+// and none of the normal engine/HUD. This is the "see the eye tracking, calibrate it"
+// pass, deliberately isolated from the rest of the UI.
+const CALIBRATE_MODE = import.meta.env.VITE_HANDSOFF_MODE === "calibrate";
+
 export function App() {
   const label = currentWindowLabel();
+
+  if (CALIBRATE_MODE && (label === "overlay" || !hasTauriBackend())) {
+    return <EyeCalibrationScreen />;
+  }
 
   if (label === "overlay") {
     return (

@@ -1453,3 +1453,206 @@ body {
   font-size: 12px;
   cursor: pointer;
 }
+
+/* --- Per-monitor eye calibration (pnpm calibrate) -------------------------------
+   A dedicated full-desktop field: a calm dark backdrop so the eye is drawn only to
+   the glowing dot, the camera mirror so the operator sees what's tracked, and the
+   live eye-tracking confidence. Self-contained; not the normal HUD. */
+.eyecal {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(8, 10, 16, 0.94);
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+}
+
+.eyecal__notice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  padding: 32px;
+}
+
+.eyecal__err {
+  color: #ff6b6b;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* The look-here dot, placed in union-normalized [0,1] across all monitors. */
+.eyecal__dot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+}
+
+.eyecal__dot-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 64px;
+  height: 64px;
+  margin: -32px 0 0 -32px;
+  border-radius: 50%;
+  border: 3px solid rgba(96, 165, 250, 0.55);
+  box-shadow: 0 0 24px rgba(96, 165, 250, 0.45);
+  transition: transform 80ms linear;
+}
+
+.eyecal__dot-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.9);
+  animation: eyecal-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes eyecal-pulse {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Camera mirror with iris landmarks + confidence — bottom-center, out of the dots' way. */
+.eyecal__mirror {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+.eyecal__video {
+  display: block;
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+  transform: scaleX(-1); /* selfie mirror */
+}
+
+.eyecal__points {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 180px;
+  pointer-events: none;
+}
+
+.eyecal__conf {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eyecal__conf-num {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.eyecal__conf.is-good .eyecal__conf-num {
+  color: #4ade80;
+}
+.eyecal__conf.is-fair .eyecal__conf-num {
+  color: #fbbf24;
+}
+.eyecal__conf.is-poor .eyecal__conf-num {
+  color: #f87171;
+}
+
+.eyecal__conf-label,
+.eyecal__conf-status {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.eyecal__conf-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+}
+
+.eyecal__conf-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #f87171, #fbbf24, #4ade80);
+  transition: width 100ms linear;
+}
+
+/* Progress / instruction HUD, top-center. */
+.eyecal__hud {
+  position: absolute;
+  top: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+.eyecal__step {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.eyecal__hint {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.eyecal__done {
+  background: rgba(26, 29, 39, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px 28px;
+}
+
+.eyecal__fits {
+  list-style: none;
+  margin: 10px 0 16px;
+  padding: 0;
+  font-size: 14px;
+  text-align: left;
+}
+
+.eyecal__fits li {
+  margin: 4px 0;
+}
+
+.eyecal__btn {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
