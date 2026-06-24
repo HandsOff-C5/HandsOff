@@ -22,6 +22,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2", features = ["json"] }
 url = "2"
+# Loads apps/desktop/src-tauri/.env at startup so the local ANTHROPIC_API_KEY
+# (gitignored) reaches the CUA brain via std::env without exporting it by hand.
+dotenvy = "0.15"
 
 [features]
 # Keep parity with the Tauri template's custom-protocol toggle.

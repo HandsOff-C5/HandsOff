@@ -9,6 +9,15 @@
 mod commands;
 
 fn main() {
+    // Load local secrets (the gitignored .env) before anything reads them, so the
+    // CUA brain finds ANTHROPIC_API_KEY without the user exporting it by hand.
+    // Missing/!readable .env is fine — the env may already carry the key, and the
+    // brain command reports a clear "missing-credentials" error if it doesn't.
+    match dotenvy::dotenv() {
+        Ok(path) => eprintln!("handsoff: loaded env from {}", path.display()),
+        Err(error) => eprintln!("handsoff: no .env loaded ({error})"),
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         // Command + Option + / capture hotkey (#95) via the global-shortcut
