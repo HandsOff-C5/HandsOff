@@ -32,3 +32,25 @@ import Foundation
         try JSONDecoder().decode(BridgeFrame.self, from: Data(json.utf8))
     }
 }
+
+@Test func decodesAgentCursorFrame() throws {
+    let json = #"{"v":1,"type":"state","topic":"cursorPosition","payload":{"pointers":[{"x":1280,"y":40,"space":"virtual-desktop-px","kind":"agent","agentId":"sess-1","agentLabel":"Claude Code","state":"moving","confidence":0.9,"ts":1719240000000}]}}"#
+    guard case let .cursor(pointers) = try JSONDecoder().decode(BridgeFrame.self, from: Data(json.utf8))
+    else { Issue.record("expected a cursor frame"); return }
+    #expect(pointers.count == 1)
+    let p = pointers[0]
+    #expect(p.kind == "agent")
+    #expect(p.agentLabel == "Claude Code")
+    #expect(p.x == 1280 && p.y == 40)
+    #expect(p.state == "moving")
+}
+
+@Test func decodesUserReticlePointerWithNegativeOffset() throws {
+    // kind:"user" carries no agent fields; negative x = a monitor left of the primary display.
+    let json = #"{"v":1,"type":"state","topic":"cursorPosition","payload":{"pointers":[{"x":-200,"y":900,"space":"virtual-desktop-px","kind":"user","state":"locked","ts":1719240000001}]}}"#
+    guard case let .cursor(pointers) = try JSONDecoder().decode(BridgeFrame.self, from: Data(json.utf8))
+    else { Issue.record("expected a cursor frame"); return }
+    #expect(pointers.first?.kind == "user")
+    #expect(pointers.first?.agentId == nil)
+    #expect(pointers.first?.x == -200)
+}
