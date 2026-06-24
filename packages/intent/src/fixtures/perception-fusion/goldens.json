@@ -82,7 +82,7 @@
     }
   },
   {
-    "name": "disagreement keeps the hand surface but asks before acting",
+    "name": "disagreement keeps the hand surface ready and carries head context",
     "input": {
       "gesture": {
         "source": "gesture",
@@ -113,9 +113,8 @@
     },
     "expected": {
       "target": {
-        "confidence": 0.44,
+        "confidence": 0.88,
         "provenance": ["gesture", "head"],
-        "disagreementReason": "source_disagreement",
         "surface": {
           "id": "surface-notes",
           "title": "Daily Note",
@@ -125,7 +124,7 @@
         },
         "evidence": {
           "source": "fusion",
-          "confidence": 0.44,
+          "confidence": 0.88,
           "strategy": "wrist-ray-calibrated:good+head-face-disagree",
           "surface": {
             "id": "surface-notes",
@@ -140,7 +139,7 @@
       "pointingEvidence": [
         {
           "source": "fusion",
-          "confidence": 0.44,
+          "confidence": 0.88,
           "strategy": "wrist-ray-calibrated:good+head-face-disagree",
           "surface": {
             "id": "surface-notes",
@@ -170,8 +169,7 @@
       ]
     },
     "intent": {
-      "status": "clarification_required",
-      "reason": "low_confidence"
+      "status": "ready"
     }
   },
   {

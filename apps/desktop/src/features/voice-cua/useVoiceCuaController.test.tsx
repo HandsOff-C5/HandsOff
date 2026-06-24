@@ -274,7 +274,7 @@ describe("useVoiceCuaController", () => {
       pointingEvidence: [
         {
           source: "fusion",
-          confidence: 0.45,
+          confidence: 0.9,
           strategy: "wrist-ray-calibrated:good+head-face-disagree",
           surface: gestureEvidence.surface,
           cursor: { x: 10, y: 20 },

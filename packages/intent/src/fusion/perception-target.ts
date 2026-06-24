@@ -7,10 +7,7 @@ import type {
 
 export type PerceptionTargetProvenance = Exclude<PointingEvidence["source"], "fusion">;
 
-export type PerceptionTargetDisagreementReason =
-  | "source_disagreement"
-  | "low_confidence"
-  | "no_target";
+export type PerceptionTargetDisagreementReason = "low_confidence" | "no_target";
 
 export type PerceptionTargetCandidate = {
   confidence: number;
@@ -99,7 +96,7 @@ function fuseGestureWithHead(
     return fromEvidence(evidence, ["gesture", "head"], undefined, [gesture.surface]);
   }
 
-  const confidence = round3(gesture.confidence * 0.5);
+  const confidence = round3(gesture.confidence);
   const evidence: PointingEvidence = {
     source: "fusion",
     confidence,
@@ -107,7 +104,7 @@ function fuseGestureWithHead(
     surface: gesture.surface,
     ...(headPoint ? { cursor: headPoint } : {}),
   };
-  return fromEvidence(evidence, ["gesture", "head"], "source_disagreement", [
+  return fromEvidence(evidence, ["gesture", "head"], undefined, [
     gesture.surface,
     ...headCandidates.map((c) => c.surface),
   ]);
