@@ -409,6 +409,16 @@ struct HeadPointerMotion {
         previousVector = smoothedVector
         previousTimestamp = timestamp
 
+        // Absolute mode maps the (smoothed) offset-from-neutral DIRECTLY to a screen
+        // position — no velocity integration — so holding a pose holds the cursor.
+        // This is the mode calibration dwells on. (No neutral-drift here either.)
+        if config.movementMode == .absolute {
+            point = clampIntoRealScreen(absolutePoint(vector: smoothedVector, screens: screens), screens: screens)
+            outputPoint = point
+            state = .tracking
+            return point
+        }
+
         let velocity = pointerVelocity(rawVector: rawVector, smoothedVector: smoothedVector)
         point = CGPoint(x: point.x + velocity.x * dt, y: point.y + velocity.y * dt)
         point = clampIntoRealScreen(point, screens: screens)
@@ -435,7 +445,7 @@ struct HeadPointerMotion {
         let centerY = signal.faceCenter.y - neutral.faceCenter.y
 
         switch config.movementMode {
-        case .edge:
+        case .edge, .absolute:
             return SignalVector(
                 x: noseX * 0.75 + yaw * 0.55 + centerX * 0.25,
                 y: noseY * 0.75 + pitch * 0.55 + centerY * 0.25
@@ -447,6 +457,13 @@ struct HeadPointerMotion {
                 y: centerY / scale + noseY * 0.25
             )
         }
+    }
+
+    // Map an offset-from-neutral control vector to an ABSOLUTE screen point. Holding
+    // a pose yields a fixed point (the dwell can capture it). `speed` scales reach.
+    private func absolutePoint(vector: SignalVector, screens: [CGRect]) -> CGPoint {
+        // STUB: always centers; real mapping lands in the green commit.
+        return defaultPointerPoint(screens: screens) ?? (outputPoint ?? .zero)
     }
 
     private func smoothingAlpha(rawVector: SignalVector, dt: Double) -> Double {

@@ -9,6 +9,10 @@ import Vision
 enum MovementMode: String {
     case edge
     case relative
+    // Absolute head-pose → screen position: holding a pose holds the cursor (no
+    // velocity integration, no drift). The mode calibration needs — a fixed
+    // "look here → cursor here" mapping that dwell-to-capture can land on.
+    case absolute
 }
 
 struct HeadPointerConfig: Equatable {

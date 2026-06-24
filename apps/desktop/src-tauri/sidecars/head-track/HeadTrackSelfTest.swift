@@ -197,6 +197,42 @@ func testControlCommandParsing() {
     expect(command == .config(HeadPointerConfig(movementMode: .relative, speed: 7, distanceToEdge: 0.2)), "config command parses")
 }
 
+func testAbsolutePointerMode() {
+    let screen = CGRect(x: 0, y: 0, width: 500, height: 500)
+    var pointer = HeadPointerMotion(config: HeadPointerConfig(movementMode: .absolute, speed: 5, distanceToEdge: 0.12))
+    var clock = 0.0
+    func settle(_ signal: HeadSignal) -> CGPoint {
+        var last = CGPoint.zero
+        for _ in 0..<25 {
+            last = pointer.step(signal: signal, timestamp: clock, screens: [screen])!
+            clock += 0.033
+        }
+        return last
+    }
+
+    // First frame captures neutral; a neutral pose maps to screen center.
+    let center = pointer.step(signal: makeSignal(x: 0, y: 0), timestamp: clock, screens: [screen])!
+    clock += 0.033
+    expectClose(center.x, 250, tolerance: 1, "absolute: neutral pose maps to center x")
+    expectClose(center.y, 250, tolerance: 1, "absolute: neutral pose maps to center y")
+
+    // Looking right moves the cursor right — and HOLDING the pose holds the cursor
+    // (no velocity integration / drift, unlike rate control).
+    let right = settle(makeSignal(x: 0.15, y: 0))
+    expect(right.x > 260, "absolute: looking right moves the cursor right of center")
+    let rightHold = pointer.step(signal: makeSignal(x: 0.15, y: 0), timestamp: clock, screens: [screen])!
+    clock += 0.033
+    expectClose(rightHold.x, right.x, tolerance: 1, "absolute: holding a pose holds the cursor (no drift)")
+
+    // Looking UP reaches the upper half — the axis rate control could never reach —
+    // and the vertical range is symmetric with looking down.
+    let up = settle(makeSignal(x: 0, y: 0.15))
+    expect(up.y > 260, "absolute: looking up reaches the upper half")
+    let down = settle(makeSignal(x: 0, y: -0.15))
+    expect(down.y < 240, "absolute: looking down reaches the lower half")
+    expectClose(up.y - 250, 250 - down.y, tolerance: 5, "absolute: vertical range is symmetric")
+}
+
 func runSelfTest() {
     let primary = CGRect(x: 0, y: 0, width: 100, height: 100)
     let secondary = CGRect(x: 200, y: 0, width: 100, height: 100)
@@ -209,6 +245,7 @@ func runSelfTest() {
     testPeriodicRecenterOnlyWhileStable()
     testModelRecoversAfterNoFaceGap()
     testControlCommandParsing()
+    testAbsolutePointerMode()
 
     expectEvent(startEvent(ts: 123), kind: "start", keys: ["kind", "ts"])
     expectEvent(stopEvent(ts: 123), kind: "stop", keys: ["kind", "ts"])
