@@ -462,8 +462,17 @@ struct HeadPointerMotion {
     // Map an offset-from-neutral control vector to an ABSOLUTE screen point. Holding
     // a pose yields a fixed point (the dwell can capture it). `speed` scales reach.
     private func absolutePoint(vector: SignalVector, screens: [CGRect]) -> CGPoint {
-        // STUB: always centers; real mapping lands in the green commit.
-        return defaultPointerPoint(screens: screens) ?? (outputPoint ?? .zero)
+        guard let union = unionRect(screens), union.width > 0, union.height > 0 else {
+            return outputPoint ?? .zero
+        }
+        // `speed` (1…10) scales how far a given head turn reaches; ~speed 5 puts a
+        // comfortable turn near the screen edge. Symmetric about center on both axes.
+        let gain = config.speed * 0.45
+        let nx = clamp(0.5 + vector.x * gain, 0...1)
+        // AppKit screen space is bottom-left origin (y up) and the control vector is
+        // positive-up, so a positive vector.y maps to a higher screen y (cursor up).
+        let ny = clamp(0.5 + vector.y * gain, 0...1)
+        return CGPoint(x: union.minX + nx * union.width, y: union.minY + ny * union.height)
     }
 
     private func smoothingAlpha(rawVector: SignalVector, dt: Double) -> Double {
