@@ -71,12 +71,21 @@ export function EyeCalibrationScreen({
   const calRef = useRef<EyeCalibration | null>(null);
   const captureRef = useRef<CaptureController>(createCaptureController(CAPTURE));
 
-  // Make sure the overlay window is shown + spans the desktop before we draw dots.
+  // Show the overlay (spans the desktop) and make it interactive: calibration is a
+  // full-attention modal — clicks should land on it (e.g. "Calibrate again"), not pass
+  // through to apps behind. Restore click-through on unmount.
   useEffect(() => {
     if (!hasTauriBackend()) return;
-    void import("@tauri-apps/api/core").then(({ invoke }) =>
-      invoke("show_overlay").catch(() => undefined),
-    );
+    let invokeRef: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null =
+      null;
+    void import("@tauri-apps/api/core").then(({ invoke }) => {
+      invokeRef = invoke;
+      void invoke("show_overlay").catch(() => undefined);
+      void invoke("set_overlay_interactive", { interactive: true }).catch(() => undefined);
+    });
+    return () => {
+      void invokeRef?.("set_overlay_interactive", { interactive: false }).catch(() => undefined);
+    };
   }, []);
 
   // Load monitors once, then start a fresh calibration.
