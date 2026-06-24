@@ -1,0 +1,25 @@
+[
+  {
+    "timestampMs": 300,
+    "cues": [
+      {
+        "id": "face-low",
+        "confidence": 0.28,
+        "box": { "x": 0.39, "y": 0.2, "width": 0.24, "height": 0.32 },
+        "center": { "x": 0.51, "y": 0.36, "z": 0, "visibility": 1 },
+        "landmarks": {
+          "leftEye": [{ "x": 0.46, "y": 0.34, "z": 0, "visibility": 1 }],
+          "rightEye": [{ "x": 0.56, "y": 0.34, "z": 0, "visibility": 1 }],
+          "nose": [{ "x": 0.51, "y": 0.43, "z": 0, "visibility": 1 }]
+        },
+        "landmarkAvailability": { "leftEye": true, "rightEye": true, "nose": true },
+        "eyeMidpoint": { "x": 0.51, "y": 0.34, "z": 0, "visibility": 1 },
+        "eyeDistance": 0.1,
+        "noseOffset": { "x": 0, "y": 0.9 },
+        "yaw": null,
+        "pitch": null
+      }
+    ],
+    "candidates": []
+  }
+]
