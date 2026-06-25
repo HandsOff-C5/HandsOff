@@ -2,9 +2,9 @@
 //  RailVisibilityTests.swift
 //  DirectorSidecarTests
 //
-//  The Right-edge rail is the Home Dashboard's minimized edge echo, so it must stay hidden whenever
-//  Home is open — at launch the user sees only the dashboard. These lock that gating: agents +
-//  listening alone never show the rail while Home is open; closing Home brings it back.
+//  The Right-edge rail is the listening surface (Wispr-style): it appears only while Director is
+//  actively listening (fn held) AND the Home Dashboard is closed. Running agents alone never summon
+//  it; closing Home shows nothing until fn is held. These lock that exact gate.
 //
 
 import Testing
@@ -17,37 +17,46 @@ private func session(_ id: String, _ status: ExecutionStatus) -> SupervisionSess
 }
 
 @MainActor
-@Test func railHiddenAtLaunchEvenWithRunningAgents() {
+@Test func railHiddenAtLaunchWithRunningAgents() {
     let rail = RailModel()
     rail.setConnection(.connected)
     rail.apply(.sessions(SessionsPayload(sessions: [session("a", .running)], counts: nil)))
-    // homeIsOpen defaults to true (dashboard opens on launch) → rail stays down.
+    // homeIsOpen defaults true (dashboard opens on launch), not listening → rail down.
     #expect(!rail.isVisible)
 }
 
 @MainActor
-@Test func railShowsOnceHomeClosesWithAgents() {
+@Test func closingHomeWithAgentsButNotListeningShowsNothing() {
     let rail = RailModel()
     rail.setConnection(.connected)
     rail.apply(.sessions(SessionsPayload(sessions: [session("a", .running)], counts: nil)))
     rail.setHomeOpen(false)
-    #expect(rail.isVisible)
-    rail.setHomeOpen(true)
+    // Home closed + agents running but NOT listening → still nothing (only the menu-bar item).
     #expect(!rail.isVisible)
 }
 
 @MainActor
-@Test func listeningNeverShowsRailWhileHomeOpen() {
+@Test func railAppearsOnlyWhileListeningWithHomeClosed() {
     let rail = RailModel()
+    rail.setHomeOpen(false)
     rail.setListening(true)
-    #expect(!rail.isVisible)          // Home open
-    rail.setHomeOpen(false)
-    #expect(rail.isVisible)           // Home closed → LIVE pip rail returns
+    #expect(rail.isVisible)           // fn held, Home closed → the LIVE waveform rail
+    rail.setListening(false)
+    #expect(!rail.isVisible)          // fn released → gone
 }
 
 @MainActor
-@Test func railStaysHiddenWhenHomeClosedButNothingToShow() {
+@Test func listeningWhileHomeOpenStaysHidden() {
+    let rail = RailModel()
+    rail.setListening(true)           // homeIsOpen still true
+    #expect(!rail.isVisible)
+    rail.setHomeOpen(false)
+    #expect(rail.isVisible)           // only once Home is closed
+}
+
+@MainActor
+@Test func railHiddenWhenHomeClosedAndIdle() {
     let rail = RailModel()
     rail.setHomeOpen(false)
-    #expect(!rail.isVisible)          // no agents, not listening
+    #expect(!rail.isVisible)          // no listening, no rail
 }

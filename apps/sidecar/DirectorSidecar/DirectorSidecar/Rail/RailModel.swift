@@ -3,9 +3,10 @@
 //  DirectorSidecar
 //
 //  The Right-edge rail's state (design: Claude-Design_Director → right-edge-rail-spec.md). The rail
-//  is the always-on, minimal edge surface: a LIVE waveform pip (while listening) over a vertical
-//  column of running-agent cursor-marks, and an Open-Home affordance. Marks reuse the dashboard's
-//  SessionVM (run = gold, needs-greenlight = amber, done = green) so the rail and Home stay in sync.
+//  is the listening surface (Wispr-style): it appears only while Director is actively listening
+//  (fn held), showing a LIVE waveform pip over a vertical column of running-agent cursor-marks and
+//  an Open-Home affordance. Marks reuse the dashboard's SessionVM (run = gold, needs-greenlight =
+//  amber, done = green) so the rail and Home stay in sync — but agents alone never summon the rail.
 //
 
 import Foundation
@@ -26,9 +27,10 @@ final class RailModel {
 
     @ObservationIgnored private var connected = false
 
-    /// The rail shows whenever there are agents to summarize, or while listening — but never while
-    /// the Home Dashboard is open, since the rail is just Home's minimized stand-in.
-    var isVisible: Bool { (!marks.isEmpty || isListening) && !homeIsOpen }
+    /// The rail appears only while Director is actively listening (fn held) and the Home Dashboard
+    /// is closed. Running agents alone never summon it — closing Home shows nothing until you hold
+    /// fn. (Future activations, described later, will add more triggers to this gate.)
+    var isVisible: Bool { isListening && !homeIsOpen }
 
     func apply(_ frame: BridgeFrame) {
         switch frame {

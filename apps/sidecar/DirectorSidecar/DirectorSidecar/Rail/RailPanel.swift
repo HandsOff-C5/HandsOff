@@ -4,8 +4,8 @@
 //
 //  The Right-edge rail's host: a borderless, non-activating NSPanel pinned to the screen edge
 //  (right by default, or left per the onboarding `listenEdge` choice), vertically centered. The
-//  capsule is interactive (Open-Home button); the OS draws the rounded shadow. Shown whenever the
-//  rail has content (running agents or listening). Built AFTER launch (never in App.init).
+//  capsule is interactive (Open-Home button); the OS draws the rounded shadow. Shown only while
+//  Director is listening (fn held) and Home is closed. Built AFTER launch (never in App.init).
 //
 
 import SwiftUI
