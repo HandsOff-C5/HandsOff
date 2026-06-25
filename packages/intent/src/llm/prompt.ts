@@ -214,6 +214,7 @@ const NEXT_TOOL_CALL_SYSTEM_PROMPT =
   "Return status `act` with `tool` (one of the listed tool names) and `args` — the tool's flat " +
   "arguments (matching its parameter schema, e.g. pid, window_id, element_index, direction) " +
   "encoded as a JSON object STRING (JSON.stringify'd, not a nested object). " +
+  'Example — for launch_app, args is the string {"appName":"Safari"}, NOT the bare name Safari. ' +
   "Targeting calls (click, type_text, set_value, scroll, press_key, …) MUST cite " +
   "an `element_index` AND `window_id` from the LATEST snapshot, plus its `pid` — never a " +
   "guessed index. Combine actions across turns: to reveal hidden content, scroll or click a " +
