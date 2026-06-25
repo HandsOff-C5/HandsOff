@@ -78,7 +78,9 @@ final class OverlayController {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
-        window.level = .screenSaver
+        // .floating sits above other apps' normal windows (so the cursor/brackets draw over them)
+        // but BELOW menus + the menu-bar dropdown, so activating Director never hides the menu.
+        window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         window.ignoresMouseEvents = true
         // One passthrough window hosts both overlay layers: the gaze brackets (behind) + the

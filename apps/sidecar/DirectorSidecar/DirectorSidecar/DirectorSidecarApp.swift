@@ -34,12 +34,27 @@ struct DirectorSidecarApp: App {
         store.bridge = connection
         home.bridge = connection
         hud.connection = connection
-        // Menu Start/Stop Listening brings the three active overlays up/down (no "amListening").
+
+        // One fan-out of every decoded frame to every model.
+        let dispatch: (BridgeFrame) -> Void = { frame in
+            store.apply(frame); hud.apply(frame); micro.apply(frame)
+            overlay.apply(frame); gaze.apply(frame); home.apply(frame)
+        }
+
+        // Listening toggle (the "fn" of this build): brings the three active overlays up/down. In
+        // mock mode it (re)runs the activation loop on each ON; OFF cancels it and clears them.
+        var activation: Task<Void, Never>?
         store.onListeningChanged = { on in
             hud.setListening(on)
             micro.setListening(on)
             overlay.setActive(on)  // Director cursor hugs the system cursor while active
-            gaze.setActive(on)     // eye-gaze brackets are always shown while active
+            gaze.setActive(on)     // eye-gaze brackets shown while active
+            #if DEBUG
+            activation?.cancel()
+            if on, DevMockFleet.isEnabled {
+                activation = Task { await DevMockFleet.activationLoop(dispatch: dispatch, now: Date()) }
+            }
+            #endif
         }
 
         self.connection = connection
@@ -57,11 +72,12 @@ struct DirectorSidecarApp: App {
 
         #if DEBUG
         if DevMockFleet.isEnabled {
+            // Populate the dashboard + inspector at launch; overlays stay DOWN until you toggle
+            // Listening (⌥⌘D, or the menu) — so the menu + dashboard are never obstructed.
             Task {
-                await DevMockFleet.drive(
-                    dispatch: { frame in store.apply(frame); hud.apply(frame); micro.apply(frame); overlay.apply(frame); gaze.apply(frame); home.apply(frame) },
+                await DevMockFleet.populate(
+                    dispatch: dispatch,
                     setState: { state in store.setConnection(state); micro.setConnection(state); overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state) },
-                    activate: { on in hud.setListening(on); micro.setListening(on); overlay.setActive(on); gaze.setActive(on) },
                     select: { id in home.select(id) },
                     now: Date()
                 )
@@ -72,6 +88,11 @@ struct DirectorSidecarApp: App {
         #else
         Self.stream(connection, store, hud, micro, overlay, gaze, home)
         #endif
+    }
+
+    /// Toggle the listening overlays from anywhere in the app (⌥⌘D or the Director menu).
+    private func toggleListening() {
+        store.send(store.isListening ? .stopListening : .startListening)
     }
 
     /// Start the single socket and fan every frame/state out to all models (one shared connection).
@@ -102,6 +123,12 @@ struct DirectorSidecarApp: App {
         // G4 Home Dashboard — the product window (native SwiftUI, Option B).
         WindowGroup("Director", id: "home") {
             ThemedRoot { HomeDashboardView(model: home) }
+        }
+        .commands {
+            CommandMenu("Director") {
+                Button("Toggle Listening") { toggleListening() }
+                    .keyboardShortcut("d", modifiers: [.command, .option])
+            }
         }
 
         // G0 readiness — kept as a debug/fallback window.

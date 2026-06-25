@@ -138,23 +138,27 @@ final class HUDModel {
     // MARK: Frame reducer
 
     func apply(_ frame: BridgeFrame) {
+        // The HUD only consumes loop content once activation has begun (setListening → .listening);
+        // while hidden it ignores frames so the dashboard's data never pops the HUD open uninvited.
         switch frame {
         case let .transcript(event):
+            guard phase != .hidden else { return }
             transcript = event
-            if phase == .hidden || phase == .listening || phase == .transcribing {
-                phase = .transcribing
-            }
+            if phase == .listening || phase == .transcribing { phase = .transcribing }
         case let .referents(payload):
+            guard phase != .hidden else { return }
             referents = payload.surfaces
             selectedReferent = payload.selected
             if phase != .awaitingGreenlight, phase != .intentReady, phase != .executing {
                 phase = .referentsResolved
             }
         case let .intent(intent):
+            guard phase != .hidden else { return }
             self.intent = intent
             phase = Self.phase(for: intent)
             if intent.status != .ready { errorReason = intent.reason }
         case let .runResult(result):
+            guard phase != .hidden else { return }
             runResult = result.status
             phase = Self.phase(forRunResult: result.status)
         case let .error(reason):

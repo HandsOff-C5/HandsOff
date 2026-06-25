@@ -23,9 +23,10 @@ struct MenuContent: View {
             divider
 
             MenuActionRow(
-                icon: "waveform", title: "Start Listening", trailing: "hold fn",
-                enabled: store.canListen, active: store.isListening
-            ) { store.send(.startListening) }
+                icon: store.isListening ? "stop.fill" : "waveform",
+                title: store.isListening ? "Stop Listening" : "Start Listening",
+                trailing: "⌥⌘D", enabled: store.canListen, active: store.isListening
+            ) { store.send(store.isListening ? .stopListening : .startListening) }
 
             if !store.canListen, store.menuReadiness == .blocked {
                 Text("Microphone access needed")

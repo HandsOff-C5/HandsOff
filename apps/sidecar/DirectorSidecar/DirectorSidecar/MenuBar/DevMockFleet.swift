@@ -51,30 +51,51 @@ enum DevMockFleet {
         ], counts: nil)
     }
 
-    /// Feed canned frames to every model via `dispatch` (no socket). Drives the menu fleet AND
-    /// the HUD loop (transcript → referents → read-only intent → runResult) so both surfaces are
-    /// demoable before the engine publishes. One agent finishes live to show the count decrement.
+    static func mockIntent(destructive: Bool) -> ResolvedIntentLite {
+        if destructive {
+            return ResolvedIntentLite(
+                id: "intent-9", status: .ready, intentType: "delete", riskLevel: .destructive,
+                requiresApproval: true, summary: "Delete everything in ~/Documents", reason: nil,
+                steps: [ActionStepLite(id: "s1", label: "Empty the Documents folder", kind: "set_value", targetTitle: "Finder", proposed: "(removes 412 files)")]
+            )
+        }
+        return ResolvedIntentLite(
+            id: "intent-1", status: .ready, intentType: "summarize", riskLevel: .readOnly,
+            requiresApproval: false, summary: "Summarize GitHub issue 42", reason: nil,
+            steps: [
+                ActionStepLite(id: "s1", label: "Read the issue thread", kind: "inspect_window_state", targetTitle: "GitHub — Issue 42", proposed: nil),
+                ActionStepLite(id: "s2", label: "Type the summary into Notes", kind: "type_text", targetTitle: "Notes", proposed: "TL;DR: flaky CUA test, fix the await race."),
+            ]
+        )
+    }
+
+    /// Launch state: a connected engine, a running fleet, and a selected agent's plan — so the
+    /// Home Dashboard + Inspector are populated and fully interactive. NO overlays come up here
+    /// (those are toggle-driven), so the menu + dashboard are never obstructed.
     @MainActor
-    static func drive(
+    static func populate(
         dispatch: @escaping (BridgeFrame) -> Void,
         setState: @escaping (ConnectionState) -> Void,
-        activate: @escaping (Bool) -> Void,
         select: @escaping (String) -> Void,
         now: Date
     ) async {
         setState(.connected)
         dispatch(.state(topic: "readiness", readiness: allCapsGranted))
         dispatch(.sessions(fleet(now: now)))
+        select("session-1") // bind the Inspector to the running agent (G4b)
+        dispatch(.intent(mockIntent(destructive: isDestructive)))
+    }
 
-        activate(true) // fn-active → the three overlays come up (Director cursor + brackets)
-
-        // G7 eye-gaze brackets morph: a small control → a larger block (eased, not snapped).
+    /// Activation loop (fired when the user toggles Listening on): the eye-gaze brackets morph,
+    /// the Listening HUD fills (transcript → referents → intent), and the agent cursors travel.
+    /// Cancelled when the user toggles off. No runResult — the HUD stays up until dismissed.
+    @MainActor
+    static func activationLoop(dispatch: @escaping (BridgeFrame) -> Void, now: Date) async {
         dispatch(.gaze(GazeFocus(bounds: GazeRegion(x: 380, y: 240, w: 120, h: 36), confidence: 0.92, sizeClass: "element", ts: 100)))
         try? await Task.sleep(for: .seconds(1.4))
         dispatch(.gaze(GazeFocus(bounds: GazeRegion(x: 320, y: 300, w: 460, h: 220), confidence: 0.9, sizeClass: "block", ts: 200)))
 
-        // HUD read-only loop (G2a): a read_only intent that auto-runs (no footer).
-        try? await Task.sleep(for: .seconds(1.2))
+        try? await Task.sleep(for: .seconds(0.8))
         dispatch(.transcript(TranscriptEvent(kind: "partial", text: "summarize that issue", confidence: 0.9, latencyMs: 120, receivedAt: 0)))
         try? await Task.sleep(for: .seconds(0.8))
         dispatch(.transcript(TranscriptEvent(kind: "final", text: "summarize that issue", confidence: 0.96, latencyMs: 140, receivedAt: 0)))
@@ -83,34 +104,14 @@ enum DevMockFleet {
             selected: SelectedReferent(id: "win-1", source: "point", confidence: 0.9)
         )))
         try? await Task.sleep(for: .seconds(1))
-        select("session-1") // bind the Inspector to the running agent (G4b)
-        if isDestructive {
-            // Destructive → optional Greenlight footer renders + stays (awaitingGreenlight).
-            dispatch(.intent(ResolvedIntentLite(
-                id: "intent-9", status: .ready, intentType: "delete", riskLevel: .destructive,
-                requiresApproval: true, summary: "Delete everything in ~/Documents", reason: nil,
-                steps: [
-                    ActionStepLite(id: "s1", label: "Empty the Documents folder", kind: "set_value", targetTitle: "Finder", proposed: "(removes 412 files)"),
-                ]
-            )))
-            return
-        }
-        dispatch(.intent(ResolvedIntentLite(
-            id: "intent-1", status: .ready, intentType: "summarize", riskLevel: .readOnly,
-            requiresApproval: false, summary: "Summarize GitHub issue 42", reason: nil,
-            steps: [
-                ActionStepLite(id: "s1", label: "Read the issue thread", kind: "inspect_window_state", targetTitle: "GitHub — Issue 42", proposed: nil),
-                ActionStepLite(id: "s2", label: "Type the summary into Notes", kind: "type_text", targetTitle: "Notes", proposed: "TL;DR: flaky CUA test, fix the await race."),
-            ]
-        )))
+        dispatch(.intent(mockIntent(destructive: isDestructive)))
+        if isDestructive { return }
+
         try? await Task.sleep(for: .seconds(1))
-        // Agent-working: two agent cursors traveling (the AI-engineer Supervise fleet).
         dispatch(.cursor(pointers: [
             Pointer(x: 720, y: 360, space: "virtual-desktop-px", kind: "agent", agentId: "session-1", agentLabel: "Claude Code", state: "moving", confidence: 0.95, ts: 1000),
             Pointer(x: 1180, y: 540, space: "virtual-desktop-px", kind: "agent", agentId: "session-2", agentLabel: "Cursor", state: "locked", confidence: 0.9, ts: 1000),
         ]))
-        try? await Task.sleep(for: .seconds(2))
-        dispatch(.runResult(RunResultPayload(status: .succeeded, sessionId: "session-2")))
     }
 }
 #endif
