@@ -30,6 +30,25 @@ export type SttLatencyMs = number;
 // Epoch timestamp (ms) at which the event was emitted by the provider.
 export type SttReceivedAtMs = number;
 
+// One recognized word with its place on the wall clock. `startMs`/`endMs` are
+// EPOCH milliseconds (not relative to session start) so a downstream binder can
+// align a spoken word with head/hand pointing samples that are also epoch-ms.
+// `confidence` is in [0, 1]. A provider that does not expose per-word timing
+// (e.g. the on-device path) simply omits the parent `words` array.
+export interface TranscriptWord {
+  readonly text: string;
+  readonly startMs: number;
+  readonly endMs: number;
+  readonly confidence: SttConfidence;
+}
+
+const transcriptWordSchema = z.object({
+  text: z.string().min(1),
+  startMs: z.number().nonnegative(),
+  endMs: z.number().nonnegative(),
+  confidence: z.number().min(0).max(1),
+});
+
 // Interim transcript — still being revised. A later partial or the final may
 // replace its text. Intent parsing must not commit on a partial alone.
 export interface PartialTranscript {
@@ -38,6 +57,10 @@ export interface PartialTranscript {
   readonly confidence: SttConfidence;
   readonly latencyMs: SttLatencyMs;
   readonly receivedAt: SttReceivedAtMs;
+  // Per-word epoch-ms timeline for this turn, when the provider exposes it.
+  // Carried on partials too so endpointing can fold the timeline across the
+  // revisions of one utterance.
+  readonly words?: ReadonlyArray<TranscriptWord>;
 }
 
 const transcriptBaseSchema = z.object({
@@ -45,6 +68,9 @@ const transcriptBaseSchema = z.object({
   confidence: z.number().min(0).max(1),
   latencyMs: z.number().nonnegative(),
   receivedAt: z.number().nonnegative(),
+  // `.readonly()` so the inferred type matches the hand-written `readonly`
+  // `words` on `PartialTranscript`/`FinalTranscript` and on `IntentInput`.
+  words: z.array(transcriptWordSchema).readonly().optional(),
 });
 
 export const partialTranscriptSchema = transcriptBaseSchema.extend({
@@ -59,6 +85,9 @@ export interface FinalTranscript {
   readonly confidence: SttConfidence;
   readonly latencyMs: SttLatencyMs;
   readonly receivedAt: SttReceivedAtMs;
+  // The endpointed per-word epoch-ms timeline spanning the whole utterance, when
+  // the provider exposes word timing. Omitted on the on-device / no-words path.
+  readonly words?: ReadonlyArray<TranscriptWord>;
 }
 
 export const finalTranscriptSchema = transcriptBaseSchema.extend({

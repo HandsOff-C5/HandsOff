@@ -1,4 +1,4 @@
-import type { FinalTranscript, TranscriptEvent } from "@handsoff/contracts";
+import type { FinalTranscript, TranscriptEvent, TranscriptWord } from "@handsoff/contracts";
 
 // Endpointing: collapse one capture's transcript events into a single stable
 // final utterance (#32, AD2).
@@ -20,15 +20,25 @@ export interface UtteranceState {
   // The latest interim partial — the unfinalized tail of speech. Reset whenever
   // a final lands, since the final supersedes it.
   readonly partial: string;
+  // The latest interim partial's per-word epoch-ms timeline, when the provider
+  // exposes one. Reset alongside `partial`. Kept so the trailing partial's words
+  // join the endpointed timeline on a manual release.
+  readonly partialWords: ReadonlyArray<TranscriptWord> | undefined;
 }
 
-export const EMPTY_UTTERANCE: UtteranceState = { finals: [], partial: "" };
+export const EMPTY_UTTERANCE: UtteranceState = {
+  finals: [],
+  partial: "",
+  partialWords: undefined,
+};
 
 // Fold one provider transcript event into the in-progress utterance. Error
 // events are not transcript text and are handled by the controller, not here.
 export function foldUtterance(state: UtteranceState, event: TranscriptEvent): UtteranceState {
   if (event.kind === "final") {
-    return { finals: [...state.finals, event], partial: "" };
+    // The final carries its own (turn-complete) word timeline, so the in-flight
+    // partial words are superseded.
+    return { finals: [...state.finals, event], partial: "", partialWords: undefined };
   }
   // When the provider starts a new utterance after a natural pause, it may
   // simply emit a new partial without first emitting a final for the previous
@@ -43,10 +53,17 @@ export function foldUtterance(state: UtteranceState, event: TranscriptEvent): Ut
       confidence: 0,
       latencyMs: 0,
       receivedAt: event.receivedAt,
+      // Preserve the pre-pause partial's word timeline on the checkpoint so the
+      // utterance keeps an unbroken epoch timeline across the reset.
+      ...(state.partialWords ? { words: state.partialWords } : {}),
     };
-    return { finals: [...state.finals, syntheticFinal], partial: event.text };
+    return {
+      finals: [...state.finals, syntheticFinal],
+      partial: event.text,
+      partialWords: event.words,
+    };
   }
-  return { ...state, partial: event.text };
+  return { ...state, partial: event.text, partialWords: event.words };
 }
 
 // Returns true when `next` is a revision or extension of the same utterance as
@@ -86,6 +103,8 @@ export function endpointUtterance(
   const text = segments.join(" ").replace(/\s+/g, " ").trim();
   if (!text) return null;
 
+  const words = foldWordTimeline(state, options.includeTrailingPartial);
+
   return {
     kind: "final",
     text,
@@ -96,7 +115,35 @@ export function endpointUtterance(
     // end-to-end latency — the worst case the user actually waited on.
     latencyMs: aggregateLatency(state.finals),
     receivedAt: options.receivedAt,
+    // Only carry a timeline when at least one segment exposed word timing; the
+    // on-device / no-words path leaves `words` absent.
+    ...(words.length > 0 ? { words } : {}),
   };
+}
+
+// Merge the per-word timelines of every contributing segment into one ascending
+// epoch-ms timeline. Words are de-duplicated by `startMs` (an utterance revised
+// across partials re-reports the same word at the same epoch), so a folded
+// multi-partial utterance carries each word once.
+function foldWordTimeline(
+  state: UtteranceState,
+  includeTrailingPartial: boolean,
+): ReadonlyArray<TranscriptWord> {
+  const collected: TranscriptWord[] = [];
+  for (const final of state.finals) {
+    if (final.words) collected.push(...final.words);
+  }
+  if (includeTrailingPartial && state.partialWords) {
+    collected.push(...state.partialWords);
+  }
+
+  const byStart = new Map<number, TranscriptWord>();
+  for (const word of collected) {
+    // Last write wins, so a later (more confident) revision of the same word
+    // replaces an earlier one at the same start.
+    byStart.set(word.startMs, word);
+  }
+  return [...byStart.values()].sort((a, b) => a.startMs - b.startMs);
 }
 
 function aggregateConfidence(finals: readonly FinalTranscript[]): number {

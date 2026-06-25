@@ -65,6 +65,52 @@ describe("mapTurn", () => {
     const event = mapTurn(turn(), { sessionStartMs: 0, now: 1_700_000_000_000 });
     expect(event.latencyMs).toBe(0);
   });
+
+  it("carries words with epoch-ms start/end derived from the session start", () => {
+    // sessionStart=1000: word starts/ends shift by +1000 onto the wall clock.
+    const event = mapTurn(turn({ end_of_turn: true }), { sessionStartMs: 1000, now: 5000 });
+    expect(event.words).toEqual([
+      { text: "hello", startMs: 1000, endMs: 1400, confidence: 0.9 },
+      { text: "world", startMs: 1400, endMs: 1800, confidence: 0.7 },
+    ]);
+  });
+
+  it("carries words on partials too (so endpointing can fold across revisions)", () => {
+    const event = mapTurn(turn({ end_of_turn: false }), { sessionStartMs: 2000, now: 3000 });
+    expect(event.kind).toBe("partial");
+    expect(event.words?.map((w) => w.startMs)).toEqual([2000, 2400]);
+  });
+
+  it("emits an ascending word timeline", () => {
+    const event = mapTurn(turn({ end_of_turn: true }), { sessionStartMs: 1000, now: 5000 });
+    const starts = (event.words ?? []).map((w) => w.startMs);
+    const sorted = [...starts].sort((a, b) => a - b);
+    expect(starts).toEqual(sorted);
+  });
+
+  it("omits words when the turn has none (on-device / no-words path)", () => {
+    const event = mapTurn(turn({ words: [], end_of_turn: true }), {
+      sessionStartMs: 1000,
+      now: 2000,
+    });
+    expect(event.words).toBeUndefined();
+  });
+
+  it("omits words when no session start is known yet (Turn before Begin)", () => {
+    const event = mapTurn(turn({ end_of_turn: true }), { sessionStartMs: 0, now: 2000 });
+    expect(event.words).toBeUndefined();
+  });
+
+  it("clamps word confidence into [0, 1]", () => {
+    const event = mapTurn(
+      turn({
+        end_of_turn: true,
+        words: [{ text: "hi", start: 0, end: 100, confidence: 1.4, word_is_final: true }],
+      }),
+      { sessionStartMs: 1000, now: 2000 },
+    );
+    expect(event.words?.[0]?.confidence).toBe(1);
+  });
 });
 
 describe("parseServerMessage", () => {
