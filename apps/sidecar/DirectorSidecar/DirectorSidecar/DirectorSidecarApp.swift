@@ -35,6 +35,25 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// Owns the overlay/HUD/micro controllers. Built empty up front, but the controllers — whose
+/// always-on-top panels (`orderFrontRegardless`) + global `.mouseMoved` monitors corrupt app-wide
+/// event delivery if created during `App.init()` — are only constructed when `start()` is invoked
+/// from `applicationDidFinishLaunching`, i.e. after AppKit has finished wiring the app's event routing.
+@MainActor final class SurfaceHost {
+    private var hud: HUDPanelController?
+    private var micro: MicroHUDController?
+    private var overlay: OverlayController?
+
+    func start(hud hudModel: HUDModel, micro microModel: MicroHUDModel,
+               overlay overlayModel: OverlayModel, gaze: GazeBracketModel,
+               onOpenHome: @escaping () -> Void) {
+        guard hud == nil else { return }   // once only
+        hud = HUDPanelController(model: hudModel, edge: .trailing)
+        micro = MicroHUDController(model: microModel, fullHUD: hudModel, onOpenHome: onOpenHome)
+        overlay = OverlayController(model: overlayModel, gaze: gaze)
+    }
+}
+
 @main
 struct DirectorSidecarApp: App {
     @NSApplicationDelegateAdaptor(DirectorAppDelegate.self) private var appDelegate
@@ -45,9 +64,7 @@ struct DirectorSidecarApp: App {
     let gaze: GazeBracketModel
     let home: HomeDashboardModel
     private let connection: BridgeConnection
-    private let hudController: HUDPanelController?
-    private let microController: MicroHUDController?
-    private let overlayController: OverlayController?
+    private let surfaces: SurfaceHost
 
     init() {
         let connection = BridgeConnection()
@@ -90,12 +107,20 @@ struct DirectorSidecarApp: App {
         self.overlay = overlay
         self.gaze = gaze
         self.home = home
-        // TEMP DIAGNOSTIC: the overlay/HUD/micro panels (orderFrontRegardless, always-on-top) +
-        // their global mouse monitors are disabled to isolate whether they break event delivery.
-        // Revert after the test.
-        self.hudController = nil
-        self.microController = nil
-        self.overlayController = nil
+
+        // The overlay/HUD/micro controllers MUST NOT be created during App.init() — building their
+        // always-on-top panels + global mouse monitors before AppKit finishes wiring event routing
+        // silently kills input to the WHOLE app (Dashboard AND menu bar go dead). Defer to launch.
+        let surfaces = SurfaceHost()
+        self.surfaces = surfaces
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze,
+                               onOpenHome: { store.send(.openHome) })
+            }
+        }
 
         #if DEBUG
         if DevMockFleet.isEnabled {
