@@ -10,3 +10,6 @@ apps/desktop/src-tauri/target
 apps/desktop/src-tauri/gen
 apps/desktop/src-tauri/icons
 docs/
+
+# Xcode-managed asset catalogs (DirectorSidecar) — Xcode owns their JSON formatting
+**/*.xcassets/**
