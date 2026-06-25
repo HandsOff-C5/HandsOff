@@ -23,6 +23,11 @@ function eventSummary(event: SupervisionAuditEvent): string {
   if (event.kind === "cua_call") {
     return `CUA ${event.request.kind}: ${actionResultSummary(event.result)}`;
   }
+  if (event.kind === "tool_call") {
+    // Per-call Intention Log line (U3): tool · approval state · result.
+    const gate = event.approval === "auto" ? "auto" : event.approval;
+    return `Tool ${event.tool} [${gate}]: ${actionResultSummary(event.result)}`;
+  }
   if (event.kind === "execution_finished") {
     const detail = event.result ? `: ${actionResultSummary(event.result)}` : "";
     return `Finished: ${event.status}${detail}`;

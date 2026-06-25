@@ -35,3 +35,4 @@ HANDOFFS/
 
 # Local tooling
 .gstack/
+.worktrees

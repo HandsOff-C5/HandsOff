@@ -121,16 +121,24 @@ export function Dashboard({
       : undefined);
   const liveHeadPointing = useHeadPointing(hasTauriBackend() ? HEAD_POINTING_TAURI : undefined);
   const headPointing = injectedHeadPointing ?? liveHeadPointing;
-  const { intent, runResult, session, auditEvents, approve, reject, handleFinalTranscript } =
-    useVoiceCuaController({
-      driver,
-      headPointing,
-      now,
-      resolveIntent: intentResolver,
-      targetResolveDelayMs,
-      getGestureEvidence: () => gestureEvidence.current,
-      getGestureCursor: () => gestureCursor.current,
-    });
+  const {
+    intent,
+    runResult,
+    session,
+    auditEvents,
+    approve,
+    reject,
+    interrupt,
+    handleFinalTranscript,
+  } = useVoiceCuaController({
+    driver,
+    headPointing,
+    now,
+    resolveIntent: intentResolver,
+    targetResolveDelayMs,
+    getGestureEvidence: () => gestureEvidence.current,
+    getGestureCursor: () => gestureCursor.current,
+  });
   // Accumulate session history (last 10) so the SessionsPanel shows prior commands
   // rather than only the most-recent run.
   const [sessionHistory, setSessionHistory] = useState<readonly SupervisionSession[]>([]);
@@ -258,6 +266,7 @@ export function Dashboard({
           runResult={runResult}
           onApprove={approve}
           onReject={reject}
+          onStop={interrupt}
         />
       </div>
     </main>

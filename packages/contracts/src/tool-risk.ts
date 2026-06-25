@@ -323,23 +323,26 @@ export function toolCallRequiresApproval(tool: DriverTool, target?: ToolCallTarg
   return riskLevelRequiresApproval(riskForToolCall(tool, target));
 }
 
-export const toolCallSchema = z.object({
-  tool: driverToolSchema,
-  // Targets are validated structurally elsewhere (the driver owns the real
-  // schema); here we only need the risk-relevant fields, all optional.
-  target: z
+// The risk-relevant subset of what a tool call targets. Validated structurally
+// elsewhere (the driver owns the real per-tool schema); here we only model the
+// optional fields the gate + the per-call audit record need. `keys` is readonly
+// so the inferred type matches the canonical `ToolCallTarget` above (immutable
+// per the repo's immutability rule).
+export const toolCallTargetSchema = z.object({
+  element: z
     .object({
-      element: z
-        .object({
-          role: z.string().optional(),
-          title: z.string().optional(),
-          label: z.string().optional(),
-          value: z.string().optional(),
-        })
-        .optional(),
-      key: z.string().optional(),
-      keys: z.array(z.string()).optional(),
-      pageAction: z.string().optional(),
+      role: z.string().optional(),
+      title: z.string().optional(),
+      label: z.string().optional(),
+      value: z.string().optional(),
     })
     .optional(),
+  key: z.string().optional(),
+  keys: z.array(z.string()).readonly().optional(),
+  pageAction: z.string().optional(),
+});
+
+export const toolCallSchema = z.object({
+  tool: driverToolSchema,
+  target: toolCallTargetSchema.optional(),
 });
