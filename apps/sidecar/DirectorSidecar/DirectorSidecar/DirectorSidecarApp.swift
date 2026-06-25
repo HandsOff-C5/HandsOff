@@ -15,62 +15,70 @@ struct DirectorSidecarApp: App {
     let store: BridgeStore
     let hud: HUDModel
     let micro: MicroHUDModel
+    let overlay: OverlayModel
     private let connection: BridgeConnection
     private let hudController: HUDPanelController
     private let microController: MicroHUDController
+    private let overlayController: OverlayController
 
     init() {
         let connection = BridgeConnection()
         let store = BridgeStore()
         let hud = HUDModel()
         let micro = MicroHUDModel()
+        let overlay = OverlayModel()
         store.bridge = connection
         hud.connection = connection
         // Menu Start/Stop Listening brings the overlays up/down optimistically (no "amListening").
         store.onListeningChanged = { on in
             hud.setListening(on)
             micro.setListening(on)
+            overlay.setActive(on) // Director cursor hugs the system cursor while active
         }
 
         self.connection = connection
         self.store = store
         self.hud = hud
         self.micro = micro
+        self.overlay = overlay
         self.hudController = HUDPanelController(model: hud, edge: .trailing)
         self.microController = MicroHUDController(
             model: micro, fullHUD: hud, onOpenHome: { store.send(.openHome) }
         )
+        self.overlayController = OverlayController(model: overlay)
 
         #if DEBUG
         if DevMockFleet.isEnabled {
             Task {
                 await DevMockFleet.drive(
-                    dispatch: { frame in store.apply(frame); hud.apply(frame); micro.apply(frame) },
-                    setState: { state in store.setConnection(state); micro.setConnection(state) },
+                    dispatch: { frame in store.apply(frame); hud.apply(frame); micro.apply(frame); overlay.apply(frame) },
+                    setState: { state in store.setConnection(state); micro.setConnection(state); overlay.setConnection(state) },
                     now: Date()
                 )
             }
         } else {
-            Self.stream(connection, store, hud, micro)
+            Self.stream(connection, store, hud, micro, overlay)
         }
         #else
-        Self.stream(connection, store, hud, micro)
+        Self.stream(connection, store, hud, micro, overlay)
         #endif
     }
 
     /// Start the single socket and fan every frame/state out to all models (one shared connection).
-    private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel, _ micro: MicroHUDModel) {
+    private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel, _ micro: MicroHUDModel, _ overlay: OverlayModel) {
         Task {
             await connection.start(
                 onFrame: { frame in
                     await store.apply(frame)
                     await hud.apply(frame)
                     await micro.apply(frame)
+                    await overlay.apply(frame)
                 },
                 onState: { state in
                     await store.setConnection(state)
                     await hud.setConnection(state)
                     await micro.setConnection(state)
+                    await overlay.setConnection(state)
                 }
             )
         }

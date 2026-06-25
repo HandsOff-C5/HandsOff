@@ -78,6 +78,12 @@ enum DevMockFleet {
             return
         }
         dispatch(.intent(ResolvedIntentLite(id: "intent-1", status: .ready, intentType: "summarize", riskLevel: .readOnly, requiresApproval: false, summary: "Summarize GitHub issue 42", reason: nil)))
+        try? await Task.sleep(for: .seconds(1))
+        // Agent-working: two agent cursors traveling (the AI-engineer Supervise fleet).
+        dispatch(.cursor(pointers: [
+            Pointer(x: 720, y: 360, space: "virtual-desktop-px", kind: "agent", agentId: "session-1", agentLabel: "Claude Code", state: "moving", confidence: 0.95, ts: 1000),
+            Pointer(x: 1180, y: 540, space: "virtual-desktop-px", kind: "agent", agentId: "session-2", agentLabel: "Cursor", state: "locked", confidence: 0.9, ts: 1000),
+        ]))
         try? await Task.sleep(for: .seconds(2))
         dispatch(.runResult(RunResultPayload(status: .succeeded, sessionId: "session-2")))
     }
