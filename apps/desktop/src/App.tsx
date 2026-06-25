@@ -18,7 +18,7 @@ function currentWindowLabel(): string {
   }
 }
 
-// Shell entry. The dashboard is the mission-control window (issue #15); the
+// Shell entry. The dashboard is the home-dashboard window (issue #15); the
 // overlay window draws the live pointer on the real desktop (#25 cursor seam).
 export function App() {
   return currentWindowLabel() === "overlay" ? <PointingOverlay /> : <Dashboard />;

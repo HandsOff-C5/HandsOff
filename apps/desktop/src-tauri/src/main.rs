@@ -1,6 +1,6 @@
 // HandsOff desktop shell entry point.
 //
-// Opens the mission-control dashboard window and wires the commands the frontend
+// Opens the home-dashboard dashboard window and wires the commands the frontend
 // invokes. Readiness reports host capability state; storage keeps non-secret
 // local preferences for settings. CUA exposes a typed unavailable state until
 // the live driver transport lands.
@@ -15,6 +15,8 @@ fn main() {
         .manage(commands::gesture_overlay::GestureOverlayState::default())
         .manage(commands::stt_ondevice::OnDeviceSttState::default())
         .setup(|app| {
+            // Director engine bridge — loopback WS server for the native Swift sidecar (G0).
+            tauri::async_runtime::spawn(commands::bridge::serve());
             // Capture trigger (#95): the bare `fn` (Globe) key, observed via a
             // listen-only CGEventTap. press-hold -> start/stop, double-tap ->
             // toggle. install() spawns its own thread and surfaces failures via

@@ -1,4 +1,5 @@
 // Command modules wired into the Tauri builder.
+pub mod bridge;
 pub mod cua;
 pub mod gesture_overlay;
 pub mod head_track;
