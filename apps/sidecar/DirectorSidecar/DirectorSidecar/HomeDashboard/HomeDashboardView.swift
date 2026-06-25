@@ -41,6 +41,10 @@ struct HomeDashboardView: View {
         } detail: {
             detail
                 .toolbar { toolbar }
+                .inspector(isPresented: .constant(model.selectedSessionId != nil)) {
+                    InspectorView(model: model)
+                        .inspectorColumnWidth(min: 280, ideal: 300, max: 360)
+                }
         }
     }
 

@@ -47,16 +47,44 @@ final class HomeDashboardModel {
     enum LoadState: Equatable, Sendable { case connecting, loaded, empty, error, denied }
     enum Filter: String, CaseIterable, Sendable { case all, running, needsYou, done }
 
+    /// Inspector body state (the trust anchor), bound to the selected session's intent.
+    enum InspectorState: Equatable, Sendable {
+        case empty
+        case ready(ResolvedIntentLite)
+        case blocked(String)
+        case clarification(String)
+    }
+
     private(set) var sessions: [SessionVM] = []
     private(set) var counts = SessionCounts(running: 0, needsGreenlight: 0, done: 0)
     private(set) var readiness: ReadinessLevel = .attention
     private(set) var loadState: LoadState = .connecting
+    private(set) var selectedIntent: ResolvedIntentLite?
+    private(set) var selectedRunResult: ExecutionStatus?
     var filter: Filter = .all
     var selectedSessionId: String?
 
+    /// The shared bridge connection (set by the app) — for selectSession / greenlight / reject.
+    @ObservationIgnored var bridge: BridgeConnection?
     @ObservationIgnored private var connected = false
 
     var filteredSessions: [SessionVM] { Self.filtered(sessions, filter) }
+
+    /// Inspector body — empty until a session is selected and its intent arrives.
+    var inspectorState: InspectorState {
+        guard selectedSessionId != nil, let intent = selectedIntent else { return .empty }
+        switch intent.status {
+        case .ready: return .ready(intent)
+        case .blocked: return .blocked(intent.reason ?? "Blocked")
+        case .clarificationRequired: return .clarification(intent.reason ?? "Needs clarification")
+        }
+    }
+
+    /// Optional Greenlight/Reject footer — destructive-only AND not yet executed (revised policy).
+    var showInspectorFooter: Bool {
+        guard case let .ready(intent) = inspectorState else { return false }
+        return intent.riskLevel == .destructive && selectedRunResult == nil
+    }
 
     // MARK: frame application
 
@@ -68,11 +96,14 @@ final class HomeDashboardModel {
             loadState = Self.loadState(sessionCount: sessions.count, connected: connected)
         case let .runResult(result):
             applyRunResult(result)
+        case let .intent(intent):
+            selectedIntent = intent
+            selectedRunResult = nil
         case let .state(topic, readiness):
             if topic == "readiness", let readiness {
                 self.readiness = BridgeStore.readinessLevel(for: readiness.capabilities)
             }
-        case .cursor, .transcript, .referents, .intent, .gaze, .error, .unknown:
+        case .cursor, .transcript, .referents, .gaze, .error, .unknown:
             break
         }
     }
@@ -82,9 +113,36 @@ final class HomeDashboardModel {
         loadState = Self.loadState(sessionCount: sessions.count, connected: connected)
     }
 
-    func select(_ id: String?) { selectedSessionId = id }
+    /// Select a session → bind the Inspector and ask the engine to (re)publish its intent.
+    func select(_ id: String?) {
+        selectedSessionId = id
+        selectedIntent = nil
+        selectedRunResult = nil
+        if let id { send(.selectSession(id)) }
+    }
+
+    func greenlight(now: Date = Date()) {
+        guard case let .ready(intent) = inspectorState, intent.riskLevel == .destructive,
+              let actionId = intent.id else { return }
+        send(.greenlight(actionId: actionId, decidedAt: Self.iso(now)))
+    }
+
+    func reject(now: Date = Date()) {
+        if case let .ready(intent) = inspectorState, let actionId = intent.id {
+            send(.reject(actionId: actionId, decidedAt: Self.iso(now)))
+        }
+        selectedRunResult = .rejected
+    }
+
+    private func send(_ command: Command) {
+        guard let bridge else { return }
+        Task { await bridge.send(command) }
+    }
+
+    private nonisolated static func iso(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
 
     private func applyRunResult(_ result: RunResultPayload) {
+        if result.sessionId == selectedSessionId { selectedRunResult = result.status }
         guard let id = result.sessionId, let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         let existing = sessions[index]
         sessions[index] = SessionVM(id: existing.id, title: existing.title, agent: existing.agent,
