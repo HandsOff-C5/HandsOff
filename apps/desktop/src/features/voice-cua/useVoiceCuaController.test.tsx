@@ -12,7 +12,8 @@ import { fakeCuaWindowState } from "@handsoff/testkit";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { createIntentWorkerResolver, useVoiceCuaController } from "./useVoiceCuaController";
+import { createIntentWorkerResolver } from "./intentResolver";
+import { useVoiceCuaController } from "./useVoiceCuaController";
 import type { CaptureTrace } from "../capture-trace";
 import type { HeadPointingSnapshot } from "../head-pointing/useHeadPointing";
 

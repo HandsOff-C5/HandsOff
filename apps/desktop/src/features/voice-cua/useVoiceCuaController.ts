@@ -1,30 +1,30 @@
-import { gateToolCall, type PlanRunResult } from "@handsoff/actions";
+import {
+  driverCallForStep,
+  driverToolForStep,
+  firstBlockedStep,
+  planToolRisk,
+  toolCallTargetForStep,
+  toolNameForStep,
+  withEffectiveRisk,
+  type PlanRunResult,
+} from "@handsoff/actions";
 import {
   riskForToolName,
   riskLevelRequiresApproval,
-  safeParseDriverTool,
   type ActionStep,
   type CuaActionResult,
-  type DriverTool,
   type DriverToolDefinition,
   type FinalTranscript,
   type GoalLoopObservation,
   type IntentInput,
   type PointingEvidence,
   type ResolvedIntent,
-  type RiskLevel,
   type SelectedReferent,
   type SupervisionAuditEvent,
   type SurfaceSnapshot,
-  type ToolCallTarget,
 } from "@handsoff/contracts";
 import { createToolCatalog, cuaResultToActionResult, type CuaDriver } from "@handsoff/cua";
-import {
-  bindTemporalDeixis,
-  resolveNextToolCall,
-  type AttentionWindow,
-  type ResolveNextToolCallOptions,
-} from "@handsoff/intent";
+import { resolveNextToolCall, type AttentionWindow } from "@handsoff/intent";
 import {
   createActionAuditStore,
   createSupervisionSessionStore,
@@ -36,6 +36,8 @@ import { useRef, useState } from "react";
 import { makeApprovalDecision } from "../plan-preview/usePlanApproval";
 import type { HeadPointingSnapshot } from "../head-pointing/useHeadPointing";
 import type { CaptureTrace } from "../capture-trace";
+import { buildPointingEvidence, type PointingContext } from "./buildPointingEvidence";
+import type { NextToolCallResolver } from "./intentResolver";
 
 const ACTIVE_WINDOW_SURFACE: SurfaceSnapshot = {
   id: "active-window",
@@ -76,165 +78,6 @@ function blockedIntent(
   };
 }
 
-// Driver tools that click an element (and so get commit-pattern escalation).
-const CLICK_TOOLS: ReadonlySet<string> = new Set(["click", "right_click", "double_click"]);
-
-// The driver tool each ActionStep dispatches as. For the full-surface
-// `tool_call` step (U3b) this is the tool the model chose verbatim; the legacy
-// 6 kinds map to their driver tool so the rule resolver + tests still gate on
-// the same vocabulary. Used to key per-call risk (U2).
-function driverToolForStep(step: ActionStep): DriverTool {
-  switch (step.kind) {
-    case "tool_call": {
-      const parsed = safeParseDriverTool(step.tool);
-      // An unknown tool name can't be a DriverTool; gate it as the most
-      // dangerous via riskForToolName at the call site. Here we surface the
-      // closest safe placeholder for the (string) tool name.
-      return parsed.success ? parsed.data : "get_window_state";
-    }
-    case "click_element":
-      return "click";
-    case "type_text":
-      return "type_text";
-    case "set_value":
-      return "set_value";
-    case "launch_app":
-      return "launch_app";
-    // inspect_window_state / capture_screenshot are read-only perception.
-    default:
-      return "get_window_state";
-  }
-}
-
-// The raw tool name a step calls (string — may be outside DRIVER_TOOLS for a
-// hallucinated `tool_call`, which `riskForToolName` then gates as mutating).
-function toolNameForStep(step: ActionStep): string {
-  return step.kind === "tool_call" ? step.tool : driverToolForStep(step);
-}
-
-// The element index a step targets, from its typed target (legacy kinds) or its
-// raw driver args (`element_index`, full-surface tool_call).
-function elementIndexForStep(step: ActionStep): number | undefined {
-  if (step.kind === "tool_call") {
-    const index = step.args["element_index"];
-    return typeof index === "number" ? index : undefined;
-  }
-  if ("target" in step) return step.target.elementIndex;
-  return undefined;
-}
-
-// Build the risk-relevant target for a click-ish step from the latest snapshot:
-// look the element up by index in the perceived AX elements so `riskForToolCall`
-// can escalate a *commit* click (Send/Delete/…) to mutating while leaving plain
-// navigation clicks free. Only clicks get a target (keys/scroll/etc. carry their
-// own risk); absent element metadata leaves the gate to its safe default.
-function toolCallTargetForStep(
-  step: ActionStep,
-  observation: GoalLoopObservation | undefined,
-): ToolCallTarget | undefined {
-  const tool = toolNameForStep(step);
-  if (!CLICK_TOOLS.has(tool)) return undefined;
-  const index = elementIndexForStep(step);
-  if (index === undefined) return undefined;
-  const element = observation?.state?.elements.find((candidate) => candidate.index === index);
-  if (!element) return undefined;
-  return {
-    element: {
-      ...(element.role !== undefined && { role: element.role }),
-      ...(element.label !== undefined && { title: element.label, label: element.label }),
-      ...(element.value !== undefined && { value: element.value }),
-    },
-  };
-}
-
-// Map any ActionStep to the (tool, args) the generic driver passthrough
-// (`driver.call`, U1) executes. The full-surface `tool_call` passes its args
-// straight through (the driver's own flat snake_case shape). The legacy 6 kinds
-// are translated to flat args from their ActionTarget's surface pid/windowId so
-// the rule-resolver path also flows through the single passthrough executor.
-function driverCallForStep(step: ActionStep): { tool: string; args: Record<string, unknown> } {
-  if (step.kind === "tool_call") {
-    return { tool: step.tool, args: step.args };
-  }
-  if (step.kind === "launch_app") {
-    return {
-      tool: "launch_app",
-      args: { app_name: step.appName, ...(step.bundleId ? { bundle_id: step.bundleId } : {}) },
-    };
-  }
-  const surface = step.target.surface;
-  const base: Record<string, unknown> = {
-    ...(surface.pid !== undefined ? { pid: surface.pid } : {}),
-    ...(surface.windowId !== undefined ? { window_id: surface.windowId } : {}),
-    ...(step.target.elementIndex !== undefined ? { element_index: step.target.elementIndex } : {}),
-  };
-  switch (step.kind) {
-    case "click_element":
-      return { tool: "click", args: base };
-    case "type_text":
-      return { tool: "type_text", args: { ...base, text: step.text } };
-    case "set_value":
-      return { tool: "set_value", args: { ...base, value: step.value } };
-    // inspect_window_state / capture_screenshot → a read-only window probe.
-    default:
-      return { tool: "get_window_state", args: base };
-  }
-}
-
-// The effective risk of a whole one-action-per-tick plan. Risk is the MAX over:
-//   - each step's tool-derived risk (U2 `riskForToolCall`, with click element
-//     semantics escalating a commit click — Send/Delete/… — to mutating), and
-//   - the plan's declared `risk_level`.
-// Taking the max means the gate can ESCALATE but the model can never DOWNGRADE
-// below what its own tool risk implies (KD3's anti-bypass rule): a model that
-// labels a Send click read_only is still gated, while a model that knows a step
-// is mutating keeps it gated even when the element label looks benign. The
-// per-step max also gates a tick that mixes a free launch with a commit click.
-function planToolRisk(
-  plan: Extract<ResolvedIntent, { status: "ready" }>["action_plan"],
-  observation: GoalLoopObservation | undefined,
-): RiskLevel {
-  return plan.action_plan.reduce<RiskLevel>((max, step) => {
-    // riskForToolName (not riskForToolCall) so a hallucinated full-surface tool
-    // name is gated as mutating rather than throwing — the safe default.
-    const risk = riskForToolName(toolNameForStep(step), toolCallTargetForStep(step, observation));
-    return maxRisk(max, risk);
-  }, plan.risk_level);
-}
-
-const RISK_RANK: Record<RiskLevel, number> = {
-  read_only: 0,
-  reversible: 1,
-  mutating: 2,
-  destructive_external: 3,
-};
-
-function maxRisk(a: RiskLevel, b: RiskLevel): RiskLevel {
-  return RISK_RANK[b] > RISK_RANK[a] ? b : a;
-}
-
-// Stamp the gate's effective (possibly escalated) risk onto the ready intent so
-// the displayed plan + the approval surface agree with the loop's pause: a
-// model-declared reversible click on a commit control becomes a mutating plan
-// that visibly requires approval. Immutable — returns a new intent.
-function withEffectiveRisk(
-  intent: Extract<ResolvedIntent, { status: "ready" }>,
-  risk: RiskLevel,
-): Extract<ResolvedIntent, { status: "ready" }> {
-  if (risk === intent.risk_level) return intent;
-  const requires = riskLevelRequiresApproval(risk);
-  return {
-    ...intent,
-    risk_level: risk,
-    requires_approval: requires,
-    action_plan: {
-      ...intent.action_plan,
-      risk_level: risk,
-      requires_approval: requires,
-    },
-  };
-}
-
 type GoalRunState = {
   sessionId: string;
   baseInput: IntentInput;
@@ -247,35 +90,6 @@ type GoalRunState = {
   toolCallBudget: number;
   referent: SelectedReferent | null;
 };
-
-export type IntentResolveInvoke = <T>(
-  command: string,
-  args?: Record<string, unknown>,
-) => Promise<T>;
-
-// The autonomous loop's resolver signature: emit the next driver tool call (as a
-// ResolvedIntent carrying a tool_call step) toward the goal given the live state.
-// `options.tools` is the driver catalog the controller loads from U1.
-export type NextToolCallResolver = (
-  input: IntentInput,
-  options: ResolveNextToolCallOptions,
-) => Promise<ResolvedIntent>;
-
-export function createIntentWorkerResolver(invoke: IntentResolveInvoke): NextToolCallResolver {
-  return (input, options) => {
-    const client: NonNullable<ResolveNextToolCallOptions["client"]> = {
-      chat: {
-        completions: {
-          async parse(request) {
-            const { model, messages } = request as { model?: unknown; messages?: unknown };
-            return invoke("intent_resolve", { request: { model, messages } });
-          },
-        },
-      },
-    };
-    return resolveNextToolCall(input, { ...options, client });
-  };
-}
 
 export function useVoiceCuaController(args: {
   driver: CuaDriver;
@@ -343,31 +157,16 @@ export function useVoiceCuaController(args: {
         };
   }
 
-  // Run the temporal binder (U6) over the just-closed capture trace + the final
-  // transcript's per-word timeline, returning the bound deictic referents as
-  // `fusion` PointingEvidence. Returns [] when there is no trace, no per-word
-  // timings, or no pointable windows to resolve a surface against — so the
-  // snapshot path stays the only signal (fallback). The words on the trace (sealed
-  // by the recorder at finalize) and on the final transcript are the same U4
-  // timeline; prefer the transcript's so a binder run never depends on recorder
-  // timing, falling back to the trace's words when the transcript omits them.
-  function bindUtterance(finalTranscript: FinalTranscript): PointingEvidence[] {
-    const trace = args.getCaptureTrace?.() ?? null;
-    if (!trace) return [];
-    const words = finalTranscript.words ?? trace.words;
-    if (!words || words.length === 0) return [];
-    const windows = args.getPointableWindows?.() ?? [];
-    if (windows.length === 0) return [];
-
-    const bindings = bindTemporalDeixis({
-      words,
-      headTrace: trace.headTrace,
-      handTrace: trace.handTrace,
-      windows,
-    });
-    return bindings
-      .map((binding) => binding.evidence)
-      .filter((evidence): evidence is PointingEvidence => evidence !== null);
+  // Gather the live pointing signals once (gesture lock, gesture cursor, the
+  // just-closed capture trace, the pointable-window layout) for the pure fusion
+  // builder.
+  function pointingContext(): PointingContext {
+    return {
+      gestureEvidence: args.getGestureEvidence?.() ?? null,
+      gestureCursor: args.getGestureCursor?.() ?? null,
+      captureTrace: args.getCaptureTrace?.() ?? null,
+      pointableWindows: args.getPointableWindows?.() ?? [],
+    };
   }
 
   async function createIntent(finalTranscript: FinalTranscript) {
@@ -375,101 +174,23 @@ export function useVoiceCuaController(args: {
     await wait(args.targetResolveDelayMs ?? DEFAULT_TARGET_RESOLVE_DELAY_MS);
     const createdAt = timestamp();
     const started = sessions.current.start(createdAt);
-    const gesture = args.getGestureEvidence?.() ?? null;
-    const gestureCursor = args.getGestureCursor?.() ?? null;
-    const headPointing = headPointingRef.current;
-    const headCandidates = headPointing?.candidates ?? [];
 
-    // Combinative pointing evidence: combine all available signals rather than
-    // using a priority hierarchy. Gesture referent, gesture cursor position,
-    // and face tracker evidence are all included when available.
-    const pointingEvidence: PointingEvidence[] = [];
-
-    // Locked referent from gesture (highest signal quality — has a specific surface).
-    if (gesture) {
-      pointingEvidence.push(gesture);
-    }
-    // Gesture cursor position (even without a locked referent). Added when no
-    // locked gesture referent already carries a cursor.
-    if (gestureCursor && (!gesture || !gesture.cursor)) {
-      pointingEvidence.push({
-        source: "gesture",
-        confidence: gesture ? gesture.confidence : 0.3,
-        strategy: "wrist-ray-position",
-        cursor: gestureCursor,
-      });
-    }
-    // Face tracker cursor + head attention candidates.
-    if (headPointing && headPointing.point) {
-      pointingEvidence.push({
-        source: "head",
-        confidence: 0.5,
-        strategy: "face-tracker-position",
-        cursor: headPointing.point,
-      });
-    }
-    for (const candidate of headCandidates) {
-      pointingEvidence.push({
-        source: "head",
-        confidence: candidate.score,
-        strategy: "head-neighborhood",
-        surface: candidate.surface,
-        ...(headPointing?.point && { cursor: headPointing.point }),
-      });
-    }
-    // When head is present but no candidates came in yet, include a low-confidence
-    // head entry so the intent engine still sees the face tracker signal.
-    if (headPointing && headCandidates.length === 0) {
-      pointingEvidence.push({
-        source: "head",
-        confidence: 0,
-        strategy: "head-neighborhood-empty",
-        ...(headPointing.point && { cursor: headPointing.point }),
-      });
-    }
-
-    // Timestamped multi-target binding (U7): when the recorder handed back a trace
-    // for this utterance AND the transcript carries per-word timings, align each
-    // deictic word ("this"/"that") with the surface that was pointed at WHILE it
-    // was spoken (U6), and prepend those bound referents as `fusion` evidence.
-    // They lead the array so their surfaces win the dedup below (a temporally
-    // bound deictic is the strongest target signal), and each distinct bound
-    // surface becomes its own candidate — so "type X in this and Y in that"
-    // reaches the loop with BOTH targets. When there is no trace/words (a
-    // non-capture utterance) this contributes nothing and the single
-    // end-of-speech snapshot above stays the sole signal — fallback preserved.
-    const boundEvidence = bindUtterance(finalTranscript);
-    if (boundEvidence.length > 0) {
-      pointingEvidence.unshift(...boundEvidence);
-    }
-
-    // Fallback to active window only when no gesture, head, or bound evidence is
-    // available.
-    if (pointingEvidence.length === 0) {
-      pointingEvidence.push({
-        source: "cursor",
-        confidence: 1,
-        strategy: "active-window-current-cursor",
-        surface: await resolveActiveWindowSurface(),
-      });
-    }
-
-    // Deduplicated surface candidates from all evidence.
-    const seenIds = new Set<string>();
-    const surfaceCandidates = pointingEvidence
-      .map((e) => e.surface)
-      .filter((s): s is NonNullable<typeof s> => {
-        if (!s) return false;
-        if (seenIds.has(s.id)) return false;
-        seenIds.add(s.id);
-        return true;
-      });
+    // Fuse every available pointing signal into the evidence list + deduplicated
+    // surface candidates (combinative, U7 multi-target binding included). Pure
+    // builder — the active-window fallback is the only async step, run only when
+    // no gesture/head/bound evidence exists.
+    const { pointingEvidence, surfaceCandidates } = await buildPointingEvidence(
+      finalTranscript,
+      pointingContext(),
+      headPointingRef.current,
+      resolveActiveWindowSurface,
+    );
 
     const input: IntentInput = {
       sessionId: started.id,
       speech: { finalTranscript },
-      pointingEvidence,
-      surfaceCandidates,
+      pointingEvidence: [...pointingEvidence],
+      surfaceCandidates: [...surfaceCandidates],
     };
     const run: GoalRunState = {
       sessionId: started.id,
@@ -847,25 +568,4 @@ export function useVoiceCuaController(args: {
     interrupt,
     handleFinalTranscript: (finalTranscript: FinalTranscript) => void createIntent(finalTranscript),
   };
-}
-
-// Run every step through the U2 per-call gate; return the first blocked result
-// if any step needs an approval it doesn't have, else null. This is where the
-// autonomous loop wires gateToolCall: the gate is derived from the tool + target
-// (driverToolForStep already maps a hallucinated full-surface tool to the safe
-// get_window_state placeholder; such a step is blocked upstream by the resolver),
-// never the model's claim, so a commit step (Send/Delete/…) blocks when
-// unapproved.
-function firstBlockedStep(
-  steps: readonly ActionStep[],
-  observation: GoalLoopObservation | undefined,
-  approved: boolean,
-): Extract<CuaActionResult, { status: "blocked" }> | null {
-  for (const step of steps) {
-    const tool = driverToolForStep(step);
-    const target = toolCallTargetForStep(step, observation);
-    const gate = gateToolCall({ tool, ...(target ? { target } : {}), approved });
-    if (!gate.allowed) return gate.result;
-  }
-  return null;
 }

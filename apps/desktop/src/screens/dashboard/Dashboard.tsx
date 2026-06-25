@@ -38,10 +38,8 @@ import {
 import { useCaptureHotkey } from "../../features/head-pointing/useCaptureHotkey";
 import { useLocalConfig } from "../../features/settings/useLocalConfig";
 import { TranscriptPanel } from "../../features/transcript/TranscriptPanel";
-import {
-  createIntentWorkerResolver,
-  useVoiceCuaController,
-} from "../../features/voice-cua/useVoiceCuaController";
+import { createIntentWorkerResolver } from "../../features/voice-cua/intentResolver";
+import { useVoiceCuaController } from "../../features/voice-cua/useVoiceCuaController";
 import type { AttentionWindow, ResolveIntentOptions } from "@handsoff/intent";
 import type { IntentInput, ResolvedIntent } from "@handsoff/contracts";
 import type { SupervisionSession } from "@handsoff/supervision";
