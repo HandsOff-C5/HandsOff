@@ -45,9 +45,9 @@ struct DirectorSidecarApp: App {
     let gaze: GazeBracketModel
     let home: HomeDashboardModel
     private let connection: BridgeConnection
-    private let hudController: HUDPanelController
-    private let microController: MicroHUDController
-    private let overlayController: OverlayController
+    private let hudController: HUDPanelController?
+    private let microController: MicroHUDController?
+    private let overlayController: OverlayController?
 
     init() {
         let connection = BridgeConnection()
@@ -90,11 +90,12 @@ struct DirectorSidecarApp: App {
         self.overlay = overlay
         self.gaze = gaze
         self.home = home
-        self.hudController = HUDPanelController(model: hud, edge: .trailing)
-        self.microController = MicroHUDController(
-            model: micro, fullHUD: hud, onOpenHome: { store.send(.openHome) }
-        )
-        self.overlayController = OverlayController(model: overlay, gaze: gaze)
+        // TEMP DIAGNOSTIC: the overlay/HUD/micro panels (orderFrontRegardless, always-on-top) +
+        // their global mouse monitors are disabled to isolate whether they break event delivery.
+        // Revert after the test.
+        self.hudController = nil
+        self.microController = nil
+        self.overlayController = nil
 
         #if DEBUG
         if DevMockFleet.isEnabled {
