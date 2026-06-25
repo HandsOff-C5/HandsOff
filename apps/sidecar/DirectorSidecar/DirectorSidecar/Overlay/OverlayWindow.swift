@@ -56,7 +56,9 @@ final class OverlayController {
 
     private func startMouseMonitor() {
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
-            Task { @MainActor in self?.model.setSystemCursor(NSEvent.mouseLocation) }
+            // Global monitors fire on the MAIN thread — update directly. Spawning a Task per
+            // mouse-move event floods the main actor (hundreds/sec) and freezes the whole UI.
+            MainActor.assumeIsolated { self?.model.setSystemCursor(NSEvent.mouseLocation) }
         }
     }
 

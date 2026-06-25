@@ -78,7 +78,9 @@ final class MicroHUDController {
 
     private func startEdgeMonitor() {
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
-            Task { @MainActor in
+            // Update directly on the main thread — a Task per mouse-move event floods the main
+            // actor and freezes the UI (the cause of the unclickable dashboard + beachball).
+            MainActor.assumeIsolated {
                 guard let self, let screen = NSScreen.main else { return }
                 let at = MicroHUDModel.isAtEdge(
                     cursor: NSEvent.mouseLocation, screen: screen.frame, edge: self.model.listenEdge
