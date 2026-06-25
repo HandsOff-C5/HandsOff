@@ -255,6 +255,17 @@ describe("createCaptureController", () => {
     expect(h.controller.status).toBe("idle");
   });
 
+  it("preserves speech from before a natural pause when provider resets partials without a mid-pause final", async () => {
+    const h = harness();
+    await h.controller.press();
+    h.latest().emitPartial("open slack in the comet browser");
+    h.latest().emitPartial("and send yes to opencode");
+    await h.controller.release();
+
+    expect(h.utterances).toHaveLength(1);
+    expect(h.utterances[0]?.text).toBe("open slack in the comet browser and send yes to opencode");
+  });
+
   it("walks the documented status transitions for a normal capture", async () => {
     const now = vi.fn(() => 2000);
     const h = harness({ now });

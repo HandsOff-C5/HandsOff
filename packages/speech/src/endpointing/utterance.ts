@@ -30,7 +30,35 @@ export function foldUtterance(state: UtteranceState, event: TranscriptEvent): Ut
   if (event.kind === "final") {
     return { finals: [...state.finals, event], partial: "" };
   }
+  // When the provider starts a new utterance after a natural pause, it may
+  // simply emit a new partial without first emitting a final for the previous
+  // speech. Detect this reset by comparing the leading prefix of the incoming
+  // partial against the current one: if they don't share a common prefix, the
+  // provider has moved to a completely new utterance and the current partial
+  // must be checkpointed as a synthetic final before being replaced.
+  if (!isRevisionOfSameUtterance(state.partial, event.text)) {
+    const syntheticFinal: FinalTranscript = {
+      kind: "final",
+      text: state.partial.trim(),
+      confidence: 0,
+      latencyMs: 0,
+      receivedAt: event.receivedAt,
+    };
+    return { finals: [...state.finals, syntheticFinal], partial: event.text };
+  }
   return { ...state, partial: event.text };
+}
+
+// Returns true when `next` is a revision or extension of the same utterance as
+// `prev` (they share a common leading prefix). Returns false when the provider
+// appears to have reset to a brand-new utterance.
+function isRevisionOfSameUtterance(prev: string, next: string): boolean {
+  const a = prev.trim().toLowerCase();
+  const b = next.trim().toLowerCase();
+  // Empty strings on either side mean there is nothing to checkpoint.
+  if (a.length === 0 || b.length === 0) return true;
+  const n = Math.min(a.length, b.length, 20);
+  return a.slice(0, n) === b.slice(0, n);
 }
 
 export interface EndpointOptions {

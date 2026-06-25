@@ -30,7 +30,9 @@ describe("SessionsPanel", () => {
     );
 
     expect(
-      screen.getByText("Finished: blocked: No accessible CUA window was found"),
+      screen.getByText(
+        "Finished: blocked: The selected window is not reachable right now. Bring it back on screen or switch to its Space, then point and speak again.",
+      ),
     ).toBeInTheDocument();
   });
 });

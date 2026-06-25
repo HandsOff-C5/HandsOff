@@ -5,6 +5,18 @@ export {
   type RawCategory,
 } from "./perception/parse";
 export {
+  parseHeadFaceFrame,
+  type HeadFaceBox,
+  type HeadFaceCue,
+  type HeadFaceFrame,
+  type HeadFaceLandmarks,
+  type HeadFacePoint,
+  type RawHeadFaceCandidate,
+  type RawHeadFaceFrame,
+  type RawHeadFaceLandmarks,
+  type RawHeadFacePoint,
+} from "./perception/head-face";
+export {
   pointingReliability,
   pointingSignal,
   pointingSignalFromFrame,

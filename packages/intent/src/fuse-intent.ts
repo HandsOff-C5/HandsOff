@@ -5,6 +5,7 @@ import type {
   ClarificationReason,
   ClarificationRequest,
   IntentInput,
+  IntentType,
   PointingEvidence,
   ResolvedIntent,
   SurfaceSnapshot,
@@ -199,7 +200,7 @@ export function blockedIntent(
 
 function planFor(args: {
   planId: string;
-  intentType: ResolvedIntent["intent_type"];
+  intentType: IntentType;
   target: ActionTarget;
   text?: string;
   value?: string;
@@ -269,7 +270,7 @@ function planFor(args: {
   };
 }
 
-function summaryFor(intentType: ResolvedIntent["intent_type"]): string {
+function summaryFor(intentType: IntentType): string {
   return intentType === "inspect"
     ? "Inspect the selected window"
     : intentType === "click"

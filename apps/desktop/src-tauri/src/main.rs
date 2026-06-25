@@ -22,6 +22,7 @@ fn main() {
                 .build(),
         )
         .manage(commands::head_track::HeadTrackState::default())
+        .manage(commands::gesture_overlay::GestureOverlayState::default())
         .manage(commands::stt_ondevice::OnDeviceSttState::default())
         .setup(|app| {
             // Register capture hotkeys once the app is up. Surface (don't
@@ -53,11 +54,20 @@ fn main() {
             commands::head_track::head_track_start,
             commands::head_track::head_track_stop,
             commands::head_track::head_track_recenter,
+            commands::gesture_overlay::gesture_overlay_start,
+            commands::gesture_overlay::gesture_overlay_stop,
+            commands::gesture_overlay::gesture_overlay_move,
+            commands::gesture_overlay::gesture_overlay_target,
+            commands::gesture_overlay::gesture_overlay_untarget,
+            commands::gesture_overlay::gesture_overlay_clear,
+            commands::gesture_overlay::list_displays,
             commands::stt_ondevice::stt_ondevice_start,
             commands::stt_ondevice::stt_ondevice_stop,
             commands::cua::cua_permissions,
+            commands::cua::cua_list_apps,
             commands::cua::cua_list_windows,
             commands::cua::cua_get_window_state,
+            commands::cua::cua_screenshot,
             commands::cua::cua_launch_app,
             commands::cua::cua_click,
             commands::cua::cua_type_text,

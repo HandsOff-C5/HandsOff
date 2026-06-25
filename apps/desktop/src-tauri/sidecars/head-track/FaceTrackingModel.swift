@@ -434,29 +434,41 @@ struct HeadPointerMotion {
         let centerX = signal.faceCenter.x - neutral.faceCenter.x
         let centerY = signal.faceCenter.y - neutral.faceCenter.y
 
+        // 2.5x gain amplifier: small head rotations now produce a proportionally
+        // larger control vector so the cursor reaches screen edges without the user
+        // having to make large, exhausting head movements.
+        let gain = 2.5
+
         switch config.movementMode {
         case .edge:
-            return SignalVector(
-                x: noseX * 0.75 + yaw * 0.55 + centerX * 0.25,
-                y: noseY * 0.75 + pitch * 0.55 + centerY * 0.25
-            )
+            // Pure nose-offset drive: nose position relative to eye midpoint,
+            // normalized by eye distance. Yaw/pitch estimation and face-center
+            // drift introduce noise that corrupts the pointing direction.
+            return SignalVector(x: noseX * gain, y: noseY * gain)
         case .relative:
             let scale = max(neutral.faceBox.width, 0.1)
             return SignalVector(
-                x: centerX / scale + noseX * 0.25,
-                y: centerY / scale + noseY * 0.25
+                x: (centerX / scale + noseX * 0.25) * gain,
+                y: (centerY / scale + noseY * 0.25) * gain
             )
         }
     }
 
     private func smoothingAlpha(rawVector: SignalVector, dt: Double) -> Double {
+        // Higher alpha = less smoothing = faster cursor response.
+        // Clamp max raised from 0.52 → 0.85 so fast head movements pass through nearly
+        // unfiltered; the floor of 0.25 (was 0.10) prevents jitter on very slow signals.
         let speed = (rawVector - previousVector).magnitude / max(dt, 0.001)
-        return clamp(0.10 + rawVector.magnitude * 0.55 + min(speed * 0.025, 0.28), 0.10...0.52)
+        return clamp(0.25 + rawVector.magnitude * 0.70 + min(speed * 0.04, 0.40), 0.25...0.85)
     }
 
     private mutating func pointerVelocity(rawVector: SignalVector, smoothedVector: SignalVector) -> SignalVector {
-        let outer = max(config.distanceToEdge, 0.01)
-        let inner = outer * 0.55
+        // Scale by controlGain so thresholds stay calibrated against raw head displacement.
+        // controlVector multiplies all components by 2.5, so rawVector.magnitude is 2.5x
+        // the pre-gain displacement; the outer/inner boundaries must scale with it.
+        let controlGain = 2.5
+        let outer = max(config.distanceToEdge, 0.01) * controlGain
+        let inner = outer * 0.45
         let rawMagnitude = rawVector.magnitude
 
         if movementActive {
@@ -474,14 +486,17 @@ struct HeadPointerMotion {
 
         let excess = max(driveVector.magnitude - inner, 0)
         let normalized = min(excess / max(1 - inner, 0.001), 1)
+        // Convex curve required: the self-test asserts fastDelta > slowDelta*2 which only
+        // holds when the gain/magnitude ratio grows with displacement (exponent > 1).
         let gain = pow(normalized, 1.35)
-        let maxPixelsPerSecond = 180 + config.speed * 90
+        // Max speed raised: was 180 + speed*90; now 320 + speed*120 for snappier response.
+        let maxPixelsPerSecond = 320 + config.speed * 120
         let scalar = maxPixelsPerSecond * gain / driveVector.magnitude
         return driveVector.scaled(scalar)
     }
 
     private mutating func updateStableRecenter(rawVector: SignalVector, smoothed: HeadSignal, dt: Double) {
-        let inner = max(config.distanceToEdge, 0.01) * 0.55
+        let inner = max(config.distanceToEdge, 0.01) * 0.55 * 2.5  // scale by controlGain
         guard rawVector.magnitude < inner, movementActive == false else {
             stableTime = 0
             return
