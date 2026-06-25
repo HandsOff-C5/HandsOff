@@ -16,14 +16,15 @@ struct MenuBarLabel: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        Image("Template-Image")
-            .renderingMode(.template)
+        // SF Symbol so the status item is always visible + auto-templates to the menu-bar
+        // appearance (the custom brand Template-Image asset is a later design drop-in).
+        Image(systemName: "cursorarrow.rays")
             .overlay(alignment: .topTrailing) {
                 if readiness != .ready {
                     Circle()
                         .fill(theme.color(for: readiness))
                         .frame(width: 6, height: 6)
-                        .offset(x: 3, y: -2)
+                        .offset(x: 4, y: -3)
                 }
             }
             .accessibilityLabel("Director")

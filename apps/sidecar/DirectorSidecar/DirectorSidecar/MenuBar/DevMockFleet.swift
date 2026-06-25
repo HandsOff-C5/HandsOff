@@ -13,7 +13,9 @@ import Foundation
 
 enum DevMockFleet {
     static var isEnabled: Bool {
-        ProcessInfo.processInfo.environment["DIRECTOR_MOCK_FLEET"] == "1"
+        // Default ON in Debug so a plain ⌘R from Xcode shows the full demo with zero scheme setup.
+        // Opt OUT (to connect to the real engine for live readiness) with DIRECTOR_MOCK_FLEET=0.
+        ProcessInfo.processInfo.environment["DIRECTOR_MOCK_FLEET"] != "0"
     }
 
     /// When set, the HUD loop resolves a DESTRUCTIVE intent so the optional Greenlight footer
