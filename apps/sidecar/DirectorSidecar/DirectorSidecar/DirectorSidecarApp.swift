@@ -2,10 +2,10 @@
 //  DirectorSidecarApp.swift
 //  DirectorSidecar
 //
-//  Two scenes (G1): the G0 readiness WindowGroup is kept as the debug/fallback scene, and a
-//  MenuBarExtra(.window) is the product's persistent entry point. Both share the one BridgeStore
-//  (backed by the single shared BridgeConnection). Theme is resolved per scene from the live
-//  color scheme so light/dark flip correctly.
+//  App scenes + composition root. ONE shared BridgeConnection (locked decision) fans out frames
+//  to every model — the menu BridgeStore and the HUD HUDModel — over a single socket; commands
+//  route back through it. The HUD lives in a non-activating NSPanel driven by HUDPanelController.
+//  Theme is resolved per scene from the live color scheme.
 //
 
 import SwiftUI
@@ -13,19 +13,55 @@ import SwiftUI
 @main
 struct DirectorSidecarApp: App {
     let store: BridgeStore
+    let hud: HUDModel
+    private let connection: BridgeConnection
+    private let hudController: HUDPanelController
 
     init() {
+        let connection = BridgeConnection()
         let store = BridgeStore()
+        let hud = HUDModel()
+        store.bridge = connection
+        hud.connection = connection
+        // Menu Start/Stop Listening brings the HUD up/down optimistically (no "amListening" topic).
+        store.onListeningChanged = { on in hud.setListening(on) }
+
+        self.connection = connection
+        self.store = store
+        self.hud = hud
+        self.hudController = HUDPanelController(model: hud, edge: .trailing)
+
         #if DEBUG
         if DevMockFleet.isEnabled {
-            Task { await DevMockFleet.drive(store, now: Date()) }
+            Task {
+                await DevMockFleet.drive(
+                    dispatch: { frame in store.apply(frame); hud.apply(frame) },
+                    setState: { state in store.setConnection(state) },
+                    now: Date()
+                )
+            }
         } else {
-            store.start()
+            Self.stream(connection, store, hud)
         }
         #else
-        store.start()
+        Self.stream(connection, store, hud)
         #endif
-        self.store = store
+    }
+
+    /// Start the single socket and fan every frame/state out to both models.
+    private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel) {
+        Task {
+            await connection.start(
+                onFrame: { frame in
+                    await store.apply(frame)
+                    await hud.apply(frame)
+                },
+                onState: { state in
+                    await store.setConnection(state)
+                    await hud.setConnection(state)
+                }
+            )
+        }
     }
 
     var body: some Scene {

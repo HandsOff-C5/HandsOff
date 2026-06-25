@@ -47,6 +47,9 @@ enum BridgeFrame: Decodable {
     case cursor(pointers: [Pointer])
     case sessions(SessionsPayload)
     case runResult(RunResultPayload)
+    case transcript(TranscriptEvent)
+    case referents(ReferentsPayload)
+    case intent(ResolvedIntentLite)
     case error(reason: String)
     case unknown(type: String)
 
@@ -70,6 +73,12 @@ enum BridgeFrame: Decodable {
                 self = .sessions(try c.decode(SessionsPayload.self, forKey: .payload))
             case "runResult":
                 self = .runResult(try c.decode(RunResultPayload.self, forKey: .payload))
+            case "transcript":
+                self = .transcript(try c.decode(TranscriptEvent.self, forKey: .payload))
+            case "referents":
+                self = .referents(try c.decode(ReferentsPayload.self, forKey: .payload))
+            case "intent":
+                self = .intent(try c.decode(ResolvedIntentLite.self, forKey: .payload))
             default:
                 self = .state(topic: topic, readiness: nil)
             }

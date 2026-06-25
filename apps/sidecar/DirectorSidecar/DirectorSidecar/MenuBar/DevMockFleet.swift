@@ -43,15 +43,32 @@ enum DevMockFleet {
         ], counts: nil)
     }
 
-    /// Feed canned frames into the store (no socket). Simulates one agent finishing live so the
-    /// runResult path (count decrement) is visible while the popover is open.
+    /// Feed canned frames to every model via `dispatch` (no socket). Drives the menu fleet AND
+    /// the HUD loop (transcript → referents → read-only intent → runResult) so both surfaces are
+    /// demoable before the engine publishes. One agent finishes live to show the count decrement.
     @MainActor
-    static func drive(_ store: BridgeStore, now: Date) async {
-        store.setConnection(.connected)
-        store.apply(.state(topic: "readiness", readiness: allCapsGranted))
-        store.apply(.sessions(fleet(now: now)))
-        try? await Task.sleep(for: .seconds(8))
-        store.apply(.runResult(RunResultPayload(status: .succeeded, sessionId: "session-2")))
+    static func drive(
+        dispatch: @escaping (BridgeFrame) -> Void,
+        setState: @escaping (ConnectionState) -> Void,
+        now: Date
+    ) async {
+        setState(.connected)
+        dispatch(.state(topic: "readiness", readiness: allCapsGranted))
+        dispatch(.sessions(fleet(now: now)))
+
+        // HUD read-only loop (G2a): a read_only intent that auto-runs (no footer).
+        try? await Task.sleep(for: .seconds(1.2))
+        dispatch(.transcript(TranscriptEvent(kind: "partial", text: "summarize that issue", confidence: 0.9, latencyMs: 120, receivedAt: 0)))
+        try? await Task.sleep(for: .seconds(0.8))
+        dispatch(.transcript(TranscriptEvent(kind: "final", text: "summarize that issue", confidence: 0.96, latencyMs: 140, receivedAt: 0)))
+        dispatch(.referents(ReferentsPayload(
+            surfaces: [SurfaceSnapshot(id: "win-1", title: "#42 Flaky CUA test", app: "GitHub", pid: nil, windowId: nil, availability: "available", accessStatus: "granted")],
+            selected: SelectedReferent(id: "win-1", source: "point", confidence: 0.9)
+        )))
+        try? await Task.sleep(for: .seconds(1))
+        dispatch(.intent(ResolvedIntentLite(status: .ready, intentType: "summarize", riskLevel: .readOnly, requiresApproval: false, summary: "Summarize GitHub issue #42", reason: nil)))
+        try? await Task.sleep(for: .seconds(2))
+        dispatch(.runResult(RunResultPayload(status: .succeeded, sessionId: "session-2")))
     }
 }
 #endif

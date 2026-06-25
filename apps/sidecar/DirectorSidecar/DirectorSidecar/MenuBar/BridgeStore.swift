@@ -52,25 +52,22 @@ final class BridgeStore {
     var needsGreenlightCount: Int { counts.needsGreenlight }
     var doneCount: Int { counts.done }
 
-    private let bridge = BridgeConnection()
+    /// The ONE shared bridge connection (set by the app). A single socket fans out frames to
+    /// every model (menu store, HUD); commands route back through it. (Named `bridge` to avoid
+    /// clashing with the `connection: ConnectionState` UI property.)
+    @ObservationIgnored var bridge: BridgeConnection?
 
-    /// Begin streaming from the engine. Call once at launch.
-    func start() {
-        Task {
-            await bridge.start(
-                onFrame: { [weak self] frame in await self?.apply(frame) },
-                onState: { [weak self] state in await self?.setConnection(state) }
-            )
-        }
-    }
+    /// Notifies the app when listening starts/stops (so the HUD can come up/down optimistically).
+    @ObservationIgnored var onListeningChanged: ((Bool) -> Void)?
 
     /// Send a command; optimistic local listening flag for snappy menu feedback.
     func send(_ command: Command) {
         switch command {
-        case .startListening: isListening = true
-        case .stopListening: isListening = false
+        case .startListening: isListening = true; onListeningChanged?(true)
+        case .stopListening: isListening = false; onListeningChanged?(false)
         default: break
         }
+        guard let bridge else { return }
         Task { await bridge.send(command) }
     }
 
@@ -87,8 +84,8 @@ final class BridgeStore {
             counts = payload.resolvedCounts
         case let .runResult(result):
             applyRunResult(result)
-        case .cursor, .error, .unknown:
-            break // the menu surface does not consume these
+        case .cursor, .transcript, .referents, .intent, .error, .unknown:
+            break // the menu surface does not consume these (HUD/overlays do)
         }
     }
 
