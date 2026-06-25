@@ -227,6 +227,42 @@ export function Dashboard({
     if (utterance.words) captureTrace.current.setWords(utterance.words);
     handleFinalTranscript(utterance);
   };
+
+  // Mock command (dev/test): drive the real pointing → intent → CUA loop with a
+  // preset transcript instead of speech, so the pointing + action path can be
+  // exercised without STT (and its mishears). Tap once to start head tracking —
+  // point + look at the target window — then tap again to run the command below.
+  // Hand pointing (gesture) is already live from the always-on camera, so the
+  // same head + hand evidence the spoken flow uses is what resolves the target.
+  const [mockText, setMockText] = useState("type hello into this");
+  const [mockLooking, setMockLooking] = useState(false);
+  const toggleMockCommand = () => {
+    if (!mockLooking) {
+      if (hasTauriBackend()) {
+        void invoke(
+          "head_track_start",
+          config.headPointer ? { headPointer: config.headPointer } : undefined,
+        );
+      }
+      setMockLooking(true);
+      return;
+    }
+    // Clear any stale capture trace so the temporal binder can't bind this
+    // command to an earlier utterance's pointing path; the live head/gesture
+    // candidates resolve the target instead.
+    lastCaptureTrace.current = null;
+    setMockLooking(false);
+    onFinalTranscript({
+      kind: "final",
+      text: mockText,
+      confidence: 1,
+      latencyMs: 0,
+      receivedAt: Date.now(),
+    });
+    // Keep head tracking alive past the controller's retarget delay so the frozen
+    // snapshot still carries candidates when the loop resolves, then stop it.
+    if (hasTauriBackend()) setTimeout(() => void invoke("head_track_stop"), 2500);
+  };
   // Accumulate session history (last 10) so the SessionsPanel shows prior commands
   // rather than only the most-recent run.
   const [sessionHistory, setSessionHistory] = useState<readonly SupervisionSession[]>([]);
@@ -359,6 +395,28 @@ export function Dashboard({
           headPointer={config.headPointer}
           onFinalTranscript={onFinalTranscript}
         />
+        <section className="panel">
+          <h2 className="panel__title">Mock command (skip STT)</h2>
+          <p className="transcript__unavailable">
+            Tap to start, point + look at the target window, then tap again to run the command below
+            — no speech needed.
+          </p>
+          <input
+            type="text"
+            value={mockText}
+            onChange={(event) => setMockText(event.target.value)}
+            aria-label="Mock transcript"
+            style={{ width: "100%", marginBottom: "0.5rem" }}
+          />
+          <button
+            className="transcript__capture-test"
+            type="button"
+            aria-pressed={mockLooking}
+            onClick={toggleMockCommand}
+          >
+            {mockLooking ? "● Looking… tap to run" : "Run mock command"}
+          </button>
+        </section>
         <SessionsPanel sessions={sessionHistory} auditEvents={auditEvents} />
         <ClarificationPanel request={clarification} />
         <PlanPreviewPanel
