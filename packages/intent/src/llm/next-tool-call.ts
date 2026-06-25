@@ -29,9 +29,11 @@ export const nextToolCallSchema = z.object({
   // The driver tool to call when status is "act". Validated against the real
   // driver surface (DRIVER_TOOLS) downstream — a hallucinated name is blocked.
   tool: z.string().nullable(),
-  // The tool's raw flat args, the driver's own snake_case shape
-  // (e.g. { pid, window_id, element_index, direction }). Passed straight through.
-  args: z.record(z.unknown()).nullable(),
+  // The tool's raw flat args as a JSON object STRING (the driver's own
+  // snake_case shape, e.g. {"pid":42,"window_id":7,"direction":"down"}). It is a
+  // string — not an open object — because OpenAI strict structured outputs reject
+  // open objects (z.record); parsed back into a record downstream by parseToolArgs.
+  args: z.string().nullable(),
   // One-line reasoning for the chosen action (audited; shown in the preview).
   rationale: z.string(),
   // Filled when status is "done": what was accomplished.
@@ -166,7 +168,7 @@ export function nextToolCallToIntent(
     );
   }
 
-  const args = next.args ?? {};
+  const args = parseToolArgs(next.args);
   // Provisional risk for the DISPLAY intent. The loop is authoritative: it
   // re-derives risk against the live snapshot (escalating a commit click to
   // mutating). So here we use the tool's UN-escalated base — passing an empty
@@ -203,4 +205,23 @@ export function nextToolCallToIntent(
     },
     createdAt,
   };
+}
+
+// The model hands `args` back as a JSON object string (OpenAI strict rejects open
+// objects on the wire); the loop wants a real record. Parse it defensively —
+// null/empty/malformed JSON, or anything that isn't a plain object (array, string,
+// number, null), collapses to {} so a bad payload degrades to "call with no args"
+// rather than crashing the resolver. The validated parse becomes the tool_call
+// step's `args`.
+function parseToolArgs(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }

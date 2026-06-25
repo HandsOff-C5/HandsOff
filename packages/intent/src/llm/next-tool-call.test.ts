@@ -66,7 +66,9 @@ function next(overrides: Partial<NextToolCall> = {}): NextToolCall {
   return {
     status: "act",
     tool: "scroll",
-    args: { pid: 42, window_id: 7, direction: "down", by: "page", amount: 3 },
+    // args is a JSON object STRING on the wire (OpenAI strict rejects open objects);
+    // parseToolArgs decodes it back into the tool_call step's record.
+    args: JSON.stringify({ pid: 42, window_id: 7, direction: "down", by: "page", amount: 3 }),
     rationale: "Scroll the list to reveal hidden rows",
     summary: null,
     reason: null,
@@ -114,7 +116,10 @@ describe("resolveNextToolCall", () => {
     const { client } = clientWith({
       finish_reason: "stop",
       message: {
-        parsed: next({ tool: "click", args: { pid: 42, window_id: 7, element_index: 3 } }),
+        parsed: next({
+          tool: "click",
+          args: JSON.stringify({ pid: 42, window_id: 7, element_index: 3 }),
+        }),
       },
     });
 
@@ -132,7 +137,7 @@ describe("resolveNextToolCall", () => {
   it("blocks a hallucinated tool name that is not on the driver surface", async () => {
     const { client } = clientWith({
       finish_reason: "stop",
-      message: { parsed: next({ tool: "format_disk", args: {} }) },
+      message: { parsed: next({ tool: "format_disk", args: JSON.stringify({}) }) },
     });
 
     await expect(resolveNextToolCall(input(), { client, tools })).resolves.toMatchObject({
@@ -190,6 +195,19 @@ describe("nextToolCallToIntent", () => {
   it("defaults missing args to an empty object on the tool_call step", () => {
     const resolved = nextToolCallToIntent(
       next({ tool: "list_windows", args: null }),
+      input(),
+      "intent-x",
+      "2026-06-22T12:00:00.000Z",
+    );
+    expect(resolved).toMatchObject({
+      status: "ready",
+      action_plan: { action_plan: [{ kind: "tool_call", tool: "list_windows", args: {} }] },
+    });
+  });
+
+  it("degrades a malformed args string to an empty object on the tool_call step", () => {
+    const resolved = nextToolCallToIntent(
+      next({ tool: "list_windows", args: "{not valid json" }),
       input(),
       "intent-x",
       "2026-06-22T12:00:00.000Z",

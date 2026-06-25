@@ -211,9 +211,10 @@ const NEXT_TOOL_CALL_SYSTEM_PROMPT =
   "failed call), the ranked candidate surfaces, and the list of available tools with their " +
   "JSON-Schema parameters. Use ONLY this supplied state — never invent windows, elements, or " +
   "indices.\n" +
-  "Return status `act` with `tool` (one of the listed tool names) and `args` (the tool's raw " +
-  "flat arguments, matching its parameter schema — e.g. pid, window_id, element_index, " +
-  "direction). Targeting calls (click, type_text, set_value, scroll, press_key, …) MUST cite " +
+  "Return status `act` with `tool` (one of the listed tool names) and `args` — the tool's flat " +
+  "arguments (matching its parameter schema, e.g. pid, window_id, element_index, direction) " +
+  "encoded as a JSON object STRING (JSON.stringify'd, not a nested object). " +
+  "Targeting calls (click, type_text, set_value, scroll, press_key, …) MUST cite " +
   "an `element_index` AND `window_id` from the LATEST snapshot, plus its `pid` — never a " +
   "guessed index. Combine actions across turns: to reveal hidden content, scroll or click a " +
   "menu open, then act on what appears.\n" +
