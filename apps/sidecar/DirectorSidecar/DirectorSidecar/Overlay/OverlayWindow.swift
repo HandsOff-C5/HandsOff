@@ -21,13 +21,13 @@ final class OverlayController {
     private let model: OverlayModel
     private let gaze: GazeBracketModel
     private var window: OverlayWindow?
-    private var mouseMonitor: Any?
+    private var cursorPoll: Timer?
 
     init(model: OverlayModel, gaze: GazeBracketModel) {
         self.model = model
         self.gaze = gaze
         observeVisibility()
-        startMouseMonitor()
+        applyVisibility() // sync current state — controller is built after launch now
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil
@@ -54,12 +54,23 @@ final class OverlayController {
         if shouldShow { show() } else { hide() }
     }
 
-    private func startMouseMonitor() {
-        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
-            // Global monitors fire on the MAIN thread — update directly. Spawning a Task per
-            // mouse-move event floods the main actor (hundreds/sec) and freezes the whole UI.
+    // The Director cursor hugs the OS pointer. A global .mouseMoved monitor only fires while the
+    // pointer is over OTHER apps, so the hug freezes over our own windows and jumps when it leaves
+    // them (jitter). Poll NSEvent.mouseLocation each frame instead — smooth everywhere — and only
+    // while the overlay is on screen. (.common run-loop mode keeps it ticking during UI tracking.)
+    private func startCursorTracking() {
+        guard cursorPoll == nil else { return }
+        model.setSystemCursor(NSEvent.mouseLocation) // seed immediately so the cursor starts at the pointer
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.model.setSystemCursor(NSEvent.mouseLocation) }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        cursorPoll = timer
+    }
+
+    private func stopCursorTracking() {
+        cursorPoll?.invalidate()
+        cursorPoll = nil
     }
 
     @objc private func screensChanged() {
@@ -70,9 +81,13 @@ final class OverlayController {
         let shownWindow = window ?? makeWindow()
         self.window = shownWindow
         shownWindow.orderFrontRegardless() // never makeKey/activate — must not steal focus
+        startCursorTracking()
     }
 
-    private func hide() { window?.orderOut(nil) }
+    private func hide() {
+        window?.orderOut(nil)
+        stopCursorTracking()
+    }
 
     private func makeWindow() -> OverlayWindow {
         let frame = NSScreen.main?.frame ?? .zero
