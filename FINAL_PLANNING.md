@@ -1,6 +1,6 @@
 # Hands-Off — Project Planning Document
 
-**A notarized macOS desktop mission-control app — select live desktop context through hand gesture plus face/eye tracking input, speak intent (primary semantics), turn the multimodal signal into a scoped agent task, execute it through a computer-use agent, and supervise the result through visible status, permissions, logs, and safety gates.**
+**A notarized macOS desktop home-dashboard app — select live desktop context through hand gesture plus face/eye tracking input, speak intent (primary semantics), turn the multimodal signal into a scoped agent task, execute it through a computer-use agent, and supervise the result through visible status, permissions, logs, and safety gates.**
 
 > The product plan for Hands-Off — the problem, the technical approach, the scope, and who owns what.
 
@@ -39,7 +39,7 @@ Computer-use agents (CUA) finally **absorb the hard OS-action layer** — clicki
 **Floor (must work by demo day):**
 
 1. A **signed/notarized macOS app** that launches from Finder and terminal with a clear first-run permissions flow (camera, microphone, CUA daemon, Accessibility, Screen Recording) shown as green/yellow/red readiness.
-2. A **mission-control dashboard** showing readiness, agent **session cards** (planned, waiting-approval, running, blocked, complete, failed), approval queue, plan preview, and audit trail. The dashboard is supervision-only.
+2. A **home-dashboard dashboard** showing readiness, agent **session cards** (planned, waiting-approval, running, blocked, complete, failed), approval queue, plan preview, and audit trail. The dashboard is supervision-only.
 3. **Perception-to-select + speak** producing a **referent candidate with confidence** from hand gesture plus face/eye tracking, fused with the transcript into a **strict intent schema** and a **visible plan-before-act** preview.
 4. **CUA execution** of approved plans through a typed adapter, with **tiered safety gates**, an **interrupt path** ("stop/pause"), live status, and an **audit trail** for replay.
 
@@ -53,7 +53,7 @@ Computer-use agents (CUA) finally **absorb the hard OS-action layer** — clicki
 
 ### Architecture
 
-Six layers inside one Tauri desktop app: **Mission Control UI**, **Input Layer** (camera + MediaPipe hand/face/eye tracking + STT), **Intent Engine** (referent fusion + schema validation + clarification + safety classification), **Orchestration Layer** (action planner + approval gates + interrupt), **Action Adapters** (CUA + non-CUA + mock), and **Persistence/Telemetry** (config + audit + traces). Voice dominates (~80%); hand gesture plus face/eye tracking supplies the deictic referent (~20%).
+Six layers inside one Tauri desktop app: **Home Dashboard UI**, **Input Layer** (camera + MediaPipe hand/face/eye tracking + STT), **Intent Engine** (referent fusion + schema validation + clarification + safety classification), **Orchestration Layer** (action planner + approval gates + interrupt), **Action Adapters** (CUA + non-CUA + mock), and **Persistence/Telemetry** (config + audit + traces). Voice dominates (~80%); hand gesture plus face/eye tracking supplies the deictic referent (~20%).
 
 > The diagram is annotated with the **what** (tech stack per layer) and the **how**
 > (the user interaction and goal on each edge). Tech choices trace to the Stack table
@@ -90,7 +90,7 @@ flowchart TB
     Mock["Mock adapter<br/>tests + deterministic backup demo"]
   end
 
-  subgraph Super["Mission Control · Tauri dashboard + local persistence"]
+  subgraph Super["Home Dashboard · Tauri dashboard + local persistence"]
     Sess["Session cards · planned → waiting → running →<br/>blocked → complete / failed"]
     Appr["Approval queue"]
     Audit["Audit log + screenshots · local config / traces → replay"]

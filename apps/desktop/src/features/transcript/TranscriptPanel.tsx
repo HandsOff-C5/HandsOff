@@ -138,8 +138,8 @@ function LiveTranscriptPanel({
     setHeadNotice(message);
   }, []);
 
-  // Drive head+voice capture from the global hotkeys (#95): head tracker first,
-  // mic second. Command+Option+? holds; Control+Shift+Space toggles.
+  // Drive head+voice capture from the global fn key (#95): head tracker first,
+  // mic second. press-hold on fn holds; double-tap on fn toggles.
   useCaptureHotkey(
     tauri
       ? {
