@@ -60,11 +60,16 @@ final class BridgeStore {
     /// Notifies the app when listening starts/stops (so the HUD can come up/down optimistically).
     @ObservationIgnored var onListeningChanged: ((Bool) -> Void)?
 
-    /// Send a command; optimistic local listening flag for snappy menu feedback.
+    /// Brings the Home dashboard window forward (the rail's ⤢ button + the menu's "Open Home").
+    /// A local UI action — `.openHome` must not depend on the engine round-trip.
+    @ObservationIgnored var onOpenHome: (() -> Void)?
+
+    /// Send a command; some are local UI actions (listening flag, open Home) applied optimistically.
     func send(_ command: Command) {
         switch command {
         case .startListening: isListening = true; onListeningChanged?(true)
         case .stopListening: isListening = false; onListeningChanged?(false)
+        case .openHome: onOpenHome?()
         default: break
         }
         guard let bridge else { return }

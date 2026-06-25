@@ -50,8 +50,11 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     private var fnMonitor: Any?
     private var fnHeld = false
 
+    private var railController: RailController?
+
     func start(hud hudModel: HUDModel, micro microModel: MicroHUDModel,
                overlay overlayModel: OverlayModel, gaze: GazeBracketModel,
+               rail railModel: RailModel,
                onOpenHome: @escaping () -> Void) {
         guard hud == nil else { return }   // once only
         hud = HUDPanelController(model: hudModel, edge: .trailing)
@@ -59,6 +62,8 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
             micro = MicroHUDController(model: microModel, fullHUD: hudModel, onOpenHome: onOpenHome)
         }
         overlay = OverlayController(model: overlayModel, gaze: gaze)
+        // The Right-edge rail — the always-on ambient edge surface (replaces the parked micro-HUD).
+        railController = RailController(model: railModel, edge: .trailing, onOpenHome: onOpenHome)
     }
 
     /// Mock fn-key activation (the "fn" of this build): hold the fn/🌐 key while Director is frontmost
@@ -89,6 +94,7 @@ struct DirectorSidecarApp: App {
     let overlay: OverlayModel
     let gaze: GazeBracketModel
     let home: HomeDashboardModel
+    let rail: RailModel
     private let connection: BridgeConnection
     private let surfaces: SurfaceHost
 
@@ -100,6 +106,7 @@ struct DirectorSidecarApp: App {
         let overlay = OverlayModel()
         let gaze = GazeBracketModel()
         let home = HomeDashboardModel()
+        let rail = RailModel()
         store.bridge = connection
         home.bridge = connection
         hud.connection = connection
@@ -107,7 +114,7 @@ struct DirectorSidecarApp: App {
         // One fan-out of every decoded frame to every model.
         let dispatch: (BridgeFrame) -> Void = { frame in
             store.apply(frame); hud.apply(frame); micro.apply(frame)
-            overlay.apply(frame); gaze.apply(frame); home.apply(frame)
+            overlay.apply(frame); gaze.apply(frame); home.apply(frame); rail.apply(frame)
         }
 
         // Listening toggle (the "fn" of this build): brings the three active overlays up/down. In
@@ -118,6 +125,7 @@ struct DirectorSidecarApp: App {
             micro.setListening(on)
             overlay.setActive(on)  // Director cursor hugs the system cursor while active
             gaze.setActive(on)     // eye-gaze brackets shown while active
+            rail.setListening(on)  // the rail's LIVE pip lights while listening
             #if DEBUG
             activation?.cancel()
             if DevMockFleet.isEnabled {
@@ -130,6 +138,8 @@ struct DirectorSidecarApp: App {
             #endif
         }
 
+        // `store.onOpenHome` (rail ⤢ + menu "Open Home") is wired to SwiftUI's openWindow in the
+        // dashboard scene (HomeOpenWiring) so it re-creates the window even after the red-X close.
         self.connection = connection
         self.store = store
         self.hud = hud
@@ -137,6 +147,7 @@ struct DirectorSidecarApp: App {
         self.overlay = overlay
         self.gaze = gaze
         self.home = home
+        self.rail = rail
 
         // The overlay/HUD/micro controllers MUST NOT be created during App.init() — building their
         // always-on-top panels + global mouse monitors before AppKit finishes wiring event routing
@@ -147,7 +158,7 @@ struct DirectorSidecarApp: App {
             forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
         ) { _ in
             MainActor.assumeIsolated {
-                surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze,
+                surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze, rail: rail,
                                onOpenHome: { store.send(.openHome) })
                 // fn press-and-hold drives the mock activation (hold → overlays up, release → down).
                 surfaces.installFnHold { held in store.send(held ? .startListening : .stopListening) }
@@ -161,16 +172,16 @@ struct DirectorSidecarApp: App {
             Task {
                 await DevMockFleet.populate(
                     dispatch: dispatch,
-                    setState: { state in store.setConnection(state); micro.setConnection(state); overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state) },
+                    setState: { state in store.setConnection(state); micro.setConnection(state); overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state); rail.setConnection(state) },
                     select: { id in home.select(id) },
                     now: Date()
                 )
             }
         } else {
-            Self.stream(connection, store, hud, micro, overlay, gaze, home)
+            Self.stream(connection, store, hud, micro, overlay, gaze, home, rail)
         }
         #else
-        Self.stream(connection, store, hud, micro, overlay, gaze, home)
+        Self.stream(connection, store, hud, micro, overlay, gaze, home, rail)
         #endif
     }
 
@@ -180,7 +191,7 @@ struct DirectorSidecarApp: App {
     }
 
     /// Start the single socket and fan every frame/state out to all models (one shared connection).
-    private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel, _ micro: MicroHUDModel, _ overlay: OverlayModel, _ gaze: GazeBracketModel, _ home: HomeDashboardModel) {
+    private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel, _ micro: MicroHUDModel, _ overlay: OverlayModel, _ gaze: GazeBracketModel, _ home: HomeDashboardModel, _ rail: RailModel) {
         Task {
             await connection.start(
                 onFrame: { frame in
@@ -190,6 +201,7 @@ struct DirectorSidecarApp: App {
                     await overlay.apply(frame)
                     await gaze.apply(frame)
                     await home.apply(frame)
+                    await rail.apply(frame)
                 },
                 onState: { state in
                     await store.setConnection(state)
@@ -198,15 +210,18 @@ struct DirectorSidecarApp: App {
                     await overlay.setConnection(state)
                     await gaze.setConnection(state)
                     await home.setConnection(state)
+                    await rail.setConnection(state)
                 }
             )
         }
     }
 
     var body: some Scene {
-        // G4 Home Dashboard — the product window (native SwiftUI, Option B).
-        WindowGroup("Director", id: "home") {
+        // G4 Home Dashboard — the product window. Single-instance `Window` (not `WindowGroup`) so the
+        // red-X close + "Open Home" re-open cleanly via openWindow(id:) and never duplicate.
+        Window("Director", id: "home") {
             ThemedRoot { HomeDashboardView(model: home) }
+                .modifier(HomeOpenWiring(store: store))
         }
         .commands {
             CommandMenu("Director") {
@@ -227,6 +242,23 @@ struct DirectorSidecarApp: App {
             ThemedRoot { MenuBarLabel(readiness: store.menuReadiness) }
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+/// Wires `store.onOpenHome` (rail ⤢ + menu "Open Home") to SwiftUI's `openWindow`, captured from an
+/// in-scene view so it re-creates the single-instance Home window even after the red-X destroys it.
+private struct HomeOpenWiring: ViewModifier {
+    let store: BridgeStore
+    @Environment(\.openWindow) private var openWindow
+    func body(content: Content) -> some View {
+        content.onAppear {
+            store.onOpenHome = {
+                MainActor.assumeIsolated {
+                    openWindow(id: "home")
+                    NSApp.activate()
+                }
+            }
+        }
     }
 }
 
