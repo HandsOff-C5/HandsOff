@@ -38,6 +38,9 @@ final class HUDModel {
     @ObservationIgnored var connection: BridgeConnection?
 
     var isVisible: Bool { phase != .hidden }
+    /// The full HUD panel shows only once there is real loop content — ambient `.listening` is
+    /// the micro-HUD's job (G3). This keeps the two overlays from both showing at once.
+    var showsFullPanel: Bool { isVisible && phase != .listening }
 
     // MARK: Greenlight-policy derivations (revised: destructive-only)
 

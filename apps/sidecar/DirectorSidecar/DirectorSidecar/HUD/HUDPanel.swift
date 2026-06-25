@@ -42,11 +42,11 @@ final class HUDPanelController {
 
     private func observeVisibility() {
         withObservationTracking {
-            _ = model.isVisible
+            _ = model.showsFullPanel
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                self.apply(visible: self.model.isVisible)
+                self.apply(visible: self.model.showsFullPanel)
                 self.observeVisibility() // re-arm
             }
         }

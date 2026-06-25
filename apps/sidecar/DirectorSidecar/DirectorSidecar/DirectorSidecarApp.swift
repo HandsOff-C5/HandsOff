@@ -14,51 +14,63 @@ import SwiftUI
 struct DirectorSidecarApp: App {
     let store: BridgeStore
     let hud: HUDModel
+    let micro: MicroHUDModel
     private let connection: BridgeConnection
     private let hudController: HUDPanelController
+    private let microController: MicroHUDController
 
     init() {
         let connection = BridgeConnection()
         let store = BridgeStore()
         let hud = HUDModel()
+        let micro = MicroHUDModel()
         store.bridge = connection
         hud.connection = connection
-        // Menu Start/Stop Listening brings the HUD up/down optimistically (no "amListening" topic).
-        store.onListeningChanged = { on in hud.setListening(on) }
+        // Menu Start/Stop Listening brings the overlays up/down optimistically (no "amListening").
+        store.onListeningChanged = { on in
+            hud.setListening(on)
+            micro.setListening(on)
+        }
 
         self.connection = connection
         self.store = store
         self.hud = hud
+        self.micro = micro
         self.hudController = HUDPanelController(model: hud, edge: .trailing)
+        self.microController = MicroHUDController(
+            model: micro, fullHUD: hud, onOpenHome: { store.send(.openHome) }
+        )
 
         #if DEBUG
         if DevMockFleet.isEnabled {
             Task {
                 await DevMockFleet.drive(
-                    dispatch: { frame in store.apply(frame); hud.apply(frame) },
-                    setState: { state in store.setConnection(state) },
+                    dispatch: { frame in store.apply(frame); hud.apply(frame); micro.apply(frame) },
+                    setState: { state in store.setConnection(state); micro.setConnection(state) },
                     now: Date()
                 )
             }
         } else {
-            Self.stream(connection, store, hud)
+            Self.stream(connection, store, hud, micro)
         }
         #else
-        Self.stream(connection, store, hud)
+        Self.stream(connection, store, hud, micro)
         #endif
     }
 
-    /// Start the single socket and fan every frame/state out to both models.
-    private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel) {
+    /// Start the single socket and fan every frame/state out to all models (one shared connection).
+    private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel, _ micro: MicroHUDModel) {
         Task {
             await connection.start(
                 onFrame: { frame in
                     await store.apply(frame)
                     await hud.apply(frame)
+                    await micro.apply(frame)
                 },
                 onState: { state in
                     await store.setConnection(state)
                     await hud.setConnection(state)
+                    await micro.setConnection(state)
                 }
             )
         }
