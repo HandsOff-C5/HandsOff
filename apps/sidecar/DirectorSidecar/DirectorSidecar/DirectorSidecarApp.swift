@@ -17,6 +17,7 @@ struct DirectorSidecarApp: App {
     let micro: MicroHUDModel
     let overlay: OverlayModel
     let gaze: GazeBracketModel
+    let home: HomeDashboardModel
     private let connection: BridgeConnection
     private let hudController: HUDPanelController
     private let microController: MicroHUDController
@@ -29,6 +30,7 @@ struct DirectorSidecarApp: App {
         let micro = MicroHUDModel()
         let overlay = OverlayModel()
         let gaze = GazeBracketModel()
+        let home = HomeDashboardModel()
         store.bridge = connection
         hud.connection = connection
         // Menu Start/Stop Listening brings the three active overlays up/down (no "amListening").
@@ -45,6 +47,7 @@ struct DirectorSidecarApp: App {
         self.micro = micro
         self.overlay = overlay
         self.gaze = gaze
+        self.home = home
         self.hudController = HUDPanelController(model: hud, edge: .trailing)
         self.microController = MicroHUDController(
             model: micro, fullHUD: hud, onOpenHome: { store.send(.openHome) }
@@ -55,22 +58,22 @@ struct DirectorSidecarApp: App {
         if DevMockFleet.isEnabled {
             Task {
                 await DevMockFleet.drive(
-                    dispatch: { frame in store.apply(frame); hud.apply(frame); micro.apply(frame); overlay.apply(frame); gaze.apply(frame) },
-                    setState: { state in store.setConnection(state); micro.setConnection(state); overlay.setConnection(state); gaze.setConnection(state) },
+                    dispatch: { frame in store.apply(frame); hud.apply(frame); micro.apply(frame); overlay.apply(frame); gaze.apply(frame); home.apply(frame) },
+                    setState: { state in store.setConnection(state); micro.setConnection(state); overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state) },
                     activate: { on in hud.setListening(on); micro.setListening(on); overlay.setActive(on); gaze.setActive(on) },
                     now: Date()
                 )
             }
         } else {
-            Self.stream(connection, store, hud, micro, overlay, gaze)
+            Self.stream(connection, store, hud, micro, overlay, gaze, home)
         }
         #else
-        Self.stream(connection, store, hud, micro, overlay, gaze)
+        Self.stream(connection, store, hud, micro, overlay, gaze, home)
         #endif
     }
 
     /// Start the single socket and fan every frame/state out to all models (one shared connection).
-    private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel, _ micro: MicroHUDModel, _ overlay: OverlayModel, _ gaze: GazeBracketModel) {
+    private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel, _ micro: MicroHUDModel, _ overlay: OverlayModel, _ gaze: GazeBracketModel, _ home: HomeDashboardModel) {
         Task {
             await connection.start(
                 onFrame: { frame in
@@ -79,6 +82,7 @@ struct DirectorSidecarApp: App {
                     await micro.apply(frame)
                     await overlay.apply(frame)
                     await gaze.apply(frame)
+                    await home.apply(frame)
                 },
                 onState: { state in
                     await store.setConnection(state)
@@ -86,14 +90,20 @@ struct DirectorSidecarApp: App {
                     await micro.setConnection(state)
                     await overlay.setConnection(state)
                     await gaze.setConnection(state)
+                    await home.setConnection(state)
                 }
             )
         }
     }
 
     var body: some Scene {
-        // G0 debug / fallback window — kept working alongside the menu bar.
-        WindowGroup {
+        // G4 Home Dashboard — the product window (native SwiftUI, Option B).
+        WindowGroup("Director", id: "home") {
+            ThemedRoot { HomeDashboardView(model: home) }
+        }
+
+        // G0 readiness — kept as a debug/fallback window.
+        Window("Engine Readiness", id: "readiness") {
             ThemedRoot { ContentView() }
         }
 
