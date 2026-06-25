@@ -9,9 +9,28 @@
 //
 
 import SwiftUI
+import AppKit
+
+/// The overlay/HUD panels order-front *without* activating (by design), so nothing brings the app
+/// forward at launch and the Dashboard window never becomes key — leaving its content unclickable
+/// and app keyboard shortcuts (⌥⌘D) dead. Explicitly activate on launch so the window is interactive.
+final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        // After SwiftUI installs its windows, make the Dashboard the key window (the overlay/HUD
+        // are non-key panels, so nothing else claims it) — without this its content stays unclickable.
+        DispatchQueue.main.async {
+            let dashboard = NSApp.windows.first { $0.title == "Director" }
+                ?? NSApp.windows.first { $0.canBecomeKey && !($0 is NSPanel) }
+            dashboard?.makeKeyAndOrderFront(nil)
+        }
+    }
+}
 
 @main
 struct DirectorSidecarApp: App {
+    @NSApplicationDelegateAdaptor(DirectorAppDelegate.self) private var appDelegate
     let store: BridgeStore
     let hud: HUDModel
     let micro: MicroHUDModel
