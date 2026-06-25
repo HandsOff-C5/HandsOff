@@ -42,8 +42,9 @@ final class OverlayModel {
     var isVisible: Bool { !cursors.isEmpty }
 
     static let userId = "user"
-    /// The Director cursor sits a few px down-right of the OS pointer (Hey-Clicky style).
-    static let hugOffset = CGSize(width: 14, height: -14)
+    /// The Director cursor trails just below-right of the OS pointer (so it reads as *following*,
+    /// not leading). View space is y-down, so a positive height pushes it downward.
+    static let hugOffset = CGSize(width: 14, height: 14)
 
     // MARK: inputs
 

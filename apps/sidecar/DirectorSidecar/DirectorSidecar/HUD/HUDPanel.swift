@@ -32,6 +32,7 @@ final class HUDPanelController {
         self.model = model
         self.edge = edge
         observeVisibility()
+        apply(visible: model.showsFullPanel) // sync current state — controller is built after launch now
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil

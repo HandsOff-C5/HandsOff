@@ -31,6 +31,7 @@ final class MicroHUDController {
         observePhase()
         observeFullHUD(fullHUD)
         startEdgeMonitor()
+        applyPhase() // sync current state — controller is built after launch now (else the pill can miss it)
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil
