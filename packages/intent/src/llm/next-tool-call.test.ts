@@ -250,5 +250,75 @@ describe("buildNextToolCallMessages", () => {
       },
       { name: "get_window_state", description: "Snapshot a window's AX tree.", parameters: null },
     ]);
+    // No binding on a plain head utterance → empty boundReferents (regression
+    // guard that the field is always present, not undefined).
+    expect(payload.boundReferents).toEqual([]);
+  });
+
+  // KD5: the model previously got a weightless candidate list and punted with
+  // "ambiguous target". Now the temporally bound deictic referents (fusion
+  // evidence the binder emitted, U6/U7) and per-candidate pointing confidence/
+  // source reach the model so it can act on the deixis.
+  it("presents bound deictic referents + per-candidate confidence/source to the model", () => {
+    const notes = surface({ id: "win-notes", title: "Notes", app: "Notes" });
+    const slack = surface({ id: "win-slack", title: "Slack", app: "Slack" });
+    const messages = buildNextToolCallMessages(
+      input({
+        speech: {
+          finalTranscript: {
+            kind: "final",
+            text: "type Laura in this and hello in that",
+            confidence: 0.95,
+            latencyMs: 100,
+            receivedAt: 1,
+          },
+        },
+        // Two deictic words bound to two different surfaces by the temporal binder
+        // (Notes ← "this" @1100, Slack ← "that" @5100), exactly as the controller
+        // prepends them.
+        pointingEvidence: [
+          {
+            source: "fusion",
+            confidence: 0.85,
+            strategy: "temporal-bind:this@1100",
+            surface: notes,
+          },
+          {
+            source: "fusion",
+            confidence: 0.8,
+            strategy: "temporal-bind:that@5100",
+            surface: slack,
+          },
+        ],
+        surfaceCandidates: [notes, slack],
+      }),
+      tools,
+    );
+    const payload = JSON.parse(messages[1]!.content);
+
+    // Both deictics resolved to distinct surfaces, in order, with the word + confidence.
+    expect(payload.boundReferents).toEqual([
+      {
+        word: "this",
+        surfaceId: "win-notes",
+        app: "Notes",
+        title: "Notes",
+        confidence: 0.85,
+        strategy: "temporal-bind:this@1100",
+      },
+      {
+        word: "that",
+        surfaceId: "win-slack",
+        app: "Slack",
+        title: "Slack",
+        confidence: 0.8,
+        strategy: "temporal-bind:that@5100",
+      },
+    ]);
+    // Each candidate now carries the pointing confidence + the modality behind it.
+    expect(payload.candidateSurfaces).toEqual([
+      expect.objectContaining({ id: "win-notes", confidence: 0.85, source: "fusion" }),
+      expect.objectContaining({ id: "win-slack", confidence: 0.8, source: "fusion" }),
+    ]);
   });
 });

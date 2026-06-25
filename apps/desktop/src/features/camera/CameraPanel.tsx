@@ -19,11 +19,13 @@ import {
   type Point,
   type ReferentLoop,
 } from "@handsoff/gesture";
+import type { AttentionWindow } from "@handsoff/intent";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { toGestureEvidence } from "../fusion/gestureEvidence";
 import {
   displaySurfaceSnapshot,
+  toAttentionWindows,
   toArbitrationDisplays,
   toDisplaySurfaces,
 } from "./display-surfaces";
@@ -65,6 +67,13 @@ interface CameraPanelProps {
     candidate: PointingCandidate | null;
     phase: GestureState;
   }) => void;
+  // The live pointable-window layout (U7): each connected display as one
+  // AttentionWindow (surface + global-px bounds), the same display-as-surface
+  // model the referent loop hit-tests against. The temporal binder consumes this
+  // to resolve a hand candidate's targetId (a display id) to its surface and to
+  // rank a head point geometrically. Published whenever the display layout
+  // changes; the dashboard hands it to the controller for binding at intent time.
+  onPointableWindows?: (windows: readonly AttentionWindow[]) => void;
   // When true the camera starts automatically on mount without requiring a button click.
   autoStart?: boolean;
 }
@@ -113,6 +122,7 @@ export function CameraPanel({
   onGestureEvidence,
   onGestureCursor,
   onGestureSample,
+  onPointableWindows,
   autoStart = false,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -192,6 +202,13 @@ export function CameraPanel({
     rebuildLoop();
     if (!multiCal) overlayRef.current.clear("main");
   }, [rebuildLoop, multiCal]);
+
+  // Publish the pointable-window layout (U7) whenever the displays change, so the
+  // controller can hand it to the temporal binder at intent time. Each display is
+  // one pointable surface (the same model the referent loop hit-tests against).
+  useEffect(() => {
+    onPointableWindows?.(toAttentionWindows(displays));
+  }, [displays, onPointableWindows]);
 
   const stop = useCallback(() => {
     const r = resources.current;

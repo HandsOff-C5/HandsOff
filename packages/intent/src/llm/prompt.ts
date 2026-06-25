@@ -1,4 +1,9 @@
-import type { DriverToolDefinition, GoalLoopObservation, IntentInput } from "@handsoff/contracts";
+import type {
+  DriverToolDefinition,
+  GoalLoopObservation,
+  IntentInput,
+  PointingEvidence,
+} from "@handsoff/contracts";
 
 export interface ResolveIntentMessage {
   readonly role: "system" | "user";
@@ -101,7 +106,13 @@ function recentResults(
     });
 }
 
-function candidateSurfacesFor(input: IntentInput) {
+// The candidate surface list for the user payload. The legacy 6-kind prompt
+// passes no evidence and stays WEIGHTLESS (its golden + "no raw camera data"
+// contract depend on that exact shape); the autonomous-loop prompt passes the
+// pointing evidence so each candidate also carries the pointing confidence + the
+// modality that produced it (KD5) — a weightless list let the model guess and
+// punt ("ambiguous target"), so this is the signal that closes that gap.
+function candidateSurfacesFor(input: IntentInput, evidence?: readonly PointingEvidence[]) {
   return input.surfaceCandidates.map((surface, index) => ({
     rank: index + 1,
     id: surface.id,
@@ -111,7 +122,54 @@ function candidateSurfacesFor(input: IntentInput) {
     windowId: surface.windowId ?? null,
     availability: surface.availability,
     accessStatus: surface.accessStatus,
+    // Null when no pointing evidence references this surface; absent entirely on
+    // the legacy prompt (no evidence passed).
+    ...(evidence ? confidenceForSurface(surface.id, evidence) : {}),
   }));
+}
+
+// The strongest pointing evidence carrying this surface — its confidence and
+// source ground the candidate so the model can act on deixis instead of guessing.
+function confidenceForSurface(
+  surfaceId: string,
+  evidence: readonly PointingEvidence[],
+): { confidence: number; source: PointingEvidence["source"] } | { confidence: null; source: null } {
+  const best = evidence
+    .filter((e) => e.surface?.id === surfaceId)
+    .reduce<PointingEvidence | null>(
+      (top, e) => (top === null || e.confidence > top.confidence ? e : top),
+      null,
+    );
+  return best
+    ? { confidence: best.confidence, source: best.source }
+    : { confidence: null, source: null };
+}
+
+// The temporally-bound deictic referents (KD4/KD5): each `fusion` pointing-
+// evidence entry the temporal binder emitted for a deictic word ("this"/"that"),
+// carrying the surface it bound to and the confidence behind it. The binder
+// stamps the bound word + sample time in `strategy` (`temporal-bind:<word>@<ts>`),
+// surfaced here so the model knows WHICH deictic resolved to WHICH window — the
+// signal that was previously assembled but withheld from the model.
+function boundReferentsFor(input: IntentInput) {
+  return input.pointingEvidence
+    .filter((e) => e.source === "fusion" && e.surface !== undefined)
+    .map((e) => ({
+      word: deicticWordFromStrategy(e.strategy),
+      surfaceId: e.surface?.id ?? null,
+      app: e.surface?.app ?? null,
+      title: e.surface?.title ?? null,
+      confidence: e.confidence,
+      strategy: e.strategy,
+    }));
+}
+
+// Recover the deictic word the binder stamped into `temporal-bind:<word>@<ts>`,
+// so the presented referent reads "this → Notes" rather than a bare surface id.
+// Null for a fusion strategy that doesn't follow the temporal-bind shape.
+function deicticWordFromStrategy(strategy: string): string | null {
+  const match = /^temporal-bind:([^@]+)@/.exec(strategy);
+  return match?.[1] ?? null;
 }
 
 export function buildResolveIntentMessages(input: IntentInput): ResolveIntentMessage[] {
@@ -162,7 +220,13 @@ const NEXT_TOOL_CALL_SYSTEM_PROMPT =
   "Return status `done` with a `summary` when the goal is already satisfied. Return `clarify` " +
   "or `blocked` with a `reason` only when the target is genuinely ambiguous, impossible, or " +
   "unsafe. Always give a one-line `rationale` for an `act`. Prefer reversible/draft actions; " +
-  "the supervisor approves anything that commits (sends/deletes/etc.).";
+  "the supervisor approves anything that commits (sends/deletes/etc.).\n" +
+  "`boundReferents` lists each deictic word the user spoke (this/that/here/…) already RESOLVED " +
+  "to the surface they were pointing at WHILE saying it, with a confidence. Trust these over " +
+  "your own guess: when the goal says 'type X in this and Y in that', map the first deictic to " +
+  "its bound surface and the second to its own — do NOT collapse them to one target or ask for " +
+  "clarification when a referent is bound. `candidateSurfaces` carries the same pointing " +
+  "`confidence`/`source` per surface so you can pick the strongest when no deictic is bound.";
 
 function toolMenu(tools: readonly DriverToolDefinition[]) {
   return tools.map((tool) => ({
@@ -190,7 +254,10 @@ export function buildNextToolCallMessages(
         },
         latestSnapshot: snapshot,
         recentResults: recentResults(observations),
-        candidateSurfaces: candidateSurfacesFor(input),
+        // Deictic words pre-bound to the surface pointed at as they were spoken
+        // (KD5) — the model acts on these instead of guessing a single target.
+        boundReferents: boundReferentsFor(input),
+        candidateSurfaces: candidateSurfacesFor(input, input.pointingEvidence),
         availableTools: toolMenu(tools),
       }),
     },

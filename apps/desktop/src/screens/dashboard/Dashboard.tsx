@@ -42,7 +42,7 @@ import {
   createIntentWorkerResolver,
   useVoiceCuaController,
 } from "../../features/voice-cua/useVoiceCuaController";
-import type { ResolveIntentOptions } from "@handsoff/intent";
+import type { AttentionWindow, ResolveIntentOptions } from "@handsoff/intent";
 import type { IntentInput, ResolvedIntent } from "@handsoff/contracts";
 import type { SupervisionSession } from "@handsoff/supervision";
 
@@ -132,6 +132,12 @@ export function Dashboard({
     createCaptureTrace({ now: () => Date.now(), performanceNow: () => performance.now() }),
   );
   const lastCaptureTrace = useRef<CaptureTrace | null>(null);
+  // Live pointable-window layout (U7): the connected displays as AttentionWindows
+  // (surface + bounds), published by the CameraPanel. The controller reads it at
+  // intent time so the temporal binder can resolve a hand candidate's targetId to
+  // a surface and rank a head point. A ref (not state) avoids re-rendering on a
+  // display change; the binder only needs the latest layout.
+  const pointableWindows = useRef<readonly AttentionWindow[]>([]);
   const intentResolver =
     resolveIntent ??
     (hasTauriBackend()
@@ -158,6 +164,11 @@ export function Dashboard({
     targetResolveDelayMs,
     getGestureEvidence: () => gestureEvidence.current,
     getGestureCursor: () => gestureCursor.current,
+    // U7: the just-closed capture trace + the live pointable-window layout feed
+    // the temporal binder so each deictic word binds to the surface pointed at
+    // while it was spoken (multi-target). Null/empty → snapshot fallback.
+    getCaptureTrace: () => lastCaptureTrace.current,
+    getPointableWindows: () => pointableWindows.current,
   });
 
   // Drive the capture-trace recorder off the SAME capture-hotkey edges that arm
@@ -318,6 +329,9 @@ export function Dashboard({
               phase: sample.phase,
             })
           }
+          onPointableWindows={(windows) => {
+            pointableWindows.current = windows;
+          }}
         />
         <ReferentsPanel intent={intent} />
         <ReadinessPanel report={report} />

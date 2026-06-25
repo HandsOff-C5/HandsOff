@@ -1,15 +1,19 @@
 import { createFakeCuaDriver, cuaBlocked, cuaFailed } from "@handsoff/cua";
 import type {
   IntentInput,
+  PointingCandidate,
   PointingEvidence,
   ResolvedIntent,
   SurfaceSnapshot,
+  TranscriptWord,
 } from "@handsoff/contracts";
+import type { AttentionWindow } from "@handsoff/intent";
 import { fakeCuaWindowState } from "@handsoff/testkit";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { createIntentWorkerResolver, useVoiceCuaController } from "./useVoiceCuaController";
+import type { CaptureTrace } from "../capture-trace";
 import type { HeadPointingSnapshot } from "../head-pointing/useHeadPointing";
 
 const NOW = "2026-06-22T12:00:00.000Z";
@@ -1369,3 +1373,225 @@ function currentAppSurface(): SurfaceSnapshot {
     accessStatus: "accessible",
   };
 }
+
+// U7: the capture trace (U5) + per-word timings (U4) feed the temporal binder
+// (U6) inside createIntent, so each deictic word binds to the surface pointed at
+// while it was spoken — multiple targets in one utterance reach surfaceCandidates
+// and the prompt. The fallback (no trace/words) leaves the single end-of-speech
+// snapshot as the sole signal, exactly as before.
+describe("U7 temporal multi-target binding into IntentInput", () => {
+  // Two displays as pointable windows: Notes on the left, Slack on the right. A
+  // hand candidate's targetId is a window/surface id; the binder resolves it here.
+  const notesSurface: SurfaceSnapshot = {
+    id: "win-notes",
+    title: "Notes",
+    app: "Notes",
+    availability: "available",
+    accessStatus: "accessible",
+  };
+  const slackSurface: SurfaceSnapshot = {
+    id: "win-slack",
+    title: "Slack",
+    app: "Slack",
+    availability: "available",
+    accessStatus: "accessible",
+  };
+  const pointableWindows: readonly AttentionWindow[] = [
+    { surface: notesSurface, bounds: { x: 0, y: 0, width: 400, height: 400 } },
+    { surface: slackSurface, bounds: { x: 1000, y: 0, width: 400, height: 400 } },
+  ];
+
+  function word(text: string, startMs: number, endMs: number): TranscriptWord {
+    return { text, startMs, endMs, confidence: 0.9 };
+  }
+
+  function handAt(tsMs: number, targetId: string): CaptureTrace["handTrace"][number] {
+    const candidate: PointingCandidate = { targetId, confidence: 0.85, calibrationQuality: "good" };
+    return {
+      x: targetId === "win-notes" ? 200 : 1200,
+      y: 200,
+      candidate,
+      phase: "locked",
+      tsMs,
+    };
+  }
+
+  // "type Laura in THIS [@1000–1300] and hello goodbye in THAT [@9000–9300]" with
+  // the hand pointing at Notes while "this" was spoken and Slack while "that" was.
+  const twoTargetWords: readonly TranscriptWord[] = [
+    word("type", 100, 300),
+    word("Laura", 300, 600),
+    word("in", 600, 800),
+    word("this", 1000, 1300),
+    word("and", 8000, 8200),
+    word("hello", 8200, 8500),
+    word("goodbye", 8500, 8900),
+    word("in", 8900, 9000),
+    word("that", 9000, 9300),
+  ];
+  const twoTargetTrace: CaptureTrace = {
+    headTrace: [],
+    handTrace: [handAt(1100, "win-notes"), handAt(9100, "win-slack")],
+    words: twoTargetWords,
+  };
+
+  const twoTargetTranscript = {
+    kind: "final" as const,
+    text: "type Laura in this and hello goodbye in that",
+    confidence: 0.95,
+    latencyMs: 100,
+    receivedAt: 1,
+    words: twoTargetWords,
+  };
+
+  it("binds two deictic words to two distinct surfaces in surfaceCandidates and pointingEvidence", async () => {
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    const resolveIntent = vi.fn(async (input: IntentInput) => satisfied(input, "bound"));
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: null, candidates: [] },
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+        getCaptureTrace: () => twoTargetTrace,
+        getPointableWindows: () => pointableWindows,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(twoTargetTranscript));
+
+    await waitFor(() => expect(resolveIntent).toHaveBeenCalled());
+    const input = resolveIntent.mock.calls[0]![0];
+
+    // Both bound surfaces reach the loop as candidates, so it can target each
+    // across successive ticks ("type X in this … type Y in that").
+    const candidateIds = input.surfaceCandidates.map((s) => s.id);
+    expect(candidateIds).toContain("win-notes");
+    expect(candidateIds).toContain("win-slack");
+
+    // Each deictic produced its own fusion (temporal-bind) evidence, stamped with
+    // the bound word + the sample timestamp.
+    const fusion = input.pointingEvidence.filter((e) => e.source === "fusion");
+    expect(fusion).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "fusion",
+          strategy: "temporal-bind:this@1100",
+          surface: expect.objectContaining({ id: "win-notes" }),
+        }),
+        expect.objectContaining({
+          source: "fusion",
+          strategy: "temporal-bind:that@9100",
+          surface: expect.objectContaining({ id: "win-slack" }),
+        }),
+      ]),
+    );
+    // The two bound referents are distinct surfaces (the Notes/Slack case).
+    const fusionIds = fusion.map((e) => e.surface?.id);
+    expect(new Set(fusionIds).size).toBe(2);
+  });
+
+  it("carries the bound-referent confidence into the built next-tool-call prompt", async () => {
+    // Capture the messages the resolver was handed by routing through the real
+    // worker-proxy resolver: it serializes buildNextToolCallMessages into the
+    // invoke payload, so we can assert the bound referents reached the model.
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    const invoke = vi.fn(async () => ({
+      choices: [{ finish_reason: "stop", message: { parsed: { status: "done", summary: "ok" } } }],
+    }));
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: null, candidates: [] },
+        now: () => NOW,
+        resolveIntent: createIntentWorkerResolver(invoke),
+        targetResolveDelayMs: 0,
+        getCaptureTrace: () => twoTargetTrace,
+        getPointableWindows: () => pointableWindows,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(twoTargetTranscript));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalled());
+    const { request } = invoke.mock.calls[0]![1] as {
+      request: { messages: { role: string; content: string }[] };
+    };
+    const userPayload = JSON.parse(request.messages[1]!.content);
+    expect(userPayload.boundReferents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ word: "this", surfaceId: "win-notes", confidence: 0.85 }),
+        expect.objectContaining({ word: "that", surfaceId: "win-slack", confidence: 0.85 }),
+      ]),
+    );
+  });
+
+  it("falls back to the end-of-speech snapshot when there is no trace (non-binding flow unchanged)", async () => {
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: headPointing(),
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+        // No getCaptureTrace → the binder never runs.
+        getPointableWindows: () => pointableWindows,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+
+    await waitFor(() => expect(resolveIntent).toHaveBeenCalled());
+    const input = resolveIntent.mock.calls[0]![0];
+    // No fusion (bound) evidence — identical to today's head-snapshot path.
+    expect(input.pointingEvidence.some((e) => e.source === "fusion")).toBe(false);
+    expect(input.pointingEvidence).toEqual([
+      {
+        source: "head",
+        confidence: 0.5,
+        strategy: "face-tracker-position",
+        cursor: { x: 10, y: 20 },
+      },
+      {
+        source: "head",
+        confidence: 0.9,
+        strategy: "head-neighborhood",
+        surface: surface(),
+        cursor: { x: 10, y: 20 },
+      },
+    ]);
+    expect(input.surfaceCandidates).toEqual([surface()]);
+  });
+
+  it("falls back to the snapshot when a trace exists but the transcript carries no words", async () => {
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    const resolveIntent = vi.fn(async (input: IntentInput) => ready(input));
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: headPointing(),
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+        // A trace with samples but NO words on either the trace or the transcript →
+        // the binder has nothing to align against, so nothing binds.
+        getCaptureTrace: () => ({
+          headTrace: [],
+          handTrace: [handAt(1100, "win-notes")],
+          words: [],
+        }),
+        getPointableWindows: () => pointableWindows,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+
+    await waitFor(() => expect(resolveIntent).toHaveBeenCalled());
+    const input = resolveIntent.mock.calls[0]![0];
+    expect(input.pointingEvidence.some((e) => e.source === "fusion")).toBe(false);
+    expect(input.surfaceCandidates).toEqual([surface()]);
+  });
+});

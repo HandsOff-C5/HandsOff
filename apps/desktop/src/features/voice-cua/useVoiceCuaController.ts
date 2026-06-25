@@ -19,7 +19,12 @@ import {
   type ToolCallTarget,
 } from "@handsoff/contracts";
 import { createToolCatalog, cuaResultToActionResult, type CuaDriver } from "@handsoff/cua";
-import { resolveNextToolCall, type ResolveNextToolCallOptions } from "@handsoff/intent";
+import {
+  bindTemporalDeixis,
+  resolveNextToolCall,
+  type AttentionWindow,
+  type ResolveNextToolCallOptions,
+} from "@handsoff/intent";
 import {
   createActionAuditStore,
   createSupervisionSessionStore,
@@ -30,6 +35,7 @@ import { useRef, useState } from "react";
 
 import { makeApprovalDecision } from "../plan-preview/usePlanApproval";
 import type { HeadPointingSnapshot } from "../head-pointing/useHeadPointing";
+import type { CaptureTrace } from "../capture-trace";
 
 const ACTIVE_WINDOW_SURFACE: SurfaceSnapshot = {
   id: "active-window",
@@ -286,6 +292,19 @@ export function useVoiceCuaController(args: {
   // The live gesture cursor position (even without a locked referent). Provided per-frame
   // by the CameraPanel and combined with head/face evidence in intent fusion.
   getGestureCursor?: () => { x: number; y: number } | null;
+  // The most recent CLOSED capture trace (U5): the timestamped head + hand + word
+  // streams for the just-finished utterance, on one epoch-ms clock. When present
+  // (with per-word timings), the temporal binder (U6) aligns each deictic word
+  // with the surface pointed at while it was spoken — multiple targets in one
+  // utterance (U7). Null on a non-capture utterance → the single end-of-speech
+  // snapshot below is the fallback, so non-binding flows are unchanged.
+  getCaptureTrace?: () => CaptureTrace | null;
+  // The pointable windows (surface + screen bounds) the binder ranks a head point
+  // against and resolves a hand candidate's targetId to. Sourced live from the
+  // gesture pipeline's display layout (each monitor is one pointable surface).
+  // Empty when the camera/overlay hasn't reported a layout yet → the binder simply
+  // cannot resolve a surface and leaves the deictic to the snapshot fallback.
+  getPointableWindows?: () => readonly AttentionWindow[];
   // Per-goal autonomous-loop ceiling on executed tool calls (default
   // DEFAULT_TOOL_CALL_BUDGET). The loop stops with a clear blocked reason at the
   // ceiling so a misfiring loop cannot run away.
@@ -322,6 +341,33 @@ export function useVoiceCuaController(args: {
           availability: "unknown" as const,
           accessStatus: "unknown" as const,
         };
+  }
+
+  // Run the temporal binder (U6) over the just-closed capture trace + the final
+  // transcript's per-word timeline, returning the bound deictic referents as
+  // `fusion` PointingEvidence. Returns [] when there is no trace, no per-word
+  // timings, or no pointable windows to resolve a surface against — so the
+  // snapshot path stays the only signal (fallback). The words on the trace (sealed
+  // by the recorder at finalize) and on the final transcript are the same U4
+  // timeline; prefer the transcript's so a binder run never depends on recorder
+  // timing, falling back to the trace's words when the transcript omits them.
+  function bindUtterance(finalTranscript: FinalTranscript): PointingEvidence[] {
+    const trace = args.getCaptureTrace?.() ?? null;
+    if (!trace) return [];
+    const words = finalTranscript.words ?? trace.words;
+    if (!words || words.length === 0) return [];
+    const windows = args.getPointableWindows?.() ?? [];
+    if (windows.length === 0) return [];
+
+    const bindings = bindTemporalDeixis({
+      words,
+      headTrace: trace.headTrace,
+      handTrace: trace.handTrace,
+      windows,
+    });
+    return bindings
+      .map((binding) => binding.evidence)
+      .filter((evidence): evidence is PointingEvidence => evidence !== null);
   }
 
   async function createIntent(finalTranscript: FinalTranscript) {
@@ -381,7 +427,24 @@ export function useVoiceCuaController(args: {
         ...(headPointing.point && { cursor: headPointing.point }),
       });
     }
-    // Fallback to active window only when no gesture or head evidence is available.
+
+    // Timestamped multi-target binding (U7): when the recorder handed back a trace
+    // for this utterance AND the transcript carries per-word timings, align each
+    // deictic word ("this"/"that") with the surface that was pointed at WHILE it
+    // was spoken (U6), and prepend those bound referents as `fusion` evidence.
+    // They lead the array so their surfaces win the dedup below (a temporally
+    // bound deictic is the strongest target signal), and each distinct bound
+    // surface becomes its own candidate — so "type X in this and Y in that"
+    // reaches the loop with BOTH targets. When there is no trace/words (a
+    // non-capture utterance) this contributes nothing and the single
+    // end-of-speech snapshot above stays the sole signal — fallback preserved.
+    const boundEvidence = bindUtterance(finalTranscript);
+    if (boundEvidence.length > 0) {
+      pointingEvidence.unshift(...boundEvidence);
+    }
+
+    // Fallback to active window only when no gesture, head, or bound evidence is
+    // available.
     if (pointingEvidence.length === 0) {
       pointingEvidence.push({
         source: "cursor",
