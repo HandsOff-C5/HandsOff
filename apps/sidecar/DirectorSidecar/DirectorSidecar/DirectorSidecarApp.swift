@@ -40,17 +40,43 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
 /// event delivery if created during `App.init()` — are only constructed when `start()` is invoked
 /// from `applicationDidFinishLaunching`, i.e. after AppKit has finished wiring the app's event routing.
 @MainActor final class SurfaceHost {
+    /// The ambient "WORKING" edge pill (G3 micro-HUD) is parked — product hasn't committed to showing
+    /// it in the end-user experience. Flip to `true` to bring it (and its idle edge-reveal) back.
+    static let showsMicroHUD = false
+
     private var hud: HUDPanelController?
     private var micro: MicroHUDController?
     private var overlay: OverlayController?
+    private var fnMonitor: Any?
+    private var fnHeld = false
 
     func start(hud hudModel: HUDModel, micro microModel: MicroHUDModel,
                overlay overlayModel: OverlayModel, gaze: GazeBracketModel,
                onOpenHome: @escaping () -> Void) {
         guard hud == nil else { return }   // once only
         hud = HUDPanelController(model: hudModel, edge: .trailing)
-        micro = MicroHUDController(model: microModel, fullHUD: hudModel, onOpenHome: onOpenHome)
+        if Self.showsMicroHUD {
+            micro = MicroHUDController(model: microModel, fullHUD: hudModel, onOpenHome: onOpenHome)
+        }
         overlay = OverlayController(model: overlayModel, gaze: gaze)
+    }
+
+    /// Mock fn-key activation (the "fn" of this build): hold the fn/🌐 key while Director is frontmost
+    /// → onHold(true); release → onHold(false). Local monitor, so no Accessibility prompt — works when
+    /// Director is the active app. (Holding fn while pointing at *other* apps needs a global monitor +
+    /// Accessibility; that's the next step. macOS fn behavior should be set to "Do Nothing" to avoid
+    /// the system intercepting it.)
+    func installFnHold(_ onHold: @escaping (Bool) -> Void) {
+        guard fnMonitor == nil else { return }
+        fnMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            let held = event.modifierFlags.contains(.function)
+            MainActor.assumeIsolated {
+                guard let self, held != self.fnHeld else { return }
+                self.fnHeld = held
+                onHold(held)
+            }
+            return event
+        }
     }
 }
 
@@ -94,8 +120,12 @@ struct DirectorSidecarApp: App {
             gaze.setActive(on)     // eye-gaze brackets shown while active
             #if DEBUG
             activation?.cancel()
-            if on, DevMockFleet.isEnabled {
-                activation = Task { await DevMockFleet.activationLoop(dispatch: dispatch, now: Date()) }
+            if DevMockFleet.isEnabled {
+                if on {
+                    activation = Task { await DevMockFleet.activationLoop(dispatch: dispatch, now: Date()) }
+                } else {
+                    dispatch(.cursor(pointers: [])) // mock: clear the agent cursors the loop drew
+                }
             }
             #endif
         }
@@ -119,6 +149,8 @@ struct DirectorSidecarApp: App {
             MainActor.assumeIsolated {
                 surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze,
                                onOpenHome: { store.send(.openHome) })
+                // fn press-and-hold drives the mock activation (hold → overlays up, release → down).
+                surfaces.installFnHold { held in store.send(held ? .startListening : .stopListening) }
             }
         }
 
