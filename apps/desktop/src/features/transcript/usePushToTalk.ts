@@ -1,4 +1,4 @@
-import type { FinalTranscript, SttError, SttStream } from "@handsoff/contracts";
+import type { FinalTranscript, SttError, SttStream, TranscriptWord } from "@handsoff/contracts";
 import type { CaptureStatus } from "@handsoff/speech";
 import { createCaptureController } from "@handsoff/speech";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -17,6 +17,10 @@ export interface UtteranceEntry {
   readonly text: string;
   readonly confidence: number;
   readonly latencyMs: number;
+  // The endpointed per-word epoch-ms timeline, when the provider exposed one.
+  // Carried so the temporal binder can align deictic words with pointing
+  // samples; absent on the on-device / no-words path.
+  readonly words?: ReadonlyArray<TranscriptWord>;
 }
 
 export interface PushToTalkState {
@@ -105,5 +109,6 @@ function toEntry(utterance: FinalTranscript): UtteranceEntry {
     text: utterance.text,
     confidence: utterance.confidence,
     latencyMs: utterance.latencyMs,
+    ...(utterance.words ? { words: utterance.words } : {}),
   };
 }

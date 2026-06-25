@@ -123,6 +123,33 @@ describe("FakeSttStream — partial and final events", () => {
     expect(final.latencyMs).toBe(0);
   });
 
+  it("omits words when none are supplied", async () => {
+    const { stream, events } = await openStream();
+    stream.emitFinal("hello");
+    const final = asTranscript(events[0]!) as FinalTranscript;
+    expect(final.words).toBeUndefined();
+  });
+
+  it("carries a per-word epoch-ms timeline on emitFinal when supplied", async () => {
+    const { stream, events } = await openStream();
+    stream.emitFinal("type this", 0.9, 100, [
+      { text: "type", startMs: 1000, endMs: 1200, confidence: 0.9 },
+      { text: "this", startMs: 1200, endMs: 1500, confidence: 0.8 },
+    ]);
+    const final = asTranscript(events[0]!) as FinalTranscript;
+    expect(final.words?.map((w) => w.text)).toEqual(["type", "this"]);
+    expect(final.words?.[1]?.startMs).toBe(1200);
+  });
+
+  it("carries words on emitPartial too", async () => {
+    const { stream, events } = await openStream();
+    stream.emitPartial("type", 0.6, 0, [
+      { text: "type", startMs: 1000, endMs: 1200, confidence: 0.6 },
+    ]);
+    const partial = asTranscript(events[0]!);
+    expect(partial.words?.[0]?.text).toBe("type");
+  });
+
   it("records every emitted event in emittedEvents for downstream assertions", async () => {
     const { stream } = await openStream();
     stream.emitPartial("a");
