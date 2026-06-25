@@ -16,9 +16,13 @@ struct MenuBarLabel: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        // SF Symbol so the status item is always visible + auto-templates to the menu-bar
-        // appearance (the custom brand Template-Image asset is a later design drop-in).
-        Image(systemName: "cursorarrow.rays")
+        // The Template-Image asset, explicitly sized so the status item is visible (a MenuBarExtra
+        // label needs a concrete frame). Template-rendered → auto-tints to the menu-bar appearance.
+        Image("Template-Image")
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 18, height: 18)
             .overlay(alignment: .topTrailing) {
                 if readiness != .ready {
                     Circle()
