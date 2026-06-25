@@ -45,6 +45,8 @@ struct CursorPositionPayload: Codable, Sendable { let pointers: [Pointer] }
 enum BridgeFrame: Decodable {
     case state(topic: String, readiness: ReadinessPayload?)
     case cursor(pointers: [Pointer])
+    case sessions(SessionsPayload)
+    case runResult(RunResultPayload)
     case error(reason: String)
     case unknown(type: String)
 
@@ -64,6 +66,10 @@ enum BridgeFrame: Decodable {
                 self = .state(topic: topic, readiness: try c.decodeIfPresent(ReadinessPayload.self, forKey: .payload))
             case "cursorPosition":
                 self = .cursor(pointers: try c.decode(CursorPositionPayload.self, forKey: .payload).pointers)
+            case "sessions":
+                self = .sessions(try c.decode(SessionsPayload.self, forKey: .payload))
+            case "runResult":
+                self = .runResult(try c.decode(RunResultPayload.self, forKey: .payload))
             default:
                 self = .state(topic: topic, readiness: nil)
             }
