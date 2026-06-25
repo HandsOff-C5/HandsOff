@@ -56,11 +56,19 @@ enum DevMockFleet {
     static func drive(
         dispatch: @escaping (BridgeFrame) -> Void,
         setState: @escaping (ConnectionState) -> Void,
+        activate: @escaping (Bool) -> Void,
         now: Date
     ) async {
         setState(.connected)
         dispatch(.state(topic: "readiness", readiness: allCapsGranted))
         dispatch(.sessions(fleet(now: now)))
+
+        activate(true) // fn-active → the three overlays come up (Director cursor + brackets)
+
+        // G7 eye-gaze brackets morph: a small control → a larger block (eased, not snapped).
+        dispatch(.gaze(GazeFocus(bounds: GazeRegion(x: 380, y: 240, w: 120, h: 36), confidence: 0.92, sizeClass: "element", ts: 100)))
+        try? await Task.sleep(for: .seconds(1.4))
+        dispatch(.gaze(GazeFocus(bounds: GazeRegion(x: 320, y: 300, w: 460, h: 220), confidence: 0.9, sizeClass: "block", ts: 200)))
 
         // HUD read-only loop (G2a): a read_only intent that auto-runs (no footer).
         try? await Task.sleep(for: .seconds(1.2))

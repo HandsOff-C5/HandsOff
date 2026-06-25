@@ -19,11 +19,13 @@ final class OverlayWindow: NSWindow {
 @MainActor
 final class OverlayController {
     private let model: OverlayModel
+    private let gaze: GazeBracketModel
     private var window: OverlayWindow?
     private var mouseMonitor: Any?
 
-    init(model: OverlayModel) {
+    init(model: OverlayModel, gaze: GazeBracketModel) {
         self.model = model
+        self.gaze = gaze
         observeVisibility()
         startMouseMonitor()
         NotificationCenter.default.addObserver(
@@ -32,9 +34,13 @@ final class OverlayController {
         )
     }
 
+    /// The one passthrough window shows when EITHER the cursors or the gaze brackets are visible.
+    private var shouldShow: Bool { model.isVisible || gaze.isVisible }
+
     private func observeVisibility() {
         withObservationTracking {
             _ = model.isVisible
+            _ = gaze.isVisible
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -45,7 +51,7 @@ final class OverlayController {
     }
 
     private func applyVisibility() {
-        if model.isVisible { show() } else { hide() }
+        if shouldShow { show() } else { hide() }
     }
 
     private func startMouseMonitor() {
@@ -59,9 +65,9 @@ final class OverlayController {
     }
 
     private func show() {
-        let window = window ?? makeWindow()
-        self.window = window
-        window.orderFrontRegardless() // never makeKey/activate — must not steal focus
+        let shownWindow = window ?? makeWindow()
+        self.window = shownWindow
+        shownWindow.orderFrontRegardless() // never makeKey/activate — must not steal focus
     }
 
     private func hide() { window?.orderOut(nil) }
@@ -75,10 +81,15 @@ final class OverlayController {
         window.level = .screenSaver
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         window.ignoresMouseEvents = true
-        // Click-through is enforced by the window (ignoresMouseEvents) + the view's
-        // .allowsHitTesting(false); the host NSView needs no extra config.
+        // One passthrough window hosts both overlay layers: the gaze brackets (behind) + the
+        // cursors (in front). Click-through is enforced by the window (ignoresMouseEvents) + the
+        // views' .allowsHitTesting(false); the host NSView needs no extra config.
+        let primaryHeight = frame.height
         window.contentView = NSHostingView(rootView: ThemedRoot {
-            ReticleOverlayView(model: model, primaryHeight: frame.height)
+            ZStack {
+                GazeBracketLayer(model: gaze)
+                ReticleOverlayView(model: model, primaryHeight: primaryHeight)
+            }
         })
         return window
     }

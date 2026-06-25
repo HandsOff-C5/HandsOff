@@ -50,6 +50,7 @@ enum BridgeFrame: Decodable {
     case transcript(TranscriptEvent)
     case referents(ReferentsPayload)
     case intent(ResolvedIntentLite)
+    case gaze(GazeFocus)
     case error(reason: String)
     case unknown(type: String)
 
@@ -79,6 +80,8 @@ enum BridgeFrame: Decodable {
                 self = .referents(try c.decode(ReferentsPayload.self, forKey: .payload))
             case "intent":
                 self = .intent(try c.decode(ResolvedIntentLite.self, forKey: .payload))
+            case "gazeFocus":
+                self = .gaze(try c.decode(GazeFocus.self, forKey: .payload))
             default:
                 self = .state(topic: topic, readiness: nil)
             }

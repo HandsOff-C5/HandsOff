@@ -16,4 +16,12 @@ enum ScreenGeometry {
     static func cocoaPoint(contractX: Double, contractY: Double, primaryMaxY: CGFloat) -> CGPoint {
         CGPoint(x: contractX, y: primaryMaxY - contractY)
     }
+
+    /// Convert a contract rect (top-left origin, y-down) to a Cocoa rect (bottom-left, y-up). The
+    /// Cocoa origin is the rect's BOTTOM-left, so y flips around the bottom edge (y + h).
+    static func cocoaRect(
+        x: Double, y: Double, w: Double, h: Double, primaryMaxY: CGFloat
+    ) -> CGRect {
+        CGRect(x: x, y: primaryMaxY - (y + h), width: w, height: h)
+    }
 }
