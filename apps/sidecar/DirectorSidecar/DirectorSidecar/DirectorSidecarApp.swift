@@ -17,14 +17,21 @@ import AppKit
 final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        // After SwiftUI installs its windows, make the Dashboard the key window (the overlay/HUD
-        // are non-key panels, so nothing else claims it) — without this its content stays unclickable.
-        DispatchQueue.main.async {
-            let dashboard = NSApp.windows.first { $0.title == "Director" }
-                ?? NSApp.windows.first { $0.canBecomeKey && !($0 is NSPanel) }
-            dashboard?.makeKeyAndOrderFront(nil)
-        }
+        NSApp.activate()
+        makeDashboardKey()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.makeDashboardKey() }
+    }
+
+    // The overlay/HUD are non-key floating panels, so nothing claims key on its own — force the
+    // Dashboard to become key whenever the app activates, or its content stays unclickable.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        makeDashboardKey()
+    }
+
+    private func makeDashboardKey() {
+        let dashboard = NSApp.windows.first { $0.title == "Director" }
+            ?? NSApp.windows.first { $0.canBecomeKey && !($0 is NSPanel) && !$0.className.contains("StatusBar") }
+        dashboard?.makeKeyAndOrderFront(nil)
     }
 }
 
