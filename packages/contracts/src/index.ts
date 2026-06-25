@@ -9,4 +9,5 @@ export * from "./intent";
 export * from "./readiness";
 export * from "./referent";
 export * from "./surface";
+export * from "./tool-risk";
 export * from "./transcript";

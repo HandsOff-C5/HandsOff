@@ -1,12 +1,15 @@
-import { riskLevelRequiresApproval } from "@handsoff/contracts";
+import { riskForToolCall, riskLevelRequiresApproval } from "@handsoff/contracts";
 import type {
   ActionPlan,
   ApprovalDecision,
   CuaActionRequest,
   CuaActionResult,
   CuaWindowState,
+  DriverTool,
   ExecutionStatus,
+  RiskLevel,
   SupervisionAuditEvent,
+  ToolCallTarget,
 } from "@handsoff/contracts";
 
 import { translateStep } from "./translate-plan";
@@ -243,4 +246,36 @@ function recordState(
     recordedAt,
     state,
   });
+}
+
+// Per-call gate for the agentic loop (U3 wires this in; this unit only provides
+// the pure helper). Mirrors `requiredApprovalResult` above but keyed on a single
+// tool call instead of a whole ActionPlan: the gate is DERIVED from the tool's
+// risk (via `riskForToolCall`) and NEVER from a model-supplied claim, so a model
+// that labels a `click` on "Send" as read_only cannot bypass approval.
+//
+// `allowed` is true when the call may run now: either its risk auto-runs
+// (read_only/reversible) or a matching approval has been granted. When blocked,
+// `result` carries the same shape `runApprovedPlan` records, so the loop can
+// audit it identically.
+export type ToolCallGateResult =
+  | { allowed: true; risk: RiskLevel }
+  | { allowed: false; risk: RiskLevel; result: Extract<CuaActionResult, { status: "blocked" }> };
+
+export function gateToolCall(args: {
+  tool: DriverTool;
+  target?: ToolCallTarget;
+  approved?: boolean;
+}): ToolCallGateResult {
+  const risk = riskForToolCall(args.tool, args.target);
+  if (!riskLevelRequiresApproval(risk)) return { allowed: true, risk };
+  if (args.approved) return { allowed: true, risk };
+  return {
+    allowed: false,
+    risk,
+    result: {
+      status: "blocked",
+      reason: `Approval required before executing ${riskLabel(risk)} tool ${args.tool}`,
+    },
+  };
 }
