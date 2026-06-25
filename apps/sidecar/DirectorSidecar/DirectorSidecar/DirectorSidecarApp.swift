@@ -123,17 +123,20 @@ struct DirectorSidecarApp: App {
         store.onListeningChanged = { on in
             hud.setListening(on)
             micro.setListening(on)
-            overlay.setActive(on)  // Director cursor hugs the system cursor while active
-            gaze.setActive(on)     // eye-gaze brackets shown while active
-            rail.setListening(on)  // the rail's LIVE pip lights while listening
+            overlay.setActive(on)  // the one Director cursor hugs the system cursor while active
+            // Eye-gaze brackets: seed a deterministic centered region so they appear on activation,
+            // before real gaze CV drives them (point/size morphing lands with the engine publisher).
+            let screen = NSScreen.main?.frame.size ?? CGSize(width: 1440, height: 900)
+            gaze.setActive(on, seed: on ? GazeBracketModel.centeredRegion(in: screen) : nil)
+            rail.setListening(on)  // the rail's LIVE pip lights while active
             #if DEBUG
+            // The scripted intention journey (transcript → intent → traveling cursors → full HUD) is
+            // parked behind `runsScriptedActivation`. Activation shows only the three ambient overlays
+            // unless it's flipped on (the later "populate the flow" step).
             activation?.cancel()
-            if DevMockFleet.isEnabled {
-                if on {
-                    activation = Task { await DevMockFleet.activationLoop(dispatch: dispatch, now: Date()) }
-                } else {
-                    dispatch(.cursor(pointers: [])) // mock: clear the agent cursors the loop drew
-                }
+            if DevMockFleet.isEnabled, DevMockFleet.runsScriptedActivation {
+                activation = on ? Task { await DevMockFleet.activationLoop(dispatch: dispatch, now: Date()) } : nil
+                if !on { dispatch(.cursor(pointers: [])) } // clear the agent cursors the loop drew
             }
             #endif
         }
@@ -225,7 +228,7 @@ struct DirectorSidecarApp: App {
         }
         .commands {
             CommandMenu("Director") {
-                Button("Toggle Listening") { toggleListening() }
+                Button("Activate Director") { toggleListening() }
                     .keyboardShortcut("d", modifiers: [.command, .option])
             }
         }

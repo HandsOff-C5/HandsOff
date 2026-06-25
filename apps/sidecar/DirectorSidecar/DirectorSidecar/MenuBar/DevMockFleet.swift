@@ -24,6 +24,12 @@ enum DevMockFleet {
         ProcessInfo.processInfo.environment["DIRECTOR_MOCK_DESTRUCTIVE"] == "1"
     }
 
+    /// The scripted "intention journey" (transcript → referents → intent → traveling agent cursors
+    /// → full HUD) is PARKED. Activating Director should show only the three ambient overlays (rail
+    /// waveform, centered gaze brackets, one hugging cursor), not a fake end-to-end run. Flip to
+    /// true to replay the full mock flow — the later step that wires up the populated experience.
+    static let runsScriptedActivation = false
+
     static let allCapsGranted = ReadinessPayload(capabilities: [
         CapabilityProbe(id: "camera", kind: "permission", state: "granted"),
         CapabilityProbe(id: "microphone", kind: "permission", state: "granted"),
@@ -86,9 +92,9 @@ enum DevMockFleet {
         dispatch(.intent(mockIntent(destructive: isDestructive)))
     }
 
-    /// Activation loop (fired when the user toggles Listening on): the eye-gaze brackets morph,
-    /// the Listening HUD fills (transcript → referents → intent), and the agent cursors travel.
-    /// Cancelled when the user toggles off. No runResult — the HUD stays up until dismissed.
+    /// Activation loop — PARKED behind `runsScriptedActivation` (off). When replayed: the eye-gaze
+    /// brackets morph, the Listening HUD fills (transcript → referents → intent), and the agent
+    /// cursors travel. Cancelled when the user toggles off. No runResult — the HUD stays up.
     @MainActor
     static func activationLoop(dispatch: @escaping (BridgeFrame) -> Void, now: Date) async {
         // A cancellation-aware pause: returns false the moment the loop is cancelled (toggle off),

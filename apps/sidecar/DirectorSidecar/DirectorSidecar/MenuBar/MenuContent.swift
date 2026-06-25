@@ -3,7 +3,7 @@
 //  DirectorSidecar
 //
 //  The glass dropdown body for MenuBarExtra(.window) (G1). Renders every enumerated menu state
-//  from the BridgeStore: readiness header, Start Listening (disabled/active), the AGENTS section
+//  from the BridgeStore: readiness header, Activate Director (disabled/active), the AGENTS section
 //  + live rows / empty placeholder, Pause all (enabled iff running), Open Home, Preferences,
 //  Quit, and the connection banner. Glass → opaque under Reduce Transparency.
 //
@@ -23,8 +23,8 @@ struct MenuContent: View {
             divider
 
             MenuActionRow(
-                icon: store.isListening ? "stop.fill" : "waveform",
-                title: store.isListening ? "Stop Listening" : "Start Listening",
+                icon: store.isListening ? "stop.fill" : "viewfinder",
+                title: store.isListening ? "Deactivate Director" : "Activate Director",
                 trailing: "⌥⌘D", enabled: store.canListen, active: store.isListening
             ) { store.send(store.isListening ? .stopListening : .startListening) }
 
