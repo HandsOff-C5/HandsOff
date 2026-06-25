@@ -13,3 +13,5 @@ docs/
 
 # Xcode-managed asset catalogs (DirectorSidecar) — Xcode owns their JSON formatting
 **/*.xcassets/**
+# Agent harness worktree scratch space — not project source
+.claude/

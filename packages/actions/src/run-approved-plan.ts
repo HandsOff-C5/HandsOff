@@ -1,3 +1,4 @@
+import { riskLevelRequiresApproval } from "@handsoff/contracts";
 import type {
   ActionPlan,
   ApprovalDecision,
@@ -39,27 +40,30 @@ export async function runApprovedPlan(args: {
   recordedAt?: string;
 }): Promise<PlanRunResult> {
   const recordedAt = args.recordedAt ?? new Date().toISOString();
+  const matchingApproval =
+    args.approval && args.approval.actionId === args.plan.id ? args.approval : undefined;
 
-  if (args.approval) {
+  if (matchingApproval) {
     args.audit.record({
       kind: "approval_decided",
       sessionId: args.sessionId,
       actionId: args.plan.id,
       recordedAt,
-      approval: args.approval,
+      approval: matchingApproval,
     });
   }
 
-  if (args.plan.requires_approval && args.approval?.decision !== "approved") {
-    const status = args.approval?.decision === "rejected" ? "rejected" : "blocked";
+  const requiredApproval = requiredApprovalResult(args.plan, matchingApproval, args.approval);
+  if (requiredApproval) {
     args.audit.record({
       kind: "execution_finished",
       sessionId: args.sessionId,
       actionId: args.plan.id,
       recordedAt,
-      status,
+      status: requiredApproval.status,
+      ...(requiredApproval.result && { result: requiredApproval.result }),
     });
-    return { status };
+    return requiredApproval;
   }
 
   for (const step of args.plan.action_plan) {
@@ -152,6 +156,26 @@ export async function runApprovedPlan(args: {
     status: "succeeded",
   });
   return { status: "succeeded" };
+}
+
+function requiredApprovalResult(
+  plan: ActionPlan,
+  matchingApproval: ApprovalDecision | undefined,
+  providedApproval: ApprovalDecision | undefined,
+): PlanRunResult | null {
+  if (!riskLevelRequiresApproval(plan.risk_level)) return null;
+  if (matchingApproval?.decision === "approved") return null;
+  if (matchingApproval?.decision === "rejected") return { status: "rejected" };
+
+  const reason =
+    providedApproval && providedApproval.actionId !== plan.id
+      ? "Approval decision does not match this action plan"
+      : `Approval required before executing ${riskLabel(plan.risk_level)} plan`;
+  return { status: "blocked", result: { status: "blocked", reason } };
+}
+
+function riskLabel(riskLevel: ActionPlan["risk_level"]): string {
+  return riskLevel === "destructive_external" ? "destructive/external" : riskLevel;
 }
 
 async function callCua(port: CuaActionPort, request: CuaActionRequest): Promise<CuaActionResult> {

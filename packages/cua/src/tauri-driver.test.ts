@@ -58,6 +58,46 @@ const textEditTarget = {
 };
 
 describe("Tauri CUA driver", () => {
+  it("returns typed permission and app inventory results", async () => {
+    const app = {
+      id: "com.apple.Notes",
+      name: "Notes",
+      pid: 2,
+      bundleId: "com.apple.Notes",
+      running: true,
+      active: false,
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const invoke: CuaInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (command === "cua_permissions") {
+        return { accessibility: "granted", screenRecording: "denied", driver: "running" } as T;
+      }
+      if (command === "cua_list_apps") return [app] as T;
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const driver = createTauriCuaDriver(invoke);
+
+    await expect(driver.checkPermissions()).resolves.toEqual({
+      status: "succeeded",
+      value: { accessibility: "granted", screenRecording: "denied", driver: "running" },
+    });
+    await expect(driver.listApps()).resolves.toEqual({ status: "succeeded", value: [app] });
+    expect(calls.map((call) => call.command)).toEqual(["cua_permissions", "cua_list_apps"]);
+  });
+
+  it("fails invalid native window lists instead of silently returning no windows", async () => {
+    const invoke: CuaInvoke = async <T>(command: string) => {
+      if (command === "cua_list_windows") return [{ bad: true }] as T;
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await expect(createTauriCuaDriver(invoke).listWindows()).resolves.toMatchObject({
+      status: "failed",
+    });
+  });
+
   it("resolves an implicit target to the first usable non-driver window", async () => {
     const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
     const invoke: CuaInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
@@ -95,7 +135,7 @@ describe("Tauri CUA driver", () => {
 
     expect(result).toMatchObject({
       status: "succeeded",
-      state: { surface: workWindow, elementCount: 3, elements: [] },
+      value: { surface: workWindow, elementCount: 3, elements: [] },
     });
   });
 
@@ -109,6 +149,35 @@ describe("Tauri CUA driver", () => {
     const result = await createTauriCuaDriver(invoke).getWindowState(unresolvedTarget);
 
     expect(result).toMatchObject({ status: "failed" });
+  });
+
+  it("captures screenshots through a typed result", async () => {
+    const invoke: CuaInvoke = async <T>(command: string) => {
+      if (command === "cua_list_windows") return [workWindow] as T;
+      if (command === "cua_screenshot") {
+        return {
+          surface: workWindow,
+          mimeType: "image/png",
+          width: 640,
+          height: 480,
+          pngBase64: "abc123",
+        } as T;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const result = await createTauriCuaDriver(invoke).screenshot(unresolvedTarget);
+
+    expect(result).toMatchObject({
+      status: "succeeded",
+      value: {
+        surface: workWindow,
+        mimeType: "image/png",
+        width: 640,
+        height: 480,
+        pngBase64: "abc123",
+      },
+    });
   });
 
   it("prefers the focused usable window when the driver reports one", async () => {
@@ -165,6 +234,32 @@ describe("Tauri CUA driver", () => {
     expect(calls.at(-1)).toEqual({
       command: "cua_type_text",
       args: { pid: 4, windowId: 40, elementIndex: 0, text: "hello goodbye" },
+    });
+  });
+
+  it("omits elementIndex when the target has none so cua-driver types into the focused element", async () => {
+    const noIndexTarget = {
+      surface: {
+        id: "app:notes",
+        title: "Notes",
+        app: "Notes",
+        availability: "available" as const,
+        accessStatus: "accessible" as const,
+      },
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const invoke: CuaInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (command === "cua_list_windows") return [workWindow] as T;
+      if (command === "cua_type_text") return { status: "succeeded", summary: "Typed" } as T;
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await createTauriCuaDriver(invoke).typeText(noIndexTarget, "hello");
+
+    expect(calls.at(-1)).toEqual({
+      command: "cua_type_text",
+      args: { pid: 2, windowId: 20, text: "hello" },
     });
   });
 

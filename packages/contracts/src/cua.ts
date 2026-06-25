@@ -15,6 +15,9 @@ export const cuaAppSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   pid: z.number().int().nonnegative().optional(),
+  bundleId: z.string().min(1).optional(),
+  running: z.boolean().optional(),
+  active: z.boolean().optional(),
 });
 export type CuaApp = z.infer<typeof cuaAppSchema>;
 
@@ -39,6 +42,21 @@ export const cuaWindowStateSchema = z.object({
   elements: z.array(cuaElementSchema).default([]),
 });
 export type CuaWindowState = z.infer<typeof cuaWindowStateSchema>;
+
+export const cuaScreenshotSchema = z.object({
+  surface: surfaceSnapshotSchema,
+  capturedAt: z.string().datetime(),
+  mimeType: z.string().min(1),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  pngBase64: z.string().min(1).optional(),
+});
+export type CuaScreenshot = z.infer<typeof cuaScreenshotSchema>;
+
+export type CuaResult<T> =
+  | { status: "succeeded"; value: T }
+  | { status: "failed"; error: string }
+  | { status: "blocked"; reason: string };
 
 export const cuaActionRequestSchema = z.discriminatedUnion("kind", [
   z.object({

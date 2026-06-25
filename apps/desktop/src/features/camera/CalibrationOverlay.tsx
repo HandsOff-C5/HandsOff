@@ -1,72 +1,79 @@
-import type { SurfaceBounds } from "@handsoff/contracts";
 import {
-  createCalibrationSession,
-  gridTargets,
-  type CalibrationResult,
+  fitMultiMonitor,
+  type CalibrationTarget,
+  type MultiCalibrationPair,
+  type MultiMonitorCalibration,
   type Point,
 } from "@handsoff/gesture";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-// #26 calibration UI — walks the user through a 3×3 grid of on-screen targets. For each,
-// the user points and presses Capture; we read the current raw pointing signal and fit
-// the affine once all 9 are in. `sampleRaw` is injected (the live loop's current pointing
-// signal) so this is testable without a camera. The live aim/accuracy is Demo Verified.
+// Multi-monitor calibration UI. Walks the user through a grid of targets laid across EVERY
+// connected display; each target is drawn as a ring on the real desktop by the gesture-
+// overlay sidecar (`onShowTarget`), NOT inside the camera panel — the user looks at the
+// screen, points, and presses Capture. We collect the raw pointing signal per target, fit one
+// affine per display, and hand the multi-monitor calibration back. Pure collection: the raw
+// signal is injected (`sampleRaw`) so this stays testable without a camera.
 
 interface CalibrationOverlayProps {
-  // Screen bounds the grid is laid over (same space as the eventual candidate hit-test).
-  bounds: SurfaceBounds;
+  // Per-display grid (global-px targets), from `multiMonitorTargets`.
+  targets: CalibrationTarget[];
   // Read the current raw pointing signal, or null if no hand is pointing right now.
   sampleRaw: () => Point | null;
-  // Called with the fitted transform/quality once all targets are captured.
-  onComplete: (result: CalibrationResult) => void;
-  // Grid inset (0 = corner-to-corner). Default 0.1.
-  margin?: number;
+  // Drive the overlay: show the next target's ring, or null to clear it (on finish/cancel).
+  onShowTarget: (target: CalibrationTarget | null) => void;
+  // Called with the fitted multi-monitor calibration once every target is captured.
+  onComplete: (result: MultiMonitorCalibration) => void;
+  onCancel?: () => void;
 }
 
 export function CalibrationOverlay({
-  bounds,
+  targets,
   sampleRaw,
+  onShowTarget,
   onComplete,
-  margin,
+  onCancel,
 }: CalibrationOverlayProps) {
-  const targets = useMemo(
-    () => gridTargets(bounds, { cols: 3, rows: 3, margin }),
-    [bounds, margin],
-  );
-  const session = useMemo(() => createCalibrationSession(targets), [targets]);
-  const [progress, setProgress] = useState(session.current());
+  const pairs = useMemo(() => [] as MultiCalibrationPair[], []);
+  const [index, setIndex] = useState(0);
+  const total = targets.length;
+  const current: CalibrationTarget | null = index < total ? (targets[index] ?? null) : null;
+
+  // Keep the overlay's target ring in sync with whichever target we're capturing, and clear it
+  // when the run finishes (or the component goes away).
+  useEffect(() => {
+    onShowTarget(current);
+    return () => onShowTarget(null);
+  }, [current, onShowTarget]);
 
   const capture = () => {
+    const target = targets[index];
+    if (!target) return;
     const raw = sampleRaw();
-    if (!raw || progress.done) return;
-    const next = session.capture(raw);
-    setProgress(next);
-    if (next.done) {
-      const result = session.result();
-      if (result) onComplete(result);
+    if (!raw) return;
+    pairs.push({ raw, displayId: target.displayId, target: target.target });
+    const next = index + 1;
+    setIndex(next);
+    if (next >= total) {
+      onComplete(fitMultiMonitor(pairs));
     }
   };
-
-  // Position the target dot as a percentage of the bounds so it scales to the container.
-  const target = progress.target;
-  const left = target ? `${((target[0] - bounds.x) / bounds.w) * 100}%` : "50%";
-  const top = target ? `${((target[1] - bounds.y) / bounds.h) * 100}%` : "50%";
 
   return (
     <div className="calibration-overlay">
       <p className="calibration-overlay__progress">
-        Point at the dot and press Capture · {progress.index} / {progress.total}
+        Point at the ring on screen
+        {current ? ` · display ${current.displayId}` : ""} · {index} / {total}
       </p>
-      {target && (
-        <span
-          data-testid="calibration-target"
-          className="calibration-overlay__target"
-          style={{ left, top }}
-        />
-      )}
-      <button type="button" className="calibration-overlay__capture" onClick={capture}>
-        Capture
-      </button>
+      <div className="calibration-overlay__actions">
+        <button type="button" className="calibration-overlay__capture" onClick={capture}>
+          Capture
+        </button>
+        {onCancel && (
+          <button type="button" className="calibration-overlay__cancel" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
+      </div>
     </div>
   );
 }

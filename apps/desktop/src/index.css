@@ -588,17 +588,8 @@ body {
   font-size: 13px;
 }
 
-/* The smoothed pointing cursor (A1.3) — a glowing dot the user watches track the finger. */
-.camera-panel__cursor {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  margin: -8px 0 0 -8px;
-  border-radius: 50%;
-  background: rgba(56, 189, 248, 0.9);
-  box-shadow: 0 0 10px 3px rgba(56, 189, 248, 0.6);
-  pointer-events: none;
-}
+/* The smoothed pointing cursor now lives in the gesture-overlay sidecar (one window per
+   display), so there is no in-camera cursor element to style here. */
 
 /* Landmark debug overlay */
 .landmark-overlay,
@@ -650,7 +641,8 @@ body {
   text-shadow: 0 1px 2px #000;
 }
 
-/* Calibration: a big bright target dot the user points at. */
+/* Calibration: the target ring is drawn on the real desktop by the gesture-overlay sidecar,
+   so this overlay only carries the progress text + the capture/cancel actions. */
 .calibration-overlay__progress {
   position: absolute;
   top: 10px;
@@ -662,23 +654,28 @@ body {
   text-shadow: 0 1px 2px #000;
 }
 
-.calibration-overlay__target {
-  position: absolute;
-  width: 30px;
-  height: 30px;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: #f59e0b;
-  border: 3px solid #fff;
-  box-shadow: 0 0 14px 2px #f59e0b;
-}
-
-.calibration-overlay__capture {
+.calibration-overlay__actions {
   position: absolute;
   bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+}
+
+.calibration-overlay__capture {
   font-weight: 600;
+}
+
+.calibration-overlay__cancel {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #232734;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
 }
 
 /* Clarification panel (#36) — the "which one?" ask. */

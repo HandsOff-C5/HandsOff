@@ -8,6 +8,8 @@
     "build": "pnpm build:sidecars && vite build",
     "build:sidecars": "bash src-tauri/sidecars/build.sh head-track",
     "preview": "vite preview",
+    "release:dry-run": "pnpm tauri build --debug --bundles app && node scripts/macos-release-dry-run.mjs --validate-app src-tauri/target/debug/bundle/macos/HandsOff.app",
+    "release:dry-run:plan": "node scripts/macos-release-dry-run.mjs --json",
     "setup:assets": "node scripts/setup-mediapipe-assets.mjs",
     "tauri": "tauri"
   },

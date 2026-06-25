@@ -85,6 +85,14 @@ describe("PlanPreviewPanel", () => {
     expect(reject).toHaveBeenCalledOnce();
   });
 
+  it("omits approval controls for non-approval plans (they auto-run)", () => {
+    render(
+      <PlanPreviewPanel intent={intent({ risk_level: "reversible", requires_approval: false })} />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+
   it("renders blocked reasons without approval controls", () => {
     render(
       <PlanPreviewPanel
@@ -117,7 +125,7 @@ describe("PlanPreviewPanel", () => {
     );
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "blocked: No accessible CUA window was found",
+      "The selected window is not reachable right now. Bring it back on screen or switch to its Space, then point and speak again.",
     );
   });
 });

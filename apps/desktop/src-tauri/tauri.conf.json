@@ -45,6 +45,6 @@
       "entitlements": "entitlements.plist",
       "signingIdentity": "-"
     },
-    "externalBin": ["binaries/head-track"]
+    "externalBin": ["binaries/head-track", "binaries/gesture-overlay"]
   }
 }
