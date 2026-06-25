@@ -91,23 +91,28 @@ enum DevMockFleet {
     /// Cancelled when the user toggles off. No runResult — the HUD stays up until dismissed.
     @MainActor
     static func activationLoop(dispatch: @escaping (BridgeFrame) -> Void, now: Date) async {
+        // A cancellation-aware pause: returns false the moment the loop is cancelled (toggle off),
+        // so the remaining frames don't keep firing after Stop Listening.
+        func pause(_ seconds: Double) async -> Bool {
+            (try? await Task.sleep(for: .seconds(seconds))) != nil && !Task.isCancelled
+        }
         dispatch(.gaze(GazeFocus(bounds: GazeRegion(x: 380, y: 240, w: 120, h: 36), confidence: 0.92, sizeClass: "element", ts: 100)))
-        try? await Task.sleep(for: .seconds(1.4))
+        guard await pause(1.4) else { return }
         dispatch(.gaze(GazeFocus(bounds: GazeRegion(x: 320, y: 300, w: 460, h: 220), confidence: 0.9, sizeClass: "block", ts: 200)))
 
-        try? await Task.sleep(for: .seconds(0.8))
+        guard await pause(0.8) else { return }
         dispatch(.transcript(TranscriptEvent(kind: "partial", text: "summarize that issue", confidence: 0.9, latencyMs: 120, receivedAt: 0)))
-        try? await Task.sleep(for: .seconds(0.8))
+        guard await pause(0.8) else { return }
         dispatch(.transcript(TranscriptEvent(kind: "final", text: "summarize that issue", confidence: 0.96, latencyMs: 140, receivedAt: 0)))
         dispatch(.referents(ReferentsPayload(
             surfaces: [SurfaceSnapshot(id: "win-1", title: "#42 Flaky CUA test", app: "GitHub", pid: nil, windowId: nil, availability: "available", accessStatus: "granted")],
             selected: SelectedReferent(id: "win-1", source: "point", confidence: 0.9)
         )))
-        try? await Task.sleep(for: .seconds(1))
+        guard await pause(1) else { return }
         dispatch(.intent(mockIntent(destructive: isDestructive)))
         if isDestructive { return }
 
-        try? await Task.sleep(for: .seconds(1))
+        guard await pause(1) else { return }
         dispatch(.cursor(pointers: [
             Pointer(x: 720, y: 360, space: "virtual-desktop-px", kind: "agent", agentId: "session-1", agentLabel: "Claude Code", state: "moving", confidence: 0.95, ts: 1000),
             Pointer(x: 1180, y: 540, space: "virtual-desktop-px", kind: "agent", agentId: "session-2", agentLabel: "Cursor", state: "locked", confidence: 0.9, ts: 1000),
