@@ -1,6 +1,8 @@
 import {
   APP_NAME,
+  safeParseHeadPointingAppEvent,
   type CapabilityId,
+  type FinalTranscript,
   type PointingEvidence,
   type SttProvider,
   type SttStream,
@@ -13,6 +15,11 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 
 import { CameraPanel } from "../../features/camera/CameraPanel";
+import {
+  createCaptureTrace,
+  type CaptureTrace,
+  type CaptureTraceRecorder,
+} from "../../features/capture-trace";
 import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
 import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnboarding";
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
@@ -23,10 +30,12 @@ import { useReadinessProbe } from "../../features/readiness/useReadinessProbe";
 import { SessionsPanel } from "../../features/sessions/SessionsPanel";
 import { SettingsPanel } from "../../features/settings/SettingsPanel";
 import {
+  HEAD_POINTING_EVENT,
   useHeadPointing,
   type HeadPointingSnapshot,
   type HeadPointingListen,
 } from "../../features/head-pointing/useHeadPointing";
+import { useCaptureHotkey } from "../../features/head-pointing/useCaptureHotkey";
 import { useLocalConfig } from "../../features/settings/useLocalConfig";
 import { TranscriptPanel } from "../../features/transcript/TranscriptPanel";
 import {
@@ -114,6 +123,15 @@ export function Dashboard({
   // Latest gesture cursor position (even without a locked referent). Updated every
   // frame while hands are present, cleared to null when no hands are detected.
   const gestureCursor = useRef<{ x: number; y: number } | null>(null);
+  // Capture-trace recorder (U5): records the head + hand + word streams for the
+  // capture-mode window on one epoch-ms clock, so the temporal binder can align a
+  // deictic word with the surface pointed at while it was spoken. Built once;
+  // `Date.now` and `performance.now` are the two clocks it reconciles. The most
+  // recent closed trace is kept for the binder to consume at intent time.
+  const captureTrace = useRef<CaptureTraceRecorder>(
+    createCaptureTrace({ now: () => Date.now(), performanceNow: () => performance.now() }),
+  );
+  const lastCaptureTrace = useRef<CaptureTrace | null>(null);
   const intentResolver =
     resolveIntent ??
     (hasTauriBackend()
@@ -131,6 +149,61 @@ export function Dashboard({
       getGestureEvidence: () => gestureEvidence.current,
       getGestureCursor: () => gestureCursor.current,
     });
+
+  // Drive the capture-trace recorder off the SAME capture-hotkey edges that arm
+  // head tracking + mic (TranscriptPanel owns the head-track invoke; here we only
+  // listen, so no second `head_track_start` fires). The window opens on `start`
+  // and closes on `stop`, keeping the trace bounded to exactly one utterance.
+  useCaptureHotkey(
+    hasTauriBackend()
+      ? {
+          listen: HEAD_POINTING_TAURI.listen,
+          onStart: () => captureTrace.current.start(),
+          onStop: () => {
+            const trace = captureTrace.current.stop();
+            if (trace) lastCaptureTrace.current = trace;
+          },
+        }
+      : undefined,
+  );
+
+  // Feed every `stt://head` point into the recorder. This is a second listener on
+  // the head event (independent of useHeadPointing's render-state one); the
+  // recorder ignores points while no window is open, so it only retains the
+  // capture window. Head `ts` is already epoch ms on the wire.
+  useEffect(() => {
+    if (!hasTauriBackend()) return;
+    let unlisten: (() => void) | null = null;
+    let mounted = true;
+    void HEAD_POINTING_TAURI.listen(HEAD_POINTING_EVENT, ({ payload }) => {
+      const parsed = safeParseHeadPointingAppEvent(payload);
+      if (!parsed.success || parsed.data.kind !== "point") return;
+      const point = parsed.data;
+      captureTrace.current.recordHead({
+        x: point.x,
+        y: point.y,
+        confidence: point.confidence,
+        tsMs: point.ts,
+      });
+    }).then((next) => {
+      if (!mounted) {
+        next();
+        return;
+      }
+      unlisten = next;
+    });
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
+  }, []);
+
+  // Seal the recorded word timeline (U4) into the open trace when an utterance
+  // finalizes, then hand the final transcript to the controller as before.
+  const onFinalTranscript = (utterance: FinalTranscript) => {
+    if (utterance.words) captureTrace.current.setWords(utterance.words);
+    handleFinalTranscript(utterance);
+  };
   // Accumulate session history (last 10) so the SessionsPanel shows prior commands
   // rather than only the most-recent run.
   const [sessionHistory, setSessionHistory] = useState<readonly SupervisionSession[]>([]);
@@ -226,6 +299,15 @@ export function Dashboard({
           onGestureCursor={(cursor) => {
             gestureCursor.current = cursor;
           }}
+          onGestureSample={(sample) =>
+            captureTrace.current.recordHand({
+              frameTimestampMs: sample.frameTimestampMs,
+              x: sample.point.x,
+              y: sample.point.y,
+              candidate: sample.candidate,
+              phase: sample.phase,
+            })
+          }
         />
         <ReferentsPanel intent={intent} />
         <ReadinessPanel report={report} />
@@ -249,7 +331,7 @@ export function Dashboard({
         <TranscriptPanel
           createStream={createStream}
           headPointer={config.headPointer}
-          onFinalTranscript={handleFinalTranscript}
+          onFinalTranscript={onFinalTranscript}
         />
         <SessionsPanel sessions={sessionHistory} auditEvents={auditEvents} />
         <ClarificationPanel request={clarification} />
