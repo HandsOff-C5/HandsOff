@@ -1,9 +1,9 @@
 import type { HeadPointerConfig } from "@handsoff/contracts";
 import { useEffect, useRef } from "react";
 
-// The app process owns the global capture shortcuts (#95) and emits
-// `hotkey://capture` phases. Command+Option+? is hold-to-capture
-// (`start`/`stop`), and Control+Shift+Space is tap-to-toggle (`toggle`).
+// The app process observes the bare `fn` (Globe) key (#95) and emits
+// `hotkey://capture` phases. press-hold on fn is hold-to-capture
+// (`start`/`stop`), and double-tap on fn is tap-to-toggle (`toggle`).
 
 export const CAPTURE_HOTKEY_EVENT = "hotkey://capture";
 type CaptureHotkeyPhase = "start" | "stop" | "toggle";

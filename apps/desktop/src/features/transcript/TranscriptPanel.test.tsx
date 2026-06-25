@@ -387,7 +387,7 @@ describe("TranscriptPanel", () => {
     );
   });
 
-  it("toggles the Control+Shift+Space hotkey capture path", async () => {
+  it("toggles the double-tap fn hotkey capture path", async () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
     let hotkeyHandler: ((event: CaptureHotkeyListenEvent) => void) | null = null;
     tauri.listen.mockImplementation(
