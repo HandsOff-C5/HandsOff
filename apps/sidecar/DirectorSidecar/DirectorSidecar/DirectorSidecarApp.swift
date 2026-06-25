@@ -238,13 +238,16 @@ struct DirectorSidecarApp: App {
             ThemedRoot { ContentView() }
         }
 
-        // G1 product entry: menu-bar status item + glass dropdown.
+        // G1 product entry: menu-bar status item + NATIVE pull-down menu. The `.menu` style renders
+        // a real NSMenu (system liquid-glass material + native selection highlight), so MenuContent
+        // only declares menu items — no custom window/blur/hover. (The label stays themed for the
+        // readiness dot.)
         MenuBarExtra {
-            ThemedRoot { MenuContent(store: store) }
+            MenuContent(store: store)
         } label: {
             ThemedRoot { MenuBarLabel(readiness: store.menuReadiness) }
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
     }
 }
 
