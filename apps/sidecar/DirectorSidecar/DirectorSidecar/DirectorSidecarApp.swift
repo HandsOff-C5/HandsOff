@@ -32,6 +32,7 @@ struct DirectorSidecarApp: App {
         let gaze = GazeBracketModel()
         let home = HomeDashboardModel()
         store.bridge = connection
+        home.bridge = connection
         hud.connection = connection
         // Menu Start/Stop Listening brings the three active overlays up/down (no "amListening").
         store.onListeningChanged = { on in
@@ -61,6 +62,7 @@ struct DirectorSidecarApp: App {
                     dispatch: { frame in store.apply(frame); hud.apply(frame); micro.apply(frame); overlay.apply(frame); gaze.apply(frame); home.apply(frame) },
                     setState: { state in store.setConnection(state); micro.setConnection(state); overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state) },
                     activate: { on in hud.setListening(on); micro.setListening(on); overlay.setActive(on); gaze.setActive(on) },
+                    select: { id in home.select(id) },
                     now: Date()
                 )
             }

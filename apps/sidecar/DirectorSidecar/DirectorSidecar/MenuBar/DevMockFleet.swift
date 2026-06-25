@@ -57,6 +57,7 @@ enum DevMockFleet {
         dispatch: @escaping (BridgeFrame) -> Void,
         setState: @escaping (ConnectionState) -> Void,
         activate: @escaping (Bool) -> Void,
+        select: @escaping (String) -> Void,
         now: Date
     ) async {
         setState(.connected)
@@ -80,12 +81,26 @@ enum DevMockFleet {
             selected: SelectedReferent(id: "win-1", source: "point", confidence: 0.9)
         )))
         try? await Task.sleep(for: .seconds(1))
+        select("session-1") // bind the Inspector to the running agent (G4b)
         if isDestructive {
             // Destructive → optional Greenlight footer renders + stays (awaitingGreenlight).
-            dispatch(.intent(ResolvedIntentLite(id: "intent-9", status: .ready, intentType: "delete", riskLevel: .destructive, requiresApproval: true, summary: "Delete everything in ~/Documents", reason: nil)))
+            dispatch(.intent(ResolvedIntentLite(
+                id: "intent-9", status: .ready, intentType: "delete", riskLevel: .destructive,
+                requiresApproval: true, summary: "Delete everything in ~/Documents", reason: nil,
+                steps: [
+                    ActionStepLite(id: "s1", label: "Empty the Documents folder", kind: "set_value", targetTitle: "Finder", proposed: "(removes 412 files)"),
+                ]
+            )))
             return
         }
-        dispatch(.intent(ResolvedIntentLite(id: "intent-1", status: .ready, intentType: "summarize", riskLevel: .readOnly, requiresApproval: false, summary: "Summarize GitHub issue 42", reason: nil)))
+        dispatch(.intent(ResolvedIntentLite(
+            id: "intent-1", status: .ready, intentType: "summarize", riskLevel: .readOnly,
+            requiresApproval: false, summary: "Summarize GitHub issue 42", reason: nil,
+            steps: [
+                ActionStepLite(id: "s1", label: "Read the issue thread", kind: "inspect_window_state", targetTitle: "GitHub — Issue 42", proposed: nil),
+                ActionStepLite(id: "s2", label: "Type the summary into Notes", kind: "type_text", targetTitle: "Notes", proposed: "TL;DR: flaky CUA test, fix the await race."),
+            ]
+        )))
         try? await Task.sleep(for: .seconds(1))
         // Agent-working: two agent cursors traveling (the AI-engineer Supervise fleet).
         dispatch(.cursor(pointers: [
