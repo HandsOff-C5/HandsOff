@@ -5,6 +5,7 @@ pub mod gesture_overlay;
 pub mod head_track;
 pub mod hotkey;
 pub mod intent;
+pub mod lifecycle;
 pub mod overlay;
 pub mod permissions;
 pub mod readiness;

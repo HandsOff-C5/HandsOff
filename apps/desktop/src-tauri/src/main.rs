@@ -11,10 +11,29 @@ mod commands;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        // L0: the Home Dashboard (`main`) hides instead of closing — closing its
+        // window must never destroy it or kill the engine/bridge under it. The
+        // menu-bar `openHome` command (G1) re-shows it; other windows close normally.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                match commands::lifecycle::window_close_action(window.label()) {
+                    commands::lifecycle::WindowCloseAction::HideAndKeepAlive => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                    commands::lifecycle::WindowCloseAction::AllowClose => {}
+                }
+            }
+        })
         .manage(commands::head_track::HeadTrackState::default())
         .manage(commands::gesture_overlay::GestureOverlayState::default())
         .manage(commands::stt_ondevice::OnDeviceSttState::default())
         .setup(|app| {
+            // L0: Director is menu-bar-first — run as an accessory app so there is
+            // no Dock icon (the menu-bar item is the presence). The Home Dashboard
+            // still shows; it just no longer owns a Dock tile.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             // Director engine bridge — loopback WS server for the native Swift sidecar (G0).
             tauri::async_runtime::spawn(commands::bridge::serve());
             // Capture trigger (#95): the bare `fn` (Globe) key, observed via a
@@ -60,6 +79,17 @@ fn main() {
             commands::overlay::show_overlay,
             commands::overlay::hide_overlay
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running the HandsOff application");
+        .build(tauri::generate_context!())
+        .expect("error while building the HandsOff application")
+        // L0: own the run loop so the engine survives a last-window close. `code` is
+        // `None` for an OS/last-window-close exit (keep the menu-bar-first engine and
+        // its loopback bridge alive) and `Some` for a programmatic `exit`/`restart`
+        // (e.g. the `restart_app` command) — those are allowed through.
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+                if commands::lifecycle::should_prevent_exit(code) {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
