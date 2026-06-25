@@ -221,7 +221,7 @@ struct DirectorSidecarApp: App {
         // red-X close + "Open Home" re-open cleanly via openWindow(id:) and never duplicate.
         Window("Director", id: "home") {
             ThemedRoot { HomeDashboardView(model: home) }
-                .modifier(HomeOpenWiring(store: store))
+                .modifier(HomeOpenWiring(store: store, rail: rail))
         }
         .commands {
             CommandMenu("Director") {
@@ -249,16 +249,24 @@ struct DirectorSidecarApp: App {
 /// in-scene view so it re-creates the single-instance Home window even after the red-X destroys it.
 private struct HomeOpenWiring: ViewModifier {
     let store: BridgeStore
+    let rail: RailModel
     @Environment(\.openWindow) private var openWindow
     func body(content: Content) -> some View {
-        content.onAppear {
-            store.onOpenHome = {
-                MainActor.assumeIsolated {
-                    openWindow(id: "home")
-                    NSApp.activate()
+        content
+            .onAppear {
+                store.onOpenHome = {
+                    MainActor.assumeIsolated {
+                        openWindow(id: "home")
+                        NSApp.activate()
+                    }
                 }
+                // Home is showing → its minimized echo (the rail) hides.
+                rail.setHomeOpen(true)
             }
-        }
+            .onDisappear {
+                // Home closed (red-X) → the rail returns as the ambient edge summary.
+                rail.setHomeOpen(false)
+            }
     }
 }
 

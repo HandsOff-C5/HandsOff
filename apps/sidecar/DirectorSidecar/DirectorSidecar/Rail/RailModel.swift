@@ -19,10 +19,16 @@ final class RailModel {
     /// The LIVE pip is shown only while Director is actively listening (hold-fn).
     private(set) var isListening = false
 
+    /// True while the Home Dashboard window is open. The rail is Home's minimized edge echo, so it
+    /// stays hidden whenever the full dashboard is showing — at launch the user sees only Home.
+    /// Defaults to `true` because the dashboard opens on launch (avoids a one-frame rail flash).
+    private(set) var homeIsOpen = true
+
     @ObservationIgnored private var connected = false
 
-    /// The rail shows whenever there are agents to summarize, or while listening.
-    var isVisible: Bool { !marks.isEmpty || isListening }
+    /// The rail shows whenever there are agents to summarize, or while listening — but never while
+    /// the Home Dashboard is open, since the rail is just Home's minimized stand-in.
+    var isVisible: Bool { (!marks.isEmpty || isListening) && !homeIsOpen }
 
     func apply(_ frame: BridgeFrame) {
         switch frame {
@@ -36,6 +42,10 @@ final class RailModel {
     }
 
     func setListening(_ on: Bool) { isListening = on }
+
+    /// Driven by the Home window's appear/disappear lifecycle. Open → rail hidden; closed → the
+    /// rail returns as the ambient edge summary (if there are agents or we're listening).
+    func setHomeOpen(_ open: Bool) { homeIsOpen = open }
 
     func setConnection(_ state: ConnectionState) {
         connected = state == .connected
