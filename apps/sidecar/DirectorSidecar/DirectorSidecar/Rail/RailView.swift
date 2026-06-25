@@ -19,21 +19,21 @@ struct RailView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        VStack(spacing: 11) {
+        VStack(spacing: theme.elementGap) {
             if model.isListening {
                 LivePip()
                 hairline
             }
             if !model.marks.isEmpty {
-                VStack(spacing: 11) {
+                VStack(spacing: theme.elementGap) {
                     ForEach(model.marks) { AgentMark(session: $0) }
                 }
                 hairline
             }
             ExpandButton(action: onExpand)
         }
-        .padding(.vertical, 13)
-        .padding(.horizontal, 8)
+        .padding(.vertical, theme.elementGap)
+        .padding(.horizontal, theme.stackGap)
         .frame(minWidth: 52)
         .background {
             if reduceTransparency {
@@ -59,7 +59,7 @@ struct RailView: View {
 private struct LivePip: View {
     @Environment(\.theme) private var theme
     var body: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: theme.stackGap) {
             Waveform()
             Text("LIVE")
                 .font(.system(size: 8, weight: .bold))
