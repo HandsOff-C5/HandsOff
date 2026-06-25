@@ -232,6 +232,15 @@ describe("Dashboard", () => {
 
   it("waits before resolving the CUA target after speech release", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    // The controller's pre-resolution delay is a real `setTimeout` (createIntent →
+    // `await wait(targetResolveDelayMs)`). The first assertion below must observe
+    // the loop BEFORE that delay elapses, so under full-suite load the real timer
+    // could fire during the microtask flush and start the loop early (flake). Fake
+    // ONLY setTimeout — not Date.now, which the spy above still owns — so the delay
+    // is driven by `advanceTimersByTimeAsync` instead of wall-clock: the flush
+    // can't move fake time, making the "not yet started" assertion deterministic,
+    // and the explicit advance releases the timer and pumps the loop.
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
     const state = fakeCuaWindowState();
     const driver = createFakeCuaDriver({ state });
     try {
@@ -253,9 +262,11 @@ describe("Dashboard", () => {
       fireEvent.pointerUp(talkButton());
       await flush();
 
+      // Fake time has not advanced, so the 10ms delay timer is still pending and
+      // the loop has not begun — no driver calls yet.
       expect(driver.calls()).toHaveLength(0);
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await vi.advanceTimersByTimeAsync(20);
       });
 
       // "Click selected target" appears in both PlanPreviewPanel and ReferentsPanel action plan
@@ -269,6 +280,7 @@ describe("Dashboard", () => {
         "list_tools",
       ]);
     } finally {
+      vi.useRealTimers();
       clock.mockRestore();
     }
   });

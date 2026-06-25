@@ -736,7 +736,7 @@ export function useVoiceCuaController(args: {
     setRunResult({ status: "running" });
     // The gate above is the source of truth for *whether* to run. Dispatch every
     // step through the GENERIC driver passthrough (`driver.call`, U1) — the loop
-    // is no longer bound to the typed 6-kind executor, so the full 38-tool
+    // is no longer bound to the typed 6-kind executor, so the full 36-tool
     // surface (scroll/hotkey/drag/right_click/…) is reachable. Stop at the first
     // failure and feed it forward for recovery.
     const actionResult = await dispatchPlan(readyIntent.action_plan.action_plan);
