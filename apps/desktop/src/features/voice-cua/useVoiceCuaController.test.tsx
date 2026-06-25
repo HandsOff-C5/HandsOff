@@ -1023,6 +1023,146 @@ describe("U3 autonomous loop", () => {
   });
 });
 
+// U3b: the resolver now emits a generic `tool_call` step naming ANY of the 38
+// driver tools (not just the legacy 6 typed kinds), and the loop dispatches it
+// through `driver.call(tool, args)` — the U1 passthrough. These tests drive
+// tools that were UNREACHABLE before U3b (scroll, kill_app) end-to-end, proving
+// (1) a previously-unreachable tool now flows through driver.call with its raw
+// args, and (2) the per-call gate still fires off the tool name — a read-only
+// tool auto-runs, a destructive tool waits for approval.
+describe("U3b full-surface tool_call dispatch", () => {
+  // A ready intent carrying a single generic tool_call step, shaped exactly like
+  // `nextToolCallToIntent` builds it: risk/approval are derived (here passed in to
+  // mirror what `riskForToolName(tool)` yields for the chosen tool).
+  function readyToolCall(
+    input: IntentInput,
+    tool: string,
+    args: Record<string, unknown>,
+    risk: "read_only" | "reversible" | "mutating" | "destructive_external",
+  ): ResolvedIntent {
+    const requires = risk === "mutating" || risk === "destructive_external";
+    return {
+      status: "ready",
+      id: "intent-toolcall",
+      input,
+      intent_type: "inspect",
+      referent: null,
+      constraints: [],
+      risk_level: risk,
+      requires_approval: requires,
+      target_agent: "cua-driver",
+      action_plan: {
+        id: "plan-toolcall",
+        summary: `Call ${tool}`,
+        risk_level: risk,
+        requires_approval: requires,
+        target_agent: "cua-driver",
+        action_plan: [
+          { id: "step-toolcall", kind: "tool_call", label: `Call ${tool}`, tool, args },
+        ],
+      },
+      createdAt: NOW,
+    };
+  }
+
+  it("auto-runs a previously-unreachable read-only tool (scroll) through driver.call", async () => {
+    const notes = surface({ id: "notes:1", title: "Long Doc", app: "Notes" });
+    const driver = createFakeCuaDriver({
+      state: fakeCuaWindowState({ surface: notes }),
+      windows: [notes],
+    });
+    // tick 0 → scroll (read_only, no approval) reaching the FULL driver surface;
+    // tick 1 → goal done. `scroll` was unreachable through the old 6-kind path.
+    const scrollArgs = { pid: 42, window_id: 7, direction: "down", amount: 5 };
+    const resolveIntent = vi.fn(
+      async (input: IntentInput): Promise<ResolvedIntent> =>
+        input.goalSession?.tick === 0
+          ? readyToolCall(input, "scroll", scrollArgs, "read_only")
+          : satisfied(input, "Scrolled to reveal the rest"),
+    );
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: null, candidates: [] },
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript({ ...finalTranscript, text: "scroll down" }));
+
+    // No approve() — a read-only tool auto-runs and the loop settles satisfied.
+    await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
+    expect(result.current.session?.status).toBe("succeeded");
+    // The scroll dispatched through the generic passthrough with its raw args —
+    // recorded by the fake driver as a `call`, not a typed `scroll` method.
+    const scrollCall = driver.calls().find((c) => c.kind === "call" && c.tool === "scroll");
+    expect(scrollCall).toEqual({ kind: "call", tool: "scroll", input: scrollArgs });
+    // Audited as a read-only tool_call that auto-ran.
+    const toolCall = result.current.auditEvents.find(
+      (e) => e.kind === "tool_call" && e.tool === "scroll",
+    );
+    expect(toolCall).toMatchObject({
+      kind: "tool_call",
+      tool: "scroll",
+      approval: "auto",
+      risk: "read_only",
+      result: { status: "succeeded" },
+    });
+  });
+
+  it("gates a previously-unreachable destructive tool (kill_app) until approved, then dispatches it", async () => {
+    const notes = surface({ id: "notes:1", title: "Quick Note", app: "Notes" });
+    const driver = createFakeCuaDriver({
+      state: fakeCuaWindowState({ surface: notes }),
+      windows: [notes],
+    });
+    // kill_app is destructive_external → the gate MUST pause for approval even
+    // though it reaches the full surface; only after approve() does it dispatch.
+    const killArgs = { pid: 999 };
+    const resolveIntent = vi.fn(
+      async (input: IntentInput): Promise<ResolvedIntent> =>
+        input.goalSession?.tick === 0
+          ? readyToolCall(input, "kill_app", killArgs, "destructive_external")
+          : satisfied(input, "Force-quit the app"),
+    );
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: null, candidates: [] },
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript({ ...finalTranscript, text: "force quit it" }));
+
+    // Paused at the gate — no kill_app call dispatched yet.
+    await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
+    expect(result.current.intent).toMatchObject({ status: "ready", requires_approval: true });
+    expect(driver.calls().some((c) => c.kind === "call" && c.tool === "kill_app")).toBe(false);
+
+    await act(async () => result.current.approve());
+
+    // After approval the destructive tool dispatches through driver.call.
+    await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
+    const killCall = driver.calls().find((c) => c.kind === "call" && c.tool === "kill_app");
+    expect(killCall).toEqual({ kind: "call", tool: "kill_app", input: killArgs });
+    const toolCall = result.current.auditEvents.find(
+      (e) => e.kind === "tool_call" && e.tool === "kill_app",
+    );
+    expect(toolCall).toMatchObject({
+      kind: "tool_call",
+      tool: "kill_app",
+      approval: "approved",
+      risk: "destructive_external",
+      result: { status: "succeeded" },
+    });
+  });
+});
+
 // Characterization of the SUPERVISED invariants the U3 autonomous-loop refactor
 // must preserve (captured before the refactor, kept after). Each test names one
 // of the four invariants the brief calls out:
