@@ -107,6 +107,22 @@ describe("supervision audit event contract", () => {
     expect(result.success && result.data).toEqual(event);
   });
 
+  it("rejects approval events that point at a different action", () => {
+    const result = safeParseSupervisionAuditEvent({
+      kind: "approval_decided",
+      sessionId: "session-1",
+      actionId: "action-1",
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      approval: {
+        actionId: "action-2",
+        decision: "approved",
+        decidedAt: "2026-06-22T12:00:00.000Z",
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("rejects audit events with no action link", () => {
     const result = safeParseSupervisionAuditEvent({
       kind: "execution_finished",

@@ -60,8 +60,9 @@ fn build_native_permissions_bridge() {
         build_speech_analyzer_bridge(speech_analyzer);
     }
 
-    // The Command + Option + / capture hotkey (#95) uses tauri-plugin-global-shortcut
-    // (Carbon RegisterEventHotKey) — no native event tap, no extra frameworks.
+    // The `fn` (Globe) capture trigger (#95) is observed directly with a
+    // listen-only CGEventTap in src/commands/hotkey.rs; CoreGraphics and
+    // CoreFoundation are linked from that file via per-callsite #[link].
 
     println!("cargo:rustc-link-lib=framework=AVFoundation");
     println!("cargo:rustc-link-lib=framework=Foundation");

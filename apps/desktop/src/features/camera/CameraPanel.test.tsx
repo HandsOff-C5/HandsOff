@@ -1,8 +1,11 @@
+import type { LandmarkFrame } from "@handsoff/contracts";
+import * as gesture from "@handsoff/gesture";
 import type { RawHandLandmarkerResult } from "@handsoff/gesture";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { CameraPanel } from "./CameraPanel";
+import type { DisplayInfo, GestureOverlay } from "./useGestureOverlay";
 
 // jsdom has no media pipeline; the panel calls video.play() (and catches its failure).
 // Stub it so the suite output stays clean.
@@ -16,6 +19,23 @@ const fakeDetector = () => ({
 });
 
 const fakeStream = () => ({ getTracks: () => [] }) as unknown as MediaStream;
+
+// A stand-in overlay that reports a single 1920×1080 display without touching Tauri, so the
+// camera panel can reach a calibrated-capable live state in jsdom.
+const fakeOverlay = (): GestureOverlay => {
+  const noop = () => {};
+  const displays: DisplayInfo[] = [
+    { id: "1", isMain: true, x: 0, y: 0, width: 1920, height: 1080 },
+  ];
+  return {
+    start: () => Promise.resolve(displays),
+    stop: () => Promise.resolve(),
+    move: noop,
+    target: noop,
+    untarget: noop,
+    clear: noop,
+  };
+};
 
 const startCamera = () => fireEvent.click(screen.getByRole("button", { name: /start camera/i }));
 
@@ -112,16 +132,68 @@ describe("CameraPanel", () => {
     expect(screen.getByRole("button", { name: /dump frames/i })).toBeInTheDocument();
   });
 
-  it("enters 9-point calibration when Calibrate is pressed", async () => {
+  it("enters per-display calibration when Calibrate is pressed", async () => {
     render(
       <CameraPanel
         getStream={() => Promise.resolve(fakeStream())}
         createDetector={() => Promise.resolve(fakeDetector())}
+        overlay={fakeOverlay()}
       />,
     );
     startCamera();
     fireEvent.click(await screen.findByRole("button", { name: /calibrate/i }));
-    expect(screen.getByTestId("calibration-target")).toBeInTheDocument();
     expect(screen.getByText(/0\s*\/\s*9/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /capture/i })).toBeInTheDocument();
+  });
+
+  it("calls onGestureCursor with a point when hands are present and null when no hands", async () => {
+    // Capture the onResult callback injected into createLandmarkProcessor so we can
+    // trigger frames directly without relying on the rAF loop running in jsdom.
+    let capturedOnResult: ((result: { frame: LandmarkFrame; fps: number }) => void) | undefined;
+    const processorSpy = vi.spyOn(gesture, "createLandmarkProcessor").mockImplementation((opts) => {
+      capturedOnResult = opts.onResult;
+      return { process: vi.fn() };
+    });
+
+    const onGestureCursor = vi.fn();
+    render(
+      <CameraPanel
+        getStream={() => Promise.resolve(fakeStream())}
+        createDetector={() => Promise.resolve(fakeDetector())}
+        overlay={fakeOverlay()}
+        onGestureCursor={onGestureCursor}
+      />,
+    );
+    startCamera();
+    await screen.findByText(/^Live\b/);
+    expect(capturedOnResult).toBeDefined();
+
+    // Frame with one hand present — should call onGestureCursor with a point.
+    const fakeLandmark = { x: 0.5, y: 0.5, z: 0, visibility: 1 };
+    const frameWithHand: LandmarkFrame = {
+      timestampMs: 1,
+      hands: [
+        {
+          landmarks: Array(21).fill(fakeLandmark) as LandmarkFrame["hands"][0]["landmarks"],
+          handedness: "Right",
+          score: 0.9,
+        },
+      ],
+    };
+    act(() => {
+      capturedOnResult!({ frame: frameWithHand, fps: 30 });
+    });
+    expect(onGestureCursor).toHaveBeenLastCalledWith(
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+    );
+
+    // Frame with no hands — should call onGestureCursor with null.
+    const frameNoHands: LandmarkFrame = { timestampMs: 2, hands: [] };
+    act(() => {
+      capturedOnResult!({ frame: frameNoHands, fps: 30 });
+    });
+    expect(onGestureCursor).toHaveBeenLastCalledWith(null);
+
+    processorSpy.mockRestore();
   });
 });

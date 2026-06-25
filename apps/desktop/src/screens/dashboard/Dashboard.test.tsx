@@ -1,5 +1,5 @@
 import { APP_NAME } from "@handsoff/contracts";
-import type { IntentInput, SurfaceSnapshot } from "@handsoff/contracts";
+import type { IntentInput, ResolvedIntent, SurfaceSnapshot } from "@handsoff/contracts";
 import { createFakeCuaDriver } from "@handsoff/cua";
 import { fuseIntent, type ResolveIntentOptions } from "@handsoff/intent";
 import { FakeSttStream, fakeCuaWindowState } from "@handsoff/testkit";
@@ -15,10 +15,11 @@ const PANEL_TITLES = [
   "Settings",
   "Transcript",
   "Sessions",
+  "Referents",
   "Plan preview",
 ];
-// Sessions and Plan preview still start empty before a transcript arrives.
-const EMPTY_PANEL_TITLES = ["Sessions", "Plan preview"];
+// Sessions, Referents, and Plan preview still start empty before a transcript arrives.
+const EMPTY_PANEL_TITLES = ["Sessions", "Referents", "Plan preview"];
 
 let fakes: FakeSttStream[];
 
@@ -57,6 +58,24 @@ function headPointing(surface: SurfaceSnapshot) {
 
 async function ruleResolver(input: IntentInput, options: ResolveIntentOptions) {
   return fuseIntent(input, { createdAt: options.createdAt });
+}
+
+async function oneTickRuleResolver(
+  input: IntentInput,
+  options: ResolveIntentOptions,
+): Promise<ResolvedIntent> {
+  if ((input.goalSession?.tick ?? 0) > 0) {
+    return {
+      status: "satisfied",
+      id: "intent-satisfied",
+      input,
+      requires_approval: false,
+      target_agent: "none",
+      summary: "Goal satisfied",
+      createdAt: options.createdAt ?? "2026-06-22T12:00:00.000Z",
+    };
+  }
+  return ruleResolver(input, options);
 }
 
 beforeEach(() => {
@@ -115,6 +134,7 @@ describe("Dashboard", () => {
           cuaDriver={driver}
           headPointing={headPointing(state.surface)}
           now={() => "2026-06-22T12:00:00.000Z"}
+          resolveIntent={oneTickRuleResolver}
           targetResolveDelayMs={0}
         />,
       );
@@ -126,16 +146,63 @@ describe("Dashboard", () => {
       fireEvent.pointerUp(talkButton());
       await flush();
 
-      expect(screen.getByText("Click selected target")).toBeInTheDocument();
-      expect(screen.getByText("Session: session-1")).toBeInTheDocument();
+      // "Click selected target" appears in both PlanPreviewPanel and ReferentsPanel action plan
+      expect(screen.getAllByText("Click selected target").length).toBeGreaterThan(0);
+      expect(screen.getByText("session-1")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
-      await waitFor(() => expect(screen.getByText(/Last run:/)).toHaveTextContent("succeeded"));
+      await waitFor(() => expect(screen.getAllByText("succeeded").length).toBeGreaterThan(0));
       expect(driver.calls().map((call) => call.kind)).toEqual([
+        "list_windows",
+        "get_window_state",
         "get_window_state",
         "click",
         "get_window_state",
+        "list_windows",
+        "get_window_state",
       ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("shows CUA recovery guidance while preserving the exact fake-CUA failure", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const state = fakeCuaWindowState();
+    const driver = createFakeCuaDriver({
+      state,
+      permissions: {
+        accessibility: "denied",
+        screenRecording: "granted",
+        driver: "running",
+      },
+    });
+    try {
+      render(
+        <Dashboard
+          createStream={makeFactory()}
+          cuaDriver={driver}
+          headPointing={headPointing(state.surface)}
+          now={() => "2026-06-22T12:00:00.000Z"}
+          resolveIntent={ruleResolver}
+          targetResolveDelayMs={0}
+        />,
+      );
+
+      fireEvent.pointerDown(talkButton());
+      await flush();
+      act(() => latest().emitFinal("click there", 0.95, 100));
+      clock.mockReturnValue(1400);
+      fireEvent.pointerUp(talkButton());
+      await flush();
+
+      fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+      expect(
+        await screen.findAllByText(
+          "HandsOff needs Accessibility permission before it can control the selected app. Enable Accessibility for HandsOff, then re-check readiness and retry.",
+        ),
+      ).not.toHaveLength(0);
     } finally {
       clock.mockRestore();
     }
@@ -169,8 +236,11 @@ describe("Dashboard", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
 
-      expect(screen.getByText("Click selected target")).toBeInTheDocument();
-      expect(driver.calls()).toHaveLength(0);
+      // "Click selected target" appears in both PlanPreviewPanel and ReferentsPanel action plan
+      expect(screen.getAllByText("Click selected target").length).toBeGreaterThan(0);
+      // The goal loop observes the active window (list_windows + get_window_state) before
+      // stopping at the approval gate, so no plan action executes.
+      expect(driver.calls().map((call) => call.kind)).toEqual(["list_windows", "get_window_state"]);
     } finally {
       clock.mockRestore();
     }
@@ -195,9 +265,11 @@ describe("Dashboard", () => {
       fireEvent.pointerUp(talkButton());
       await flush();
 
+      // "No attention-region candidates were available" appears in both ReferentsPanel (reason)
+      // and PlanPreviewPanel (blocked reason) — use getAllByText to accept multiple matches.
       expect(
-        await screen.findByText("No attention-region candidates were available"),
-      ).toBeInTheDocument();
+        (await screen.findAllByText("No attention-region candidates were available")).length,
+      ).toBeGreaterThan(0);
       expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     } finally {
       clock.mockRestore();

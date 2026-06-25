@@ -10,7 +10,7 @@ import { planPermissionOnboarding } from "@handsoff/desktop";
 import { createAssemblyAiStream, createOnDeviceSttStream } from "@handsoff/speech";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { CameraPanel } from "../../features/camera/CameraPanel";
 import { ClarificationPanel } from "../../features/clarification/ClarificationPanel";
@@ -18,6 +18,7 @@ import { PermissionsOnboarding } from "../../features/permissions/PermissionsOnb
 import { PermissionsPanel } from "../../features/permissions/PermissionsPanel";
 import { PlanPreviewPanel } from "../../features/plan-preview/PlanPreviewPanel";
 import { ReadinessPanel } from "../../features/readiness/ReadinessPanel";
+import { ReferentsPanel } from "../../features/referents/ReferentsPanel";
 import { useReadinessProbe } from "../../features/readiness/useReadinessProbe";
 import { SessionsPanel } from "../../features/sessions/SessionsPanel";
 import { SettingsPanel } from "../../features/settings/SettingsPanel";
@@ -34,6 +35,7 @@ import {
 } from "../../features/voice-cua/useVoiceCuaController";
 import type { ResolveIntentOptions } from "@handsoff/intent";
 import type { IntentInput, ResolvedIntent } from "@handsoff/contracts";
+import type { SupervisionSession } from "@handsoff/supervision";
 
 function hasTauriBackend(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -109,6 +111,9 @@ export function Dashboard({
   // the controller reads it at intent time so "point + speak" binds to the pointed
   // surface. A ref (not state) avoids re-rendering the dashboard on every lock.
   const gestureEvidence = useRef<PointingEvidence | null>(null);
+  // Latest gesture cursor position (even without a locked referent). Updated every
+  // frame while hands are present, cleared to null when no hands are detected.
+  const gestureCursor = useRef<{ x: number; y: number } | null>(null);
   const intentResolver =
     resolveIntent ??
     (hasTauriBackend()
@@ -124,7 +129,22 @@ export function Dashboard({
       resolveIntent: intentResolver,
       targetResolveDelayMs,
       getGestureEvidence: () => gestureEvidence.current,
+      getGestureCursor: () => gestureCursor.current,
     });
+  // Accumulate session history (last 10) so the SessionsPanel shows prior commands
+  // rather than only the most-recent run.
+  const [sessionHistory, setSessionHistory] = useState<readonly SupervisionSession[]>([]);
+  useEffect(() => {
+    if (!session) return;
+    setSessionHistory((prev) => {
+      // Avoid duplicates: replace if id already exists (status update), else append.
+      const idx = prev.findIndex((s) => s.id === session.id);
+      if (idx !== -1) {
+        return [...prev.slice(0, idx), session, ...prev.slice(idx + 1)];
+      }
+      return [...prev, session].slice(-10);
+    });
+  }, [session]);
   // The structured clarification prompt (#36) when the engine won't act blind.
   // Display-first; interactive pick→re-resolve needs a controller round-trip (follow-up).
   const clarification =
@@ -199,10 +219,15 @@ export function Dashboard({
       </header>
       <div className="dashboard__panels">
         <CameraPanel
+          autoStart
           onGestureEvidence={(evidence) => {
             gestureEvidence.current = evidence;
           }}
+          onGestureCursor={(cursor) => {
+            gestureCursor.current = cursor;
+          }}
         />
+        <ReferentsPanel intent={intent} />
         <ReadinessPanel report={report} />
         <PermissionsPanel
           report={report}
@@ -226,7 +251,7 @@ export function Dashboard({
           headPointer={config.headPointer}
           onFinalTranscript={handleFinalTranscript}
         />
-        <SessionsPanel session={session} auditEvents={auditEvents} />
+        <SessionsPanel sessions={sessionHistory} auditEvents={auditEvents} />
         <ClarificationPanel request={clarification} />
         <PlanPreviewPanel
           intent={intent}

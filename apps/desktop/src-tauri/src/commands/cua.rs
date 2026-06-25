@@ -17,6 +17,20 @@ struct DriverPermissionReport {
 }
 
 #[derive(Debug, Deserialize)]
+struct DriverAppList {
+    apps: Vec<DriverApp>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DriverApp {
+    active: bool,
+    bundle_id: Option<String>,
+    name: String,
+    pid: u32,
+    running: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct DriverWindowList {
     windows: Vec<DriverWindow>,
 }
@@ -46,10 +60,33 @@ pub struct CuaWindow {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CuaApp {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    pub running: bool,
+    pub active: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CuaWindowState {
     pub surface: CuaWindow,
     pub element_count: u64,
     pub elements: Vec<Value>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CuaScreenshot {
+    pub surface: CuaWindow,
+    pub mime_type: String,
+    pub width: u64,
+    pub height: u64,
+    pub png_base64: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -133,6 +170,21 @@ fn map_window(window: DriverWindow, focused: bool) -> CuaWindow {
     }
 }
 
+fn map_app(app: DriverApp) -> CuaApp {
+    let id = app
+        .bundle_id
+        .clone()
+        .unwrap_or_else(|| app.name.to_ascii_lowercase());
+    CuaApp {
+        id,
+        name: app.name,
+        pid: if app.pid > 0 { Some(app.pid) } else { None },
+        bundle_id: app.bundle_id,
+        running: app.running,
+        active: app.active,
+    }
+}
+
 fn map_permissions(report: DriverPermissionReport) -> CuaPermissionReport {
     CuaPermissionReport {
         accessibility: if report.accessibility {
@@ -159,6 +211,19 @@ fn map_elements(_raw: &Value) -> Vec<Value> {
     vec![]
 }
 
+fn screenshot_field_u64(raw: &Value, field: &str) -> Result<u64, String> {
+    raw.get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("CUA screenshot missing {field}"))
+}
+
+fn screenshot_field_string(raw: &Value, field: &str) -> Result<String, String> {
+    raw.get(field)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| format!("CUA screenshot missing {field}"))
+}
+
 #[tauri::command]
 pub fn cua_permissions() -> CuaPermissionReport {
     match run_cua(&["permissions", "status", "--json"]).and_then(|value| {
@@ -171,6 +236,13 @@ pub fn cua_permissions() -> CuaPermissionReport {
             driver: "unavailable",
         },
     }
+}
+
+#[tauri::command]
+pub fn cua_list_apps() -> Result<Vec<CuaApp>, String> {
+    let list = serde_json::from_value::<DriverAppList>(call_tool("list_apps", json!({}))?)
+        .map_err(|error| format!("Could not parse CUA apps: {error}"))?;
+    Ok(list.apps.into_iter().map(map_app).collect())
 }
 
 #[tauri::command]
@@ -190,6 +262,26 @@ pub fn cua_list_windows() -> Result<Vec<CuaWindow>, String> {
             map_window(window, focused)
         })
         .collect())
+}
+
+#[tauri::command]
+pub fn cua_screenshot(pid: u32, window_id: u32) -> Result<CuaScreenshot, String> {
+    let raw = call_tool(
+        "get_window_state",
+        json!({ "pid": pid, "window_id": window_id, "capture_mode": "vision" }),
+    )?;
+    let surface = cua_list_windows()?
+        .into_iter()
+        .find(|window| window.pid == pid && window.window_id == window_id)
+        .ok_or_else(|| "CUA window disappeared before screenshot capture".to_string())?;
+
+    Ok(CuaScreenshot {
+        surface,
+        mime_type: screenshot_field_string(&raw, "screenshot_mime_type")?,
+        width: screenshot_field_u64(&raw, "screenshot_width")?,
+        height: screenshot_field_u64(&raw, "screenshot_height")?,
+        png_base64: screenshot_field_string(&raw, "screenshot_png_b64")?,
+    })
 }
 
 #[tauri::command]
@@ -224,11 +316,16 @@ pub fn cua_launch_app(
 }
 
 #[tauri::command]
-pub fn cua_click(pid: u32, window_id: u32, element_index: u32) -> Result<CuaActionResult, String> {
-    call_action_tool(
-        "click",
-        json!({ "pid": pid, "window_id": window_id, "element_index": element_index }),
-    )?;
+pub fn cua_click(
+    pid: u32,
+    window_id: u32,
+    element_index: Option<u32>,
+) -> Result<CuaActionResult, String> {
+    let mut input = json!({ "pid": pid, "window_id": window_id });
+    if let Some(idx) = element_index {
+        input["element_index"] = json!(idx);
+    }
+    call_action_tool("click", input)?;
     Ok(CuaActionResult {
         status: "succeeded",
         summary: "Clicked selected target".to_string(),
@@ -239,13 +336,16 @@ pub fn cua_click(pid: u32, window_id: u32, element_index: u32) -> Result<CuaActi
 pub fn cua_type_text(
     pid: u32,
     window_id: u32,
-    element_index: u32,
+    element_index: Option<u32>,
     text: String,
 ) -> Result<CuaActionResult, String> {
-    call_action_tool(
-        "type_text",
-        json!({ "pid": pid, "window_id": window_id, "element_index": element_index, "text": text }),
-    )?;
+    // element_index is optional — without it, the cua-driver types into the pid's
+    // currently focused element (no prior get_window_state needed).
+    let mut input = json!({ "pid": pid, "window_id": window_id, "text": text });
+    if let Some(idx) = element_index {
+        input["element_index"] = json!(idx);
+    }
+    call_action_tool("type_text", input)?;
     Ok(CuaActionResult {
         status: "succeeded",
         summary: "Typed dictated text".to_string(),
@@ -256,13 +356,14 @@ pub fn cua_type_text(
 pub fn cua_set_value(
     pid: u32,
     window_id: u32,
-    element_index: u32,
+    element_index: Option<u32>,
     value: String,
 ) -> Result<CuaActionResult, String> {
-    call_action_tool(
-        "set_value",
-        json!({ "pid": pid, "window_id": window_id, "element_index": element_index, "value": value }),
-    )?;
+    let mut input = json!({ "pid": pid, "window_id": window_id, "value": value });
+    if let Some(idx) = element_index {
+        input["element_index"] = json!(idx);
+    }
+    call_action_tool("set_value", input)?;
     Ok(CuaActionResult {
         status: "succeeded",
         summary: "Set selected value".to_string(),
@@ -305,6 +406,47 @@ mod tests {
         assert_eq!(window.availability, "available");
         assert_eq!(window.access_status, "accessible");
         assert!(window.focused);
+    }
+
+    #[test]
+    fn maps_driver_apps_to_contract_apps() {
+        let running = map_app(DriverApp {
+            active: true,
+            bundle_id: Some("com.apple.Notes".to_string()),
+            name: "Notes".to_string(),
+            pid: 42,
+            running: true,
+        });
+        let installed = map_app(DriverApp {
+            active: false,
+            bundle_id: None,
+            name: "Preview".to_string(),
+            pid: 0,
+            running: false,
+        });
+
+        assert_eq!(running.id, "com.apple.Notes");
+        assert_eq!(running.pid, Some(42));
+        assert!(running.running);
+        assert_eq!(installed.id, "preview");
+        assert_eq!(installed.pid, None);
+    }
+
+    #[test]
+    fn validates_screenshot_fields_loudly() {
+        let raw = json!({
+            "screenshot_mime_type": "image/png",
+            "screenshot_width": 640,
+            "screenshot_height": 480,
+            "screenshot_png_b64": "abc123"
+        });
+
+        assert_eq!(
+            screenshot_field_string(&raw, "screenshot_mime_type").unwrap(),
+            "image/png"
+        );
+        assert_eq!(screenshot_field_u64(&raw, "screenshot_width").unwrap(), 640);
+        assert!(screenshot_field_string(&json!({}), "screenshot_png_b64").is_err());
     }
 
     #[test]

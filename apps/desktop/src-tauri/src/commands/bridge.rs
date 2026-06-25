@@ -50,7 +50,8 @@ fn state_frame(topic: &str, payload: Value) -> String {
 }
 
 fn error_frame(reason: &str) -> String {
-    json!({ "v": 1, "type": "error", "topic": "error", "payload": { "reason": reason } }).to_string()
+    json!({ "v": 1, "type": "error", "topic": "error", "payload": { "reason": reason } })
+        .to_string()
 }
 
 /// Reject any upgrade carrying an `Origin` (every browser sends one; the native
@@ -86,7 +87,11 @@ async fn handle_conn(stream: TcpStream) {
     let (mut tx, mut rx) = ws.split();
     while let Some(Ok(msg)) = rx.next().await {
         if let Message::Text(text) = msg {
-            if tx.send(Message::Text(handle_bridge_text(&text))).await.is_err() {
+            if tx
+                .send(Message::Text(handle_bridge_text(&text)))
+                .await
+                .is_err()
+            {
                 break;
             }
         }
@@ -102,12 +107,17 @@ pub async fn serve() {
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => listener,
         Err(e) => {
-            eprintln!("director-bridge: FAILED to bind {HOST}:{PORT} ({e}) — sidecar cannot connect");
+            eprintln!(
+                "director-bridge: FAILED to bind {HOST}:{PORT} ({e}) — sidecar cannot connect"
+            );
             return;
         }
     };
     if let Ok(local) = listener.local_addr() {
-        debug_assert!(local.ip().is_loopback(), "bridge must bind a loopback address");
+        debug_assert!(
+            local.ip().is_loopback(),
+            "bridge must bind a loopback address"
+        );
         eprintln!("director-bridge: listening on {local}");
     }
     loop {

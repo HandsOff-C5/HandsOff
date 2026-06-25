@@ -32,7 +32,12 @@ import { initialState, reduce, type GestureMachineState } from "../state-machine
 
 export interface ReferentLoopOptions {
   // Calibration transform (raw pointing signal → screen space). Identity = uncalibrated.
+  // Ignored when `applyCalibration` is supplied (the multi-monitor path).
   transform: AffineTransform;
+  // Multi-monitor calibration applier (raw → global-px). When provided, the loop uses it
+  // instead of the single-affine `transform`, so a multi-display fit drives the cursor and
+  // candidate hit-test. Optional; the single-screen path omits it.
+  applyCalibration?: (raw: Point) => Point;
   // Pointable surfaces in the same coordinate space as the transform output.
   surfaces: Surface[];
   // Quality of the active calibration, carried into the candidate.
@@ -73,12 +78,16 @@ export interface ReferentLoop {
 export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop => {
   const {
     transform,
+    applyCalibration,
     surfaces,
     calibrationQuality,
     dwell: dwellParams,
     pointing,
     confidenceCutoffHz = 2,
   } = options;
+  // Resolve the calibration applier once: the multi-monitor fit when supplied, otherwise the
+  // single-affine `transform`. Used for BOTH the visible cursor and the targeting point.
+  const applyCalibratedPoint = applyCalibration ?? ((raw: Point) => applyTransform(transform, raw));
   // Hold-to-lock means holding the SAME target: the dwell is reset whenever the pointed
   // target changes (or is lost), so sweeping across surfaces never accumulates to a lock.
   let dwell = createDwellDebounce(dwellParams);
@@ -111,7 +120,7 @@ export const createReferentLoop = (options: ReferentLoopOptions): ReferentLoop =
       let reliability = 0;
       if (hand) {
         reliability = pointingReliability(hand, pointing);
-        const screenXY = applyTransform(transform, pointingSignal(hand, pointing));
+        const screenXY = applyCalibratedPoint(pointingSignal(hand, pointing));
         // Cursor uses the 1€-smoothed point; targeting/lock use the raw point (unchanged).
         // The cursor tracks whenever a hand is visible, so the user always sees where
         // they're aiming — but only a deliberate index point arms a candidate + confidence,

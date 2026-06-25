@@ -11,16 +11,6 @@ mod commands;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        // Capture hotkeys (#95) via the global-shortcut plugin — no
-        // Accessibility/Input Monitoring permission needed. Command+Option+? is
-        // hold-to-capture; Control+Shift+Space is tap-to-toggle.
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, shortcut, event| {
-                    commands::hotkey::handle_event(app, shortcut, event.state());
-                })
-                .build(),
-        )
         // L0: the Home Dashboard (`main`) hides instead of closing — closing its
         // window must never destroy it or kill the engine/bridge under it. The
         // menu-bar `openHome` command (G1) re-shows it; other windows close normally.
@@ -36,23 +26,9 @@ fn main() {
             }
         })
         .manage(commands::head_track::HeadTrackState::default())
+        .manage(commands::gesture_overlay::GestureOverlayState::default())
         .manage(commands::stt_ondevice::OnDeviceSttState::default())
         .setup(|app| {
-            // Register capture hotkeys once the app is up. Surface (don't
-            // swallow with `?`) a registration failure: macOS can refuse a global
-            // hotkey silently, and a swallowed error here looks like "nothing
-            // happens on press" with no clue why.
-            use tauri_plugin_global_shortcut::GlobalShortcutExt;
-            for shortcut in commands::hotkey::capture_shortcuts() {
-                match app.global_shortcut().register(shortcut) {
-                    Ok(()) => eprintln!("handsoff: registered capture hotkey {shortcut:?}"),
-                    Err(error) => {
-                        eprintln!(
-                            "handsoff: FAILED to register capture hotkey {shortcut:?}: {error}"
-                        )
-                    }
-                }
-            }
             // L0: Director is menu-bar-first — run as an accessory app so there is
             // no Dock icon (the menu-bar item is the presence). The Home Dashboard
             // still shows; it just no longer owns a Dock tile.
@@ -60,6 +36,12 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             // Director engine bridge — loopback WS server for the native Swift sidecar (G0).
             tauri::async_runtime::spawn(commands::bridge::serve());
+            // Capture trigger (#95): the bare `fn` (Globe) key, observed via a
+            // listen-only CGEventTap. press-hold -> start/stop, double-tap ->
+            // toggle. install() spawns its own thread and surfaces failures via
+            // stderr (Accessibility not granted -> tap is NULL), since a swallowed
+            // failure here looks like "nothing happens on fn" with no clue why.
+            commands::hotkey::install(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -72,11 +54,20 @@ fn main() {
             commands::head_track::head_track_start,
             commands::head_track::head_track_stop,
             commands::head_track::head_track_recenter,
+            commands::gesture_overlay::gesture_overlay_start,
+            commands::gesture_overlay::gesture_overlay_stop,
+            commands::gesture_overlay::gesture_overlay_move,
+            commands::gesture_overlay::gesture_overlay_target,
+            commands::gesture_overlay::gesture_overlay_untarget,
+            commands::gesture_overlay::gesture_overlay_clear,
+            commands::gesture_overlay::list_displays,
             commands::stt_ondevice::stt_ondevice_start,
             commands::stt_ondevice::stt_ondevice_stop,
             commands::cua::cua_permissions,
+            commands::cua::cua_list_apps,
             commands::cua::cua_list_windows,
             commands::cua::cua_get_window_state,
+            commands::cua::cua_screenshot,
             commands::cua::cua_launch_app,
             commands::cua::cua_click,
             commands::cua::cua_type_text,

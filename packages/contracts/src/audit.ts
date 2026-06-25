@@ -43,33 +43,40 @@ const auditEventBaseSchema = z.object({
   recordedAt: z.string().datetime(),
 });
 
-export const supervisionAuditEventSchema = z.discriminatedUnion("kind", [
-  auditEventBaseSchema.extend({
-    kind: z.literal("intent_created"),
-    intent: resolvedIntentSchema,
-  }),
-  auditEventBaseSchema.extend({
-    kind: z.literal("approval_decided"),
-    approval: approvalDecisionSchema,
-  }),
-  auditEventBaseSchema.extend({
-    kind: z.literal("cua_state_captured"),
-    phase: z.enum(["pre", "post"]),
-    stepId: z.string().min(1),
-    state: cuaWindowStateSchema,
-  }),
-  auditEventBaseSchema.extend({
-    kind: z.literal("cua_call"),
-    stepId: z.string().min(1),
-    request: cuaActionRequestSchema,
-    result: cuaActionResultSchema,
-  }),
-  auditEventBaseSchema.extend({
-    kind: z.literal("execution_finished"),
-    status: executionStatusSchema,
-    result: cuaActionResultSchema.optional(),
-  }),
-]);
+export const supervisionAuditEventSchema = z
+  .discriminatedUnion("kind", [
+    auditEventBaseSchema.extend({
+      kind: z.literal("intent_created"),
+      intent: resolvedIntentSchema,
+    }),
+    auditEventBaseSchema.extend({
+      kind: z.literal("approval_decided"),
+      approval: approvalDecisionSchema,
+    }),
+    auditEventBaseSchema.extend({
+      kind: z.literal("cua_state_captured"),
+      phase: z.enum(["pre", "post"]),
+      stepId: z.string().min(1),
+      state: cuaWindowStateSchema,
+    }),
+    auditEventBaseSchema.extend({
+      kind: z.literal("cua_call"),
+      stepId: z.string().min(1),
+      request: cuaActionRequestSchema,
+      result: cuaActionResultSchema,
+    }),
+    auditEventBaseSchema.extend({
+      kind: z.literal("execution_finished"),
+      status: executionStatusSchema,
+      result: cuaActionResultSchema.optional(),
+    }),
+  ])
+  .refine(
+    (event) => event.kind !== "approval_decided" || event.approval.actionId === event.actionId,
+    {
+      message: "approval actionId must match audit actionId",
+    },
+  );
 export type SupervisionAuditEvent = z.infer<typeof supervisionAuditEventSchema>;
 
 export function safeParseSupervisionAuditEvent(

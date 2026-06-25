@@ -134,6 +134,94 @@ describe("approved plan runner", () => {
     expect(audit.list()).toMatchObject([{ kind: "execution_finished", status: "blocked" }]);
   });
 
+  it("derives the approval gate from risk instead of trusting plan.requires_approval", async () => {
+    const cua = port();
+    const audit = auditSink();
+
+    const result = await runApprovedPlan({
+      sessionId: "session-1",
+      plan: plan({ requires_approval: false }),
+      cua,
+      audit,
+      recordedAt: "2026-06-22T12:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      result: { status: "blocked", reason: "Approval required before executing mutating plan" },
+    });
+    expect(cua.calls).toEqual([]);
+    expect(audit.list()).toMatchObject([
+      {
+        kind: "execution_finished",
+        status: "blocked",
+        result: { status: "blocked", reason: "Approval required before executing mutating plan" },
+      },
+    ]);
+  });
+
+  it("blocks destructive or external plans without approval even when planner omits the gate", async () => {
+    const cua = port();
+    const audit = auditSink();
+
+    const result = await runApprovedPlan({
+      sessionId: "session-1",
+      plan: plan({
+        risk_level: "destructive_external" as ActionPlan["risk_level"],
+        requires_approval: false,
+      }),
+      cua,
+      audit,
+      recordedAt: "2026-06-22T12:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      result: {
+        status: "blocked",
+        reason: "Approval required before executing destructive/external plan",
+      },
+    });
+    expect(cua.calls).toEqual([]);
+  });
+
+  it("does not let approval for another action unlock the current plan", async () => {
+    const cua = port();
+    const audit = auditSink();
+
+    const result = await runApprovedPlan({
+      sessionId: "session-1",
+      plan: plan(),
+      approval: {
+        actionId: "different-plan",
+        decision: "approved",
+        decidedAt: "2026-06-22T12:00:00.000Z",
+      },
+      cua,
+      audit,
+      recordedAt: "2026-06-22T12:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      result: {
+        status: "blocked",
+        reason: "Approval decision does not match this action plan",
+      },
+    });
+    expect(cua.calls).toEqual([]);
+    expect(audit.list()).toMatchObject([
+      {
+        kind: "execution_finished",
+        status: "blocked",
+        result: {
+          status: "blocked",
+          reason: "Approval decision does not match this action plan",
+        },
+      },
+    ]);
+  });
+
   it("persists failed driver results", async () => {
     const cua = port({ result: { status: "failed", error: "click failed" } });
     const audit = auditSink();

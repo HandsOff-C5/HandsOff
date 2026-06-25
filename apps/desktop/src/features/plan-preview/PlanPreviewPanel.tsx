@@ -1,5 +1,6 @@
 import type { PlanRunResult } from "@handsoff/actions";
 import type { ResolvedIntent } from "@handsoff/contracts";
+import { summarizeCuaFailure } from "@handsoff/cua";
 
 import { EmptyPanel } from "../../components/EmptyPanel";
 
@@ -12,9 +13,9 @@ type PlanPreviewPanelProps = {
 
 function runSummary(runResult: PlanRunResult): string {
   if (runResult.result?.status === "blocked")
-    return `${runResult.status}: ${runResult.result.reason}`;
+    return summarizeCuaFailure(runResult.result) ?? runResult.result.reason;
   if (runResult.result?.status === "failed")
-    return `${runResult.status}: ${runResult.result.error}`;
+    return summarizeCuaFailure(runResult.result) ?? runResult.result.error;
   return runResult.status;
 }
 
@@ -39,6 +40,17 @@ export function PlanPreviewPanel({
         title="Plan preview"
         message="No plan to preview yet. Proposed plans show here before you approve them."
       />
+    );
+  }
+
+  if (intent.status === "satisfied") {
+    return (
+      <section className="panel plan-preview">
+        <h2 className="panel__title">Plan preview</h2>
+        <p className="plan-preview__status" role="status">
+          {intent.summary}
+        </p>
+      </section>
     );
   }
 
@@ -79,6 +91,9 @@ export function PlanPreviewPanel({
         </p>
       ) : null}
       {intent.requires_approval && !runResult ? (
+        // Mutating/destructive plans gate on explicit approval. Read-only and
+        // reversible plans (requires_approval === false) auto-run in the
+        // controller, so they never wait for a manual trigger here.
         <div className="plan-preview__actions">
           <button type="button" onClick={onApprove}>
             Approve
