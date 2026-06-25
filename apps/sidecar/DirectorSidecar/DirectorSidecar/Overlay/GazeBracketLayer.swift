@@ -12,21 +12,36 @@ import SwiftUI
 
 struct GazeBracketLayer: View {
     let model: GazeBracketModel
+    /// The active display layout + which display THIS window covers (see ReticleOverlayView).
+    /// Empty/`nil` → primary-only overlay (region positioned at its raw contract center). Multi-
+    /// display: the region draws on the display containing its CENTER, in that display's local coords.
+    var displays: [DisplayRect] = []
+    var displayID: Int? = nil
 
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { _ in
-            if let region = model.region, model.isVisible {
+            if let region = model.region, model.isVisible, let center = localCenter(region) {
                 BracketFrame(dim: model.isDim)
                     .frame(width: region.w, height: region.h)
-                    .position(x: region.x + region.w / 2, y: region.y + region.h / 2)
+                    .position(center)
                     .animation(reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.3), value: region)
             }
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    /// The region's center in THIS window's local coords, or `nil` when its center belongs to another
+    /// display. A region is an indivisible unit (element-sized) — it draws on one display, not split.
+    private func localCenter(_ region: GazeRegion) -> CGPoint? {
+        let cx = region.x + region.w / 2
+        let cy = region.y + region.h / 2
+        guard let displayID, !displays.isEmpty else { return CGPoint(x: cx, y: cy) }
+        guard let loc = DisplayGeometry.locate(cx, cy, in: displays), loc.displayID == displayID else { return nil }
+        return CGPoint(x: loc.localX, y: loc.localY)
     }
 }
 
