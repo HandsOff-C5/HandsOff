@@ -89,6 +89,19 @@ export async function runApprovedPlan(args: {
       continue;
     }
 
+    // A generic `tool_call` step (U3b full-surface) is dispatched through the
+    // driver passthrough by the autonomous loop, not this typed executor. It has
+    // no ActionTarget for pre/post window capture, so it cannot run here — fail
+    // loudly rather than silently mis-handle it (a routing bug if it occurs).
+    if (step.kind === "tool_call") {
+      const result: CuaActionResult = {
+        status: "failed",
+        error: `runApprovedPlan cannot execute a generic tool_call step (${step.tool}); the autonomous loop dispatches it via driver.call`,
+      };
+      finish(args.audit, args.sessionId, args.plan.id, recordedAt, result);
+      return { status: "failed", result };
+    }
+
     const pre = await args.cua.getWindowState({ kind: "get_window_state", target: step.target });
     const preCapture = stateCapture(pre, "Pre-action");
     if ("failure" in preCapture) {

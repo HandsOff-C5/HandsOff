@@ -16,7 +16,13 @@ export function translateStep(step: ActionStep): CuaActionRequest {
   if (step.kind === "set_value") {
     return { kind: "set_value", target: step.target, value: step.value };
   }
-  return { kind: "screenshot", target: step.target };
+  if (step.kind === "capture_screenshot") {
+    return { kind: "screenshot", target: step.target };
+  }
+  // A `tool_call` step (U3b full-surface) is dispatched directly via the generic
+  // driver passthrough (`driver.call`), never through this typed translator. It
+  // must never reach here; if it does, that is a routing bug, not a screenshot.
+  throw new Error(`translateStep cannot translate a generic tool_call step: ${step.tool}`);
 }
 
 export function translatePlan(plan: ActionPlan): readonly CuaActionRequest[] {

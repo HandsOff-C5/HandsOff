@@ -84,4 +84,52 @@ describe("action plan contract", () => {
 
     expect(result.success).toBe(true);
   });
+
+  it("accepts a generic tool_call step over the full driver surface (U3b)", () => {
+    const result = safeParseActionPlan(
+      plan({
+        risk_level: "read_only",
+        requires_approval: false,
+        action_plan: [
+          {
+            id: "step-1",
+            kind: "tool_call",
+            label: "Scroll the list down",
+            tool: "scroll",
+            args: { pid: 42, window_id: 7, direction: "down", by: "page" },
+          },
+        ],
+      }),
+    );
+
+    expect(result.success).toBe(true);
+  });
+
+  it("defaults a tool_call step's args to an empty object when omitted", () => {
+    const result = safeParseActionPlan(
+      plan({
+        risk_level: "read_only",
+        requires_approval: false,
+        action_plan: [
+          { id: "step-1", kind: "tool_call", label: "List windows", tool: "list_windows" },
+        ],
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const step = result.data.action_plan[0]!;
+      expect(step.kind === "tool_call" && step.args).toEqual({});
+    }
+  });
+
+  it("rejects a tool_call step with an empty tool name", () => {
+    const result = safeParseActionPlan(
+      plan({
+        action_plan: [{ id: "step-1", kind: "tool_call", label: "No tool", tool: "", args: {} }],
+      }),
+    );
+
+    expect(result.success).toBe(false);
+  });
 });

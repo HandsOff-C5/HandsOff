@@ -1,4 +1,4 @@
-import { createFakeCuaDriver } from "@handsoff/cua";
+import { createFakeCuaDriver, cuaBlocked, cuaFailed } from "@handsoff/cua";
 import type {
   IntentInput,
   PointingEvidence,
@@ -240,7 +240,10 @@ describe("useVoiceCuaController", () => {
 
     await waitFor(() => expect(resolveIntent).toHaveBeenCalled());
     const [input, options] = resolveIntent.mock.calls[0]!;
-    expect(options).toMatchObject({ resolver: "auto", createdAt: NOW });
+    // U3b: the loop passes createdAt + the loaded driver tool catalog (tools) to
+    // the next-tool-call resolver.
+    expect(options).toMatchObject({ createdAt: NOW });
+    expect(Array.isArray(options.tools)).toBe(true);
     // Combinative: face-tracker-position entry from headPointing.point + head-neighborhood
     // from the candidate. Both are always included when headPointing is set.
     expect(input.pointingEvidence).toEqual([
@@ -298,7 +301,14 @@ describe("useVoiceCuaController", () => {
       status: "ready",
       referent: { id: "gesture-target" },
     });
-    expect(driver.calls().map((call) => call.kind)).toEqual(["list_windows", "get_window_state"]);
+    // U3b: the loop loads the driver tool catalog (list_tools) once before
+    // resolving, then perceives (list_windows + get_window_state) and pauses at
+    // the mutating-click approval gate — no action dispatched yet.
+    expect(driver.calls().map((call) => call.kind)).toEqual([
+      "list_windows",
+      "get_window_state",
+      "list_tools",
+    ]);
   });
 
   it("falls back to the active-window cursor path when no gesture or head snapshot is available", async () => {
@@ -379,7 +389,13 @@ describe("useVoiceCuaController", () => {
     });
 
     await act(async () => result.current.approve());
-    expect(driver.calls().map((call) => call.kind)).toEqual(["list_windows", "get_window_state"]);
+    // Observe + load the tool catalog, then clarify — no action dispatched, and
+    // approve() is a no-op against a clarification.
+    expect(driver.calls().map((call) => call.kind)).toEqual([
+      "list_windows",
+      "get_window_state",
+      "list_tools",
+    ]);
   });
 
   it("includes gesture cursor evidence when getGestureCursor provides a position", async () => {
@@ -487,7 +503,8 @@ describe("useVoiceCuaController", () => {
     // No approve() call — a reversible plan runs on its own and the loop terminates.
     await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
     expect(result.current.session?.status).toBe("succeeded");
-    expect(driver.calls().some((call) => call.kind === "click")).toBe(true);
+    // U3b: the click is dispatched through the generic passthrough (driver.call).
+    expect(driver.calls().some((call) => call.kind === "call" && call.tool === "click")).toBe(true);
   });
 
   it("uses candidates that arrive during the resolve delay", async () => {
@@ -533,25 +550,28 @@ describe("useVoiceCuaController", () => {
     await act(async () => result.current.approve());
 
     expect(result.current.runResult?.status).toBe("succeeded");
+    // U3b: the loop loads the tool catalog (list_tools, cached after tick 0),
+    // perceives per tick (list_windows + get_window_state), and dispatches the
+    // action through the generic passthrough (driver.call) — so the click is a
+    // `call` record, not a `click` record.
     expect(driver.calls().map((call) => call.kind)).toEqual([
       "list_windows",
       "get_window_state",
-      "get_window_state",
-      "click",
-      "get_window_state",
+      "list_tools",
+      "call",
       "list_windows",
       "get_window_state",
     ]);
+    const callStep = driver.calls().find((call) => call.kind === "call");
+    expect(callStep).toMatchObject({ kind: "call", tool: "click" });
   });
 
   it("persists exact fake-CUA permission failures and feeds them back for recovery", async () => {
     const driver = createFakeCuaDriver({
       state: fakeCuaWindowState({ surface: surface() }),
-      permissions: {
-        accessibility: "denied",
-        screenRecording: "granted",
-        driver: "running",
-      },
+      // U3b: the action is dispatched via driver.call, so the permission failure
+      // surfaces as the call result (not the typed-path permission check).
+      nextCallResult: cuaBlocked("Accessibility permission denied"),
     });
     // tick 0 → the mutating click (gated); after approval it fails on the denied
     // permission; the loop FEEDS that failure forward (recovery) and asks again
@@ -590,8 +610,9 @@ describe("useVoiceCuaController", () => {
 
     await act(async () => result.current.approve());
 
-    // The exact fake-CUA failure is preserved in the audit trail (per-call
-    // tool_call record + the executor's execution_finished record).
+    // The exact fake-CUA failure is preserved in the audit trail as the per-call
+    // tool_call record (U3b recovers from a failed dispatch rather than emitting a
+    // terminal execution_finished — that event is now reserved for reject()).
     await waitFor(() => expect(result.current.intent?.status).toBe("blocked"));
     const toolCall = result.current.auditEvents.find((e) => e.kind === "tool_call");
     expect(toolCall).toMatchObject({
@@ -600,15 +621,6 @@ describe("useVoiceCuaController", () => {
       approval: "approved",
       result: { status: "blocked", reason: "Accessibility permission denied" },
     });
-    expect(
-      result.current.auditEvents.some(
-        (e) =>
-          e.kind === "execution_finished" &&
-          e.status === "blocked" &&
-          e.result?.status === "blocked" &&
-          e.result.reason === "Accessibility permission denied",
-      ),
-    ).toBe(true);
     // The denied-permission failure reached the recovery turn.
     expect(result.current.intent).toMatchObject({
       status: "blocked",
@@ -664,24 +676,32 @@ describe("useVoiceCuaController", () => {
       requires_approval: true,
       action_plan: { action_plan: [{ kind: "type_text" }] },
     });
-    expect(driver.calls().map((call) => call.kind)).not.toContain("type_text");
+    // The mutating type tick has not been dispatched yet (no type_text call).
+    expect(driver.calls().some((c) => c.kind === "call" && c.tool === "type_text")).toBe(false);
 
     await act(async () => result.current.approve());
 
     await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
     expect(result.current.session?.status).toBe("succeeded");
+    // U3b: actions dispatch through driver.call (launch_app then type_text); the
+    // tool catalog loads once (list_tools, cached). Each tick re-observes.
     expect(driver.calls().map((call) => call.kind)).toEqual([
       "list_windows",
       "get_window_state",
-      "launch_app",
+      "list_tools",
+      "call",
       "list_windows",
       "get_window_state",
-      "get_window_state",
-      "type_text",
-      "get_window_state",
+      "call",
       "list_windows",
       "get_window_state",
     ]);
+    expect(
+      driver
+        .calls()
+        .filter((c) => c.kind === "call")
+        .map((c) => c.tool),
+    ).toEqual(["launch_app", "type_text"]);
   });
 
   it("executes a multi-step plan step-by-step after approval (no one-action-per-tick block)", async () => {
@@ -721,16 +741,20 @@ describe("useVoiceCuaController", () => {
       status: "ready",
       action_plan: { action_plan: [{ kind: "launch_app" }, { kind: "type_text" }] },
     });
-    expect(driver.calls().map((call) => call.kind)).not.toContain("type_text");
+    // Nothing dispatched yet.
+    expect(driver.calls().some((c) => c.kind === "call")).toBe(false);
 
     await act(async () => result.current.approve());
 
-    // Both steps ran in order once approved.
+    // U3b: both steps dispatch through driver.call, in order, once approved.
     await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
-    const kinds = driver.calls().map((call) => call.kind);
-    expect(kinds).toContain("launch_app");
-    expect(kinds).toContain("type_text");
-    expect(kinds.indexOf("launch_app")).toBeLessThan(kinds.indexOf("type_text"));
+    const callTools = driver
+      .calls()
+      .filter((c) => c.kind === "call")
+      .map((c) => c.tool);
+    expect(callTools).toContain("launch_app");
+    expect(callTools).toContain("type_text");
+    expect(callTools.indexOf("launch_app")).toBeLessThan(callTools.indexOf("type_text"));
   });
 
   it("stops the goal loop at the per-goal action budget", async () => {
@@ -769,7 +793,9 @@ describe("useVoiceCuaController", () => {
     expect(result.current.session?.status).toBe("blocked");
     // Two launches ran (budget = 2); the resolver was consulted for each.
     expect(resolveIntent).toHaveBeenCalledTimes(2);
-    expect(driver.calls().filter((call) => call.kind === "launch_app")).toHaveLength(2);
+    expect(
+      driver.calls().filter((call) => call.kind === "call" && call.tool === "launch_app"),
+    ).toHaveLength(2);
   });
 
   it("runs an add-into-this-app transcript as a current-app type action", async () => {
@@ -804,12 +830,14 @@ describe("useVoiceCuaController", () => {
     await act(async () => result.current.approve());
 
     expect(result.current.runResult?.status).toBe("succeeded");
-    expect(driver.calls()).toContainEqual({
-      kind: "type_text",
-      target: expect.objectContaining({
-        surface: expect.objectContaining({ id: "active-window", app: "Current app" }),
-      }),
-      text: "hello hello goodbye",
+    // U3b: the current-app type dispatches via driver.call("type_text", …). The
+    // active-window surface has no pid/windowId, so the flat args carry just the
+    // element_index + text (no pid/window_id).
+    const typeCall = driver.calls().find((c) => c.kind === "call" && c.tool === "type_text");
+    expect(typeCall).toMatchObject({
+      kind: "call",
+      tool: "type_text",
+      input: { element_index: 0, text: "hello hello goodbye" },
     });
   });
 });
@@ -826,7 +854,8 @@ describe("U3 autonomous loop", () => {
     const driver = createFakeCuaDriver({
       state: fakeCuaWindowState({ surface: notes }),
       windows: [notes],
-      nextActionResult: { status: "failed", error: "App did not launch" },
+      // U3b: actions go through driver.call, so the failure is the call result.
+      nextCallResult: cuaFailed("App did not launch"),
     });
     const resolveIntent = vi.fn(async (input: IntentInput): Promise<ResolvedIntent> => {
       if (input.goalSession?.tick === 0) return readyLaunchTick(input, "Notes");
@@ -913,14 +942,16 @@ describe("U3 autonomous loop", () => {
 
     act(() => result.current.handleFinalTranscript({ ...finalTranscript, text: "send it" }));
 
-    // Escalated to a pending approval — no click executed yet.
+    // Escalated to a pending approval — no click dispatched yet.
     await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
-    expect(driver.calls().map((c) => c.kind)).not.toContain("click");
+    expect(result.current.intent).toMatchObject({ requires_approval: true });
+    expect(driver.calls().some((c) => c.kind === "call" && c.tool === "click")).toBe(false);
 
     await act(async () => result.current.approve());
 
+    // U3b: after approval the Send click dispatches via driver.call.
     await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
-    expect(driver.calls().map((c) => c.kind)).toContain("click");
+    expect(driver.calls().some((c) => c.kind === "call" && c.tool === "click")).toBe(true);
   });
 
   it("records a per-call tool_call audit event for every executed action", async () => {
@@ -1047,8 +1078,8 @@ describe("U3 characterization: supervised invariants", () => {
 
     await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
     expect(result.current.session?.status).toBe("succeeded");
-    // The click executed without any approve() round-trip.
-    expect(driver.calls().some((call) => call.kind === "click")).toBe(true);
+    // The click executed without any approve() round-trip (dispatched via driver.call).
+    expect(driver.calls().some((call) => call.kind === "call" && call.tool === "click")).toBe(true);
   });
 
   it("(b) a mutating plan waits for approve(); reject() runs no action", async () => {
@@ -1066,12 +1097,12 @@ describe("U3 characterization: supervised invariants", () => {
 
     act(() => result.current.handleFinalTranscript(finalTranscript));
     await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
-    // Paused at the gate: no mutating click has run yet.
-    expect(driver.calls().map((c) => c.kind)).not.toContain("click");
+    // Paused at the gate: no action dispatched yet (no driver.call).
+    expect(driver.calls().some((c) => c.kind === "call")).toBe(false);
 
     await act(async () => result.current.reject());
-    // reject() runs nothing and leaves the session terminal-rejected.
-    expect(driver.calls().map((c) => c.kind)).not.toContain("click");
+    // reject() runs nothing (no driver.call) and leaves the session rejected.
+    expect(driver.calls().some((c) => c.kind === "call")).toBe(false);
     expect(result.current.session?.status).toBe("rejected");
   });
 
@@ -1127,12 +1158,8 @@ describe("U3 characterization: supervised invariants", () => {
     act(() => result.current.handleFinalTranscript(finalTranscript));
 
     await waitFor(() => expect(result.current.intent?.status).toBe("clarification_required"));
-    // Only perception ran — no click/type/launch action was issued.
-    const actionKinds = driver
-      .calls()
-      .map((c) => c.kind)
-      .filter((k) => k === "click" || k === "type_text" || k === "launch_app");
-    expect(actionKinds).toEqual([]);
+    // Only perception ran — no action (driver.call) was dispatched.
+    expect(driver.calls().some((c) => c.kind === "call")).toBe(false);
   });
 });
 
@@ -1179,10 +1206,12 @@ describe("ADR 0006 goal-loop golden evals", () => {
       await act(async () => result.current.approve());
       await waitFor(() => expect(result.current.intent?.status).toBe(golden.terminalStatus));
 
+      // U3b: actions dispatch through driver.call; assert the tool sequence.
       const actionCalls = driver
         .calls()
-        .map((call) => call.kind)
-        .filter((kind) => kind === "launch_app" || kind === "type_text");
+        .filter((call) => call.kind === "call")
+        .map((call) => call.tool)
+        .filter((tool) => tool === "launch_app" || tool === "type_text");
       expect(actionCalls).toEqual([...golden.expectedActions]);
       for (const [input] of resolveIntent.mock.calls) {
         expect(input.goalSession?.observations.at(-1)?.tick).toBe(input.goalSession?.tick);

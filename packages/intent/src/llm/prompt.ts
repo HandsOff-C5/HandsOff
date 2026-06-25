@@ -1,4 +1,4 @@
-import type { GoalLoopObservation, IntentInput } from "@handsoff/contracts";
+import type { DriverToolDefinition, GoalLoopObservation, IntentInput } from "@handsoff/contracts";
 
 export interface ResolveIntentMessage {
   readonly role: "system" | "user";
@@ -101,6 +101,19 @@ function recentResults(
     });
 }
 
+function candidateSurfacesFor(input: IntentInput) {
+  return input.surfaceCandidates.map((surface, index) => ({
+    rank: index + 1,
+    id: surface.id,
+    title: surface.title,
+    app: surface.app,
+    pid: surface.pid ?? null,
+    windowId: surface.windowId ?? null,
+    availability: surface.availability,
+    accessStatus: surface.accessStatus,
+  }));
+}
+
 export function buildResolveIntentMessages(input: IntentInput): ResolveIntentMessage[] {
   const observations = input.goalSession?.observations ?? [];
   const snapshot = snapshotFor(observations.at(-1));
@@ -119,16 +132,66 @@ export function buildResolveIntentMessages(input: IntentInput): ResolveIntentMes
         latestSnapshot: snapshot,
         // Loop memory: the recent action results so the model can recover.
         recentResults: recentResults(observations),
-        candidateSurfaces: input.surfaceCandidates.map((surface, index) => ({
-          rank: index + 1,
-          id: surface.id,
-          title: surface.title,
-          app: surface.app,
-          pid: surface.pid ?? null,
-          windowId: surface.windowId ?? null,
-          availability: surface.availability,
-          accessStatus: surface.accessStatus,
-        })),
+        candidateSurfaces: candidateSurfacesFor(input),
+      }),
+    },
+  ];
+}
+
+// The full-surface autonomous-loop prompt (U3b). Same live state as
+// buildResolveIntentMessages — goal + perception snapshot (with element indices)
+// + loop memory + candidates — but the model now chooses ONE call from the whole
+// cua-driver tool surface (passed in as the catalog) and returns it in the
+// next-tool-call schema, instead of a closed 6-kind ActionStep.
+const NEXT_TOOL_CALL_SYSTEM_PROMPT =
+  "You are HandsOff's autonomous computer-use agent. You pursue the user's GOAL by " +
+  "calling ONE cua-driver tool at a time, observing the result, and continuing across turns " +
+  "until the goal is done. You drive a real macOS desktop without stealing keyboard focus.\n" +
+  "Each turn you receive: the goal, the latest perception snapshot (the focused window + its " +
+  "accessibility elements, each with an `index`, plus its `pid`/`windowId`), the result of " +
+  "your previous tool call (recover from a failure by trying something else — never repeat a " +
+  "failed call), the ranked candidate surfaces, and the list of available tools with their " +
+  "JSON-Schema parameters. Use ONLY this supplied state — never invent windows, elements, or " +
+  "indices.\n" +
+  "Return status `act` with `tool` (one of the listed tool names) and `args` (the tool's raw " +
+  "flat arguments, matching its parameter schema — e.g. pid, window_id, element_index, " +
+  "direction). Targeting calls (click, type_text, set_value, scroll, press_key, …) MUST cite " +
+  "an `element_index` AND `window_id` from the LATEST snapshot, plus its `pid` — never a " +
+  "guessed index. Combine actions across turns: to reveal hidden content, scroll or click a " +
+  "menu open, then act on what appears.\n" +
+  "Return status `done` with a `summary` when the goal is already satisfied. Return `clarify` " +
+  "or `blocked` with a `reason` only when the target is genuinely ambiguous, impossible, or " +
+  "unsafe. Always give a one-line `rationale` for an `act`. Prefer reversible/draft actions; " +
+  "the supervisor approves anything that commits (sends/deletes/etc.).";
+
+function toolMenu(tools: readonly DriverToolDefinition[]) {
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.inputSchema ?? null,
+  }));
+}
+
+export function buildNextToolCallMessages(
+  input: IntentInput,
+  tools: readonly DriverToolDefinition[],
+): ResolveIntentMessage[] {
+  const observations = input.goalSession?.observations ?? [];
+  const snapshot = snapshotFor(observations.at(-1));
+  return [
+    { role: "system", content: NEXT_TOOL_CALL_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: JSON.stringify({
+        goal: input.goalSession?.goal ?? input.speech.finalTranscript.text,
+        transcript: {
+          text: input.speech.finalTranscript.text,
+          confidence: input.speech.finalTranscript.confidence,
+        },
+        latestSnapshot: snapshot,
+        recentResults: recentResults(observations),
+        candidateSurfaces: candidateSurfacesFor(input),
+        availableTools: toolMenu(tools),
       }),
     },
   ];

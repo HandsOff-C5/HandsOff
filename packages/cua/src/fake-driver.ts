@@ -11,7 +11,7 @@ import type {
 } from "@handsoff/contracts";
 
 import type { CuaDriver } from "./driver";
-import { cuaBlocked, cuaSucceeded } from "./driver";
+import { cuaBlocked, cuaFailed, cuaSucceeded } from "./driver";
 
 export type FakeCuaCall =
   | { kind: "list_windows" }
@@ -147,7 +147,18 @@ export function createFakeCuaDriver(options: {
     async call(tool, input) {
       record({ kind: "call", tool, input });
       if (permissions.driver !== "running") return cuaBlocked("CUA driver is unavailable");
-      return options.nextCallResult ?? cuaSucceeded({ ok: true, tool });
+      // An explicit nextCallResult wins (generic-call tests assert it verbatim).
+      if (options.nextCallResult) return options.nextCallResult;
+      // Otherwise the autonomous loop dispatches its ACTIONS through here, so
+      // honor the same failure simulation the typed methods do — a denied
+      // Accessibility permission or a configured nextActionResult must surface as
+      // a CuaResult so the loop's recovery + permission paths see it (the driver's
+      // success value is just a confirmation, so a successful action maps to a
+      // simple { ok } result).
+      const action = result();
+      if (action.status === "failed") return cuaFailed(action.error);
+      if (action.status === "blocked") return cuaBlocked(action.reason);
+      return cuaSucceeded({ ok: true, tool });
     },
     async listTools() {
       record({ kind: "list_tools" });

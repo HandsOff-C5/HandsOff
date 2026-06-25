@@ -1,16 +1,12 @@
+import { gateToolCall, type PlanRunResult } from "@handsoff/actions";
 import {
-  gateToolCall,
-  runApprovedPlan,
-  type CuaActionPort,
-  type PlanRunResult,
-} from "@handsoff/actions";
-import {
-  riskForToolCall,
+  riskForToolName,
   riskLevelRequiresApproval,
+  safeParseDriverTool,
   type ActionStep,
   type CuaActionResult,
-  type CuaActionRequest,
   type DriverTool,
+  type DriverToolDefinition,
   type FinalTranscript,
   type GoalLoopObservation,
   type IntentInput,
@@ -22,8 +18,8 @@ import {
   type SurfaceSnapshot,
   type ToolCallTarget,
 } from "@handsoff/contracts";
-import { cuaResultToActionResult, type CuaDriver } from "@handsoff/cua";
-import { resolveIntent, type ResolveIntentOptions } from "@handsoff/intent";
+import { createToolCatalog, cuaResultToActionResult, type CuaDriver } from "@handsoff/cua";
+import { resolveNextToolCall, type ResolveNextToolCallOptions } from "@handsoff/intent";
 import {
   createActionAuditStore,
   createSupervisionSessionStore,
@@ -56,35 +52,6 @@ function wait(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
-function actionPortFor(driver: CuaDriver): CuaActionPort {
-  return {
-    launchApp: ({ appName, bundleId }: Extract<CuaActionRequest, { kind: "launch_app" }>) =>
-      driver.launchApp({ appName, bundleId }),
-    getWindowState: ({ target }: Extract<CuaActionRequest, { kind: "get_window_state" }>) =>
-      driver
-        .getWindowState(target)
-        .then((result) =>
-          cuaResultToActionResult(result, "Window state captured", (state) => state),
-        ),
-    click: ({ target }: Extract<CuaActionRequest, { kind: "click" }>) => driver.click(target),
-    typeText: ({ target, text }: Extract<CuaActionRequest, { kind: "type_text" }>) =>
-      driver.typeText(target, text),
-    setValue: ({ target, value }: Extract<CuaActionRequest, { kind: "set_value" }>) =>
-      driver.setValue(target, value),
-    screenshot: ({ target }: Extract<CuaActionRequest, { kind: "screenshot" }>) =>
-      driver
-        .screenshot(target)
-        .then((result) => cuaResultToActionResult(result, "Screenshot captured")),
-  };
-}
-
-function terminal(status: PlanRunResult["status"]): TerminalSessionStatus {
-  if (status === "queued" || status === "running") {
-    throw new Error(`Cannot finish session with non-terminal status: ${status}`);
-  }
-  return status;
-}
-
 function blockedIntent(
   input: IntentInput,
   id: string,
@@ -103,18 +70,22 @@ function blockedIntent(
   };
 }
 
-function actionResultFor(result: PlanRunResult, fallbackSummary: string): CuaActionResult {
-  if (result.result) return result.result;
-  if (result.status === "succeeded") return { status: "succeeded", summary: fallbackSummary };
-  if (result.status === "blocked") return { status: "blocked", reason: fallbackSummary };
-  return { status: "failed", error: fallbackSummary };
-}
+// Driver tools that click an element (and so get commit-pattern escalation).
+const CLICK_TOOLS: ReadonlySet<string> = new Set(["click", "right_click", "double_click"]);
 
-// The driver tool each typed ActionStep dispatches as. Used to key per-call risk
-// (U2) off the real tool name the step will reach through the driver, so the
-// loop gates on the same vocabulary the full-surface passthrough (U1) exposes.
+// The driver tool each ActionStep dispatches as. For the full-surface
+// `tool_call` step (U3b) this is the tool the model chose verbatim; the legacy
+// 6 kinds map to their driver tool so the rule resolver + tests still gate on
+// the same vocabulary. Used to key per-call risk (U2).
 function driverToolForStep(step: ActionStep): DriverTool {
   switch (step.kind) {
+    case "tool_call": {
+      const parsed = safeParseDriverTool(step.tool);
+      // An unknown tool name can't be a DriverTool; gate it as the most
+      // dangerous via riskForToolName at the call site. Here we surface the
+      // closest safe placeholder for the (string) tool name.
+      return parsed.success ? parsed.data : "get_window_state";
+    }
     case "click_element":
       return "click";
     case "type_text":
@@ -129,17 +100,35 @@ function driverToolForStep(step: ActionStep): DriverTool {
   }
 }
 
-// Build the risk-relevant target for a click step from the latest observation:
+// The raw tool name a step calls (string — may be outside DRIVER_TOOLS for a
+// hallucinated `tool_call`, which `riskForToolName` then gates as mutating).
+function toolNameForStep(step: ActionStep): string {
+  return step.kind === "tool_call" ? step.tool : driverToolForStep(step);
+}
+
+// The element index a step targets, from its typed target (legacy kinds) or its
+// raw driver args (`element_index`, full-surface tool_call).
+function elementIndexForStep(step: ActionStep): number | undefined {
+  if (step.kind === "tool_call") {
+    const index = step.args["element_index"];
+    return typeof index === "number" ? index : undefined;
+  }
+  if ("target" in step) return step.target.elementIndex;
+  return undefined;
+}
+
+// Build the risk-relevant target for a click-ish step from the latest snapshot:
 // look the element up by index in the perceived AX elements so `riskForToolCall`
 // can escalate a *commit* click (Send/Delete/…) to mutating while leaving plain
-// navigation clicks free. Absent element metadata leaves the gate to its safe
-// default (a click it cannot prove is navigation stays gated).
+// navigation clicks free. Only clicks get a target (keys/scroll/etc. carry their
+// own risk); absent element metadata leaves the gate to its safe default.
 function toolCallTargetForStep(
   step: ActionStep,
   observation: GoalLoopObservation | undefined,
 ): ToolCallTarget | undefined {
-  if (step.kind !== "click_element") return undefined;
-  const index = step.target.elementIndex;
+  const tool = toolNameForStep(step);
+  if (!CLICK_TOOLS.has(tool)) return undefined;
+  const index = elementIndexForStep(step);
   if (index === undefined) return undefined;
   const element = observation?.state?.elements.find((candidate) => candidate.index === index);
   if (!element) return undefined;
@@ -150,6 +139,40 @@ function toolCallTargetForStep(
       ...(element.value !== undefined && { value: element.value }),
     },
   };
+}
+
+// Map any ActionStep to the (tool, args) the generic driver passthrough
+// (`driver.call`, U1) executes. The full-surface `tool_call` passes its args
+// straight through (the driver's own flat snake_case shape). The legacy 6 kinds
+// are translated to flat args from their ActionTarget's surface pid/windowId so
+// the rule-resolver path also flows through the single passthrough executor.
+function driverCallForStep(step: ActionStep): { tool: string; args: Record<string, unknown> } {
+  if (step.kind === "tool_call") {
+    return { tool: step.tool, args: step.args };
+  }
+  if (step.kind === "launch_app") {
+    return {
+      tool: "launch_app",
+      args: { app_name: step.appName, ...(step.bundleId ? { bundle_id: step.bundleId } : {}) },
+    };
+  }
+  const surface = step.target.surface;
+  const base: Record<string, unknown> = {
+    ...(surface.pid !== undefined ? { pid: surface.pid } : {}),
+    ...(surface.windowId !== undefined ? { window_id: surface.windowId } : {}),
+    ...(step.target.elementIndex !== undefined ? { element_index: step.target.elementIndex } : {}),
+  };
+  switch (step.kind) {
+    case "click_element":
+      return { tool: "click", args: base };
+    case "type_text":
+      return { tool: "type_text", args: { ...base, text: step.text } };
+    case "set_value":
+      return { tool: "set_value", args: { ...base, value: step.value } };
+    // inspect_window_state / capture_screenshot → a read-only window probe.
+    default:
+      return { tool: "get_window_state", args: base };
+  }
 }
 
 // The effective risk of a whole one-action-per-tick plan. Risk is the MAX over:
@@ -166,7 +189,9 @@ function planToolRisk(
   observation: GoalLoopObservation | undefined,
 ): RiskLevel {
   return plan.action_plan.reduce<RiskLevel>((max, step) => {
-    const risk = riskForToolCall(driverToolForStep(step), toolCallTargetForStep(step, observation));
+    // riskForToolName (not riskForToolCall) so a hallucinated full-surface tool
+    // name is gated as mutating rather than throwing — the safe default.
+    const risk = riskForToolName(toolNameForStep(step), toolCallTargetForStep(step, observation));
     return maxRisk(max, risk);
   }, plan.risk_level);
 }
@@ -222,9 +247,17 @@ export type IntentResolveInvoke = <T>(
   args?: Record<string, unknown>,
 ) => Promise<T>;
 
-export function createIntentWorkerResolver(invoke: IntentResolveInvoke) {
-  return (input: IntentInput, options: ResolveIntentOptions): Promise<ResolvedIntent> => {
-    const client: NonNullable<ResolveIntentOptions["client"]> = {
+// The autonomous loop's resolver signature: emit the next driver tool call (as a
+// ResolvedIntent carrying a tool_call step) toward the goal given the live state.
+// `options.tools` is the driver catalog the controller loads from U1.
+export type NextToolCallResolver = (
+  input: IntentInput,
+  options: ResolveNextToolCallOptions,
+) => Promise<ResolvedIntent>;
+
+export function createIntentWorkerResolver(invoke: IntentResolveInvoke): NextToolCallResolver {
+  return (input, options) => {
+    const client: NonNullable<ResolveNextToolCallOptions["client"]> = {
       chat: {
         completions: {
           async parse(request) {
@@ -234,7 +267,7 @@ export function createIntentWorkerResolver(invoke: IntentResolveInvoke) {
         },
       },
     };
-    return resolveIntent(input, { ...options, client });
+    return resolveNextToolCall(input, { ...options, client });
   };
 }
 
@@ -242,7 +275,10 @@ export function useVoiceCuaController(args: {
   driver: CuaDriver;
   headPointing?: HeadPointingSnapshot;
   now?: () => string;
-  resolveIntent?: (input: IntentInput, options: ResolveIntentOptions) => Promise<ResolvedIntent>;
+  // The loop's "head": emits the next driver tool call toward the goal. Defaults
+  // to the full-surface LLM resolver; tests inject a fake. (Named resolveIntent
+  // for back-compat with existing callers/tests.)
+  resolveIntent?: NextToolCallResolver;
   targetResolveDelayMs?: number;
   // The live gesture referent (#35): when the camera has a locked point at intent
   // time it returns gesture `PointingEvidence`; null when nothing is locked.
@@ -266,9 +302,13 @@ export function useVoiceCuaController(args: {
   // await boundary and stops cleanly, clearing any pending-approval state.
   const interrupted = useRef(false);
   const headPointingRef = useRef(args.headPointing);
-  const resolveIntentRef = useRef(args.resolveIntent ?? resolveIntent);
+  const resolveIntentRef = useRef<NextToolCallResolver>(args.resolveIntent ?? resolveNextToolCall);
+  // The driver's self-described tool catalog (U1), built once per controller and
+  // handed to the resolver as the model's callable-tool menu. A failed load is
+  // not cached, so a transient driver error retries next turn.
+  const catalog = useRef(createToolCatalog(args.driver));
   headPointingRef.current = args.headPointing;
-  resolveIntentRef.current = args.resolveIntent ?? resolveIntent;
+  resolveIntentRef.current = args.resolveIntent ?? resolveNextToolCall;
   const timestamp = () => args.now?.() ?? new Date().toISOString();
 
   // Cursor fallback: probe the active window via the CUA driver, degrading the
@@ -479,7 +519,7 @@ export function useVoiceCuaController(args: {
         referent: readyIntent.referent ?? run.referent,
         tool,
         ...(target ? { target } : {}),
-        risk: riskForToolCall(tool, target),
+        risk: riskForToolName(toolNameForStep(step), target),
         approval,
         result,
       });
@@ -552,7 +592,10 @@ export function useVoiceCuaController(args: {
         surfaceId: "surface" in p ? p.surface?.id : undefined,
       })),
     });
-    const resolved = await resolveIntentRef.current(input, { resolver: "auto", createdAt });
+    const toolsResult = await catalog.current.load();
+    const tools: readonly DriverToolDefinition[] =
+      toolsResult.status === "succeeded" ? toolsResult.value : [];
+    const resolved = await resolveIntentRef.current(input, { createdAt, tools });
     if (stopIfInterrupted(run, input, timestamp())) return;
     // The gate (U2/KD3) derives risk per call from the actual tool each step
     // reaches — escalating a commit click and never trusting a model downgrade.
@@ -628,18 +671,15 @@ export function useVoiceCuaController(args: {
 
     setSession(sessions.current.run(run.sessionId, runningAt));
     setRunResult({ status: "running" });
-    // The gate above is the source of truth for *whether* to run; runApprovedPlan
-    // does the typed dispatch + pre/post window capture. Hand it a matching
-    // approval so its own plan-level risk check passes.
-    const result = await runApprovedPlan({
-      sessionId: run.sessionId,
-      plan: readyIntent.action_plan,
-      approval: makeApprovalDecision(readyIntent.action_plan.id, "approved", runningAt),
-      cua: actionPortFor(args.driver),
-      audit: audit.current,
-      recordedAt: runningAt,
-    });
-    const actionResult = actionResultFor(result, readyIntent.action_plan.summary);
+    // The gate above is the source of truth for *whether* to run. Dispatch every
+    // step through the GENERIC driver passthrough (`driver.call`, U1) — the loop
+    // is no longer bound to the typed 6-kind executor, so the full 38-tool
+    // surface (scroll/hotkey/drag/right_click/…) is reachable. Stop at the first
+    // failure and feed it forward for recovery.
+    const actionResult = await dispatchPlan(readyIntent.action_plan.action_plan);
+    const status: PlanRunResult["status"] =
+      actionResult.status === "succeeded" ? "succeeded" : actionResult.status;
+    const result: PlanRunResult = { status, result: actionResult };
     recordToolCalls(run, readyIntent, observation, approvalState, actionResult, runningAt);
     setRunResult(result);
     setAuditEvents(audit.current.forSession(run.sessionId));
@@ -662,6 +702,21 @@ export function useVoiceCuaController(args: {
     });
   }
 
+  // Execute a tick's steps in order through `driver.call`, normalizing each
+  // driver result to a CuaActionResult. Stops at the first non-success so a
+  // failed step is surfaced for recovery; the last step's result represents the
+  // tick. The fallback summary names the tool that ran.
+  async function dispatchPlan(steps: readonly ActionStep[]): Promise<CuaActionResult> {
+    let last: CuaActionResult = { status: "succeeded", summary: "No action" };
+    for (const step of steps) {
+      const { tool, args: callArgs } = driverCallForStep(step);
+      const callResult = await args.driver.call(tool, callArgs);
+      last = cuaResultToActionResult(callResult, `Called ${tool}`);
+      if (last.status !== "succeeded") return last;
+    }
+    return last;
+  }
+
   async function approve() {
     const run = goalRun.current;
     if (intent?.status !== "ready" || !session || !run) return;
@@ -678,27 +733,25 @@ export function useVoiceCuaController(args: {
     const run = goalRun.current;
     if (intent?.status !== "ready" || !session) return;
     const decidedAt = timestamp();
-    const result = await runApprovedPlan({
-      sessionId: session.id,
-      plan: intent.action_plan,
-      approval: makeApprovalDecision(intent.action_plan.id, "rejected", decidedAt),
-      cua: actionPortFor(args.driver),
-      audit: audit.current,
-      recordedAt: decidedAt,
-    });
+    // Rejection runs NOTHING: no tool call is dispatched. Record the rejected
+    // call(s) for the audit trail and end the session rejected.
+    const rejected: CuaActionResult = {
+      status: "blocked",
+      reason: "Rejected before execution",
+    };
     if (run) {
-      recordToolCalls(
-        run,
-        intent,
-        run.observations.at(-1),
-        "rejected",
-        actionResultFor(result, intent.action_plan.summary),
-        decidedAt,
-      );
+      recordToolCalls(run, intent, run.observations.at(-1), "rejected", rejected, decidedAt);
     }
-    setSession(sessions.current.finish(session.id, terminal(result.status), decidedAt));
+    audit.current.record({
+      kind: "execution_finished",
+      sessionId: session.id,
+      actionId: intent.action_plan.id,
+      recordedAt: decidedAt,
+      status: "rejected",
+    });
+    setSession(sessions.current.finish(session.id, "rejected", decidedAt));
     goalRun.current = null;
-    setRunResult(result);
+    setRunResult({ status: "rejected" });
     setAuditEvents(audit.current.forSession(session.id));
   }
 
@@ -734,10 +787,12 @@ export function useVoiceCuaController(args: {
 }
 
 // Run every step through the U2 per-call gate; return the first blocked result
-// (the typed shape runApprovedPlan would record) if any step needs an approval
-// it doesn't have, else null. This is where the autonomous loop actually wires
-// gateToolCall: the gate is derived from the tool + target, never the model's
-// claim, so a commit step (Send/Delete/…) blocks the tick when unapproved.
+// if any step needs an approval it doesn't have, else null. This is where the
+// autonomous loop wires gateToolCall: the gate is derived from the tool + target
+// (driverToolForStep already maps a hallucinated full-surface tool to the safe
+// get_window_state placeholder; such a step is blocked upstream by the resolver),
+// never the model's claim, so a commit step (Send/Delete/…) blocks when
+// unapproved.
 function firstBlockedStep(
   steps: readonly ActionStep[],
   observation: GoalLoopObservation | undefined,

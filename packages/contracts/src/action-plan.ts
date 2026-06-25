@@ -54,6 +54,20 @@ export const actionStepSchema = z.discriminatedUnion("kind", [
     appName: z.string().min(1),
     bundleId: z.string().min(1).optional(),
   }),
+  // The generic full-surface step (U3b): a direct call to any cua-driver tool by
+  // name with its raw flat args (the driver's own snake_case shape, e.g.
+  // { pid, window_id, element_index, direction }). This is how the autonomous
+  // loop reaches all 38 driver tools through the U1 passthrough instead of the
+  // closed 6-kind vocabulary above. `tool` is a plain string here to keep
+  // `contracts/action-plan` free of a `tool-risk` import cycle; the loop validates
+  // it with `safeParseDriverTool` and gates it with `riskForToolName` at dispatch
+  // (an unknown tool is gated, never auto-run). The legacy kinds remain for the
+  // rule resolver and typed executor.
+  actionStepBaseSchema.extend({
+    kind: z.literal("tool_call"),
+    tool: z.string().min(1),
+    args: z.record(z.unknown()).default({}),
+  }),
 ]);
 export type ActionStep = z.infer<typeof actionStepSchema>;
 
