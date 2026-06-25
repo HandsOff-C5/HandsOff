@@ -65,23 +65,25 @@ just check-full  # + opt-in analyzers (knip, cargo audit/deny, semgrep); see `ju
 
 Pinned toolchain is committed: `.node-version`, `rust-toolchain.toml`, `knip.json`, `deny.toml`. The Rust gate is opt-in/advisory until pre-existing `cargo fmt` drift in the desktop crate is cleaned up (child task of #78). Install `just` with `brew install just`. Shared agent MCP servers live in `.mcp.json` (Claude Code), `.cursor/mcp.json` (Cursor), and `.codex/config.toml` (Codex).
 
-## Testing macOS permissions & Realtime STT
+## Building & running the bundled app (mic/speech, STT, camera/head tracking, CUA)
 
-`tauri dev` crashes when the app requests microphone/speech or Realtime STT (the dev binary lacks a bundle identity macOS TCC requires). Use `tauri dev` only for UI/logic work. To test microphone/speech permissions or the AssemblyAI Realtime path, build and launch the bundled `.app`:
+`tauri dev` crashes when the app requests microphone/speech, Realtime STT, or Camera/head tracking — the dev binary lacks the bundle identity macOS TCC requires. Use `tauri dev` only for UI/logic work that touches none of those; for anything mic/speech/STT/camera/CUA, build and launch the bundled `.app`.
+
+Worker URLs + app tokens live in `apps/desktop/.env.local` (gitignored). The Rust side reads each via `deployment_config(NAME, option_env!(NAME))` (`src-tauri/src/commands/mod.rs`): **runtime `std::env::var` first, then the value baked in at build time.** The clean path is to **source `.env.local` before the build** so the secrets bake into the binary via `option_env!` — the launched app then needs no environment (no secrets in argv or shell history):
 
 ```bash
+# Source secrets so option_env! bakes them in at COMPILE time, then build.
+set -a; . apps/desktop/.env.local; set +a
 corepack pnpm --filter @handsoff/desktop-app exec tauri build --debug --bundles app
-open -n apps/desktop/src-tauri/target/debug/bundle/macos/HandsOff.app \
-  --env "HANDSOFF_STT_TOKEN_WORKER_URL=https://<worker-host>/v1/realtime-token" \
-  --env "HANDSOFF_STT_APP_AUTH_TOKEN=<launch-cohort app token>" \
-  --env "HANDSOFF_INTENT_WORKER_URL=https://<worker-host>/v1/resolve-intent" \
-  --env "HANDSOFF_INTENT_APP_AUTH_TOKEN=<launch-cohort app token>"
+# Launch the self-contained bundle — no --env needed, secrets are baked in.
+open -n apps/desktop/src-tauri/target/debug/bundle/macos/HandsOff.app
 ```
 
-Worker deploy + a curl smoke test live in `workers/assemblyai-token/README.md`.
-The LLM intent Worker is documented in `workers/llm-intent/README.md`.
+- **Source `.env.local` in the SAME shell as the build.** `option_env!` reads the env at compile time and shell state doesn't persist between commands; a build without it yields an app that returns `missing-configuration` / `missing-credentials` from the intent/STT commands. (Cargo doesn't track env-var changes, so if you change a secret, touch a file in the crate or `cargo clean` the affected unit to force a rebuild.)
+- `--debug` builds far faster than release and is fine for manual testing; its bundle is under `target/debug/` (release lands in `target/release/`).
+- **Runtime alternative** (skip a rebuild when a stale-but-built bundle exists): pass secrets at launch instead — `open -n <app> --env "HANDSOFF_INTENT_WORKER_URL=…" --env "HANDSOFF_INTENT_APP_AUTH_TOKEN=…" …` (macOS 13+; runtime env wins over the baked value). Prefer baking — `--env` puts secrets in the process list. Never paste secret values on a command line; always source the gitignored `.env.local`.
 
-Head tracking follows the same TCC rule: test Camera/head tracking from the bundled `.app`, not `tauri dev`; this path must not require Input Monitoring.
+Worker deploy + a curl smoke test live in `workers/assemblyai-token/README.md`; the LLM intent Worker in `workers/llm-intent/README.md`. Head tracking follows the same TCC rule and must not require Input Monitoring.
 
 ## Performance
 
