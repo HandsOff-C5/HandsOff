@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { gateToolCall } from "./run-approved-plan";
+import { gateToolCall } from "./gate-tool-call";
 
 describe("gateToolCall — per-call approval gate (U2)", () => {
   it("allows a read-only tool call without approval", () => {
