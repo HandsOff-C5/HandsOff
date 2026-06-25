@@ -38,6 +38,9 @@ struct Theme: Sendable {
     let textTertiary: Color
     let controlBg: Color
     let selectedBg: Color
+    /// The hovered-row highlight in the menu dropdown — a neutral, clearly-visible selection fill
+    /// (stronger than `controlBg`) so hover reads natively over glass, like a macOS menu item.
+    let menuHighlight: Color
     /// Reduce-Transparency replacement for every glass surface — opaque window (light) /
     /// #1E1E1E (dark). Used when `accessibilityReduceTransparency` is on.
     let opaqueSurface: Color
@@ -106,6 +109,7 @@ struct Theme: Sendable {
         textTertiary: Color(hex: 0x6E6E73),
         controlBg: Color(hex: 0x000000, alpha: 0.05),
         selectedBg: Color(hex: 0xD4A018, alpha: 0.14),
+        menuHighlight: Color(hex: 0x000000, alpha: 0.07),
         opaqueSurface: Color(hex: 0xFFFFFF)
     )
 
@@ -132,6 +136,7 @@ struct Theme: Sendable {
         textTertiary: Color(hex: 0xFFFFFF, alpha: 0.46),
         controlBg: Color(hex: 0xFFFFFF, alpha: 0.06),
         selectedBg: Color(hex: 0xD4A018, alpha: 0.16),
+        menuHighlight: Color(hex: 0xFFFFFF, alpha: 0.10),
         opaqueSurface: Color(hex: 0x1E1E1E)
     )
 }

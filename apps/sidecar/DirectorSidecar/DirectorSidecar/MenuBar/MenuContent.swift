@@ -19,11 +19,11 @@ struct MenuContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MenuHeader(level: store.menuReadiness, label: store.readinessLabel)
+            MenuActionRow(title: "Open Dashboard", trailing: "⇧⌘M") { store.send(.openHome) }
+
             divider
 
             MenuActionRow(
-                icon: store.isListening ? "stop.fill" : "viewfinder",
                 title: store.isListening ? "Deactivate Director" : "Activate Director",
                 trailing: "⌥⌘D", enabled: store.canListen, active: store.isListening
             ) { store.send(store.isListening ? .stopListening : .startListening) }
@@ -51,16 +51,14 @@ struct MenuContent: View {
             }
 
             divider
-            MenuActionRow(icon: "pause.circle", title: "Pause all agents",
+            MenuActionRow(title: "Pause all agents",
                           enabled: store.runningCount > 0) { store.send(.pauseAll) }
-            MenuActionRow(icon: "square.grid.2x2", title: "Open Home",
-                          trailing: "⇧⌘M") { store.send(.openHome) }
 
             divider
-            MenuActionRow(icon: "gearshape", title: "Preferences…", trailing: "⌘,") {
+            MenuActionRow(title: "Preferences…", trailing: "⌘,") {
                 NSApp.activate(ignoringOtherApps: true)
             }
-            MenuActionRow(icon: "power", title: "Quit Director", trailing: "⌘Q") {
+            MenuActionRow(title: "Quit Director", trailing: "⌘Q") {
                 NSApp.terminate(nil)
             }
 
@@ -81,7 +79,9 @@ struct MenuContent: View {
         if reduceTransparency {
             theme.opaqueSurface
         } else {
-            VisualEffectBlur(.menu)
+            // `.behindWindow` samples the desktop behind the panel (true glass); the default
+            // `.withinWindow` only blends in-window content, which read as a flat opaque gray.
+            VisualEffectBlur(.menu, blending: .behindWindow)
         }
     }
 }

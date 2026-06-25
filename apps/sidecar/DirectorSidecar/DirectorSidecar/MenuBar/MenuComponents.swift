@@ -36,30 +36,10 @@ struct MenuBarLabel: View {
     }
 }
 
-/// The header inside the dropdown: brand mark + name + readiness row.
-struct MenuHeader: View {
-    let level: ReadinessLevel
-    let label: String
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 8) {
-            BrandGlyph(size: 16)
-            Text("Director").font(theme.sectionTitle).foregroundStyle(theme.textPrimary)
-            Spacer()
-            HStack(spacing: 5) {
-                ReadinessDot(level: level)
-                Text(label).font(theme.kbd).foregroundStyle(theme.textSecondary)
-            }
-            .accessibilityElement(children: .combine)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-    }
-}
-
-/// A tappable action row with an SF Symbol, title, optional keyboard hint, enabled/active state.
+/// A tappable action row: title, optional keyboard hint, enabled/active state. Icon-less by default
+/// (cleaner, more native — Wispr-style); pass `icon` only where a glyph genuinely earns its place.
 struct MenuActionRow: View {
-    let icon: String
+    var icon: String? = nil
     let title: String
     var trailing: String?
     var enabled = true
@@ -73,21 +53,23 @@ struct MenuActionRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .frame(width: theme.iconBox, height: theme.iconBox)
-                    .foregroundStyle(tint)
+                if let icon {
+                    Image(systemName: icon)
+                        .frame(width: theme.iconBox, height: theme.iconBox)
+                        .foregroundStyle(tint)
+                }
                 Text(title).font(theme.body).foregroundStyle(tint)
                 Spacer()
                 if let trailing { KbdHint(trailing) }
             }
-            .padding(.horizontal, 12).padding(.vertical, 6)
+            .padding(.horizontal, 10).padding(.vertical, 7)
             .background(RoundedRectangle(cornerRadius: theme.radiusControl, style: .continuous)
-                .fill(hovering && enabled ? theme.controlBg : .clear))
+                .fill(hovering && enabled ? theme.menuHighlight : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 8)
         .onHover { hovering = $0 }
         .animation(reduceMotion ? nil : theme.quickMotion, value: hovering)
         .accessibilityAddTraits(.isButton)
@@ -119,13 +101,13 @@ struct SessionRow: View {
                 Spacer()
                 MonoTimer(since: session.startedAt)
             }
-            .padding(.horizontal, 12).padding(.vertical, 5)
+            .padding(.horizontal, 10).padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: theme.radiusControl, style: .continuous)
-                .fill(hovering ? theme.controlBg : .clear))
+                .fill(hovering ? theme.menuHighlight : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 8)
         .onHover { hovering = $0 }
         .animation(reduceMotion ? nil : theme.quickMotion, value: hovering)
         .accessibilityElement(children: .ignore)
