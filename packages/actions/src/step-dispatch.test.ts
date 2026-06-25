@@ -16,6 +16,15 @@ import {
 
 type ReadyIntent = Extract<ResolvedIntent, { status: "ready" }>;
 
+// A tool_call step whose `tool` is OFF the driver surface. The schema now types
+// `tool` as the DriverTool enum, so such a step cannot pass validation — but the
+// defensive helpers (driverToolForStep / toolNameForStep / planToolRisk) still
+// guard the raw-model case where an unvalidated tool name reaches them, so we
+// construct it with a localized cast to exercise that safe-default path.
+function offSurfaceToolCall(tool: string): ActionStep {
+  return { id: "1", kind: "tool_call", label: "?", tool, args: {} } as unknown as ActionStep;
+}
+
 function readyIntent(
   steps: readonly ActionStep[],
   overrides: Partial<ReadyIntent> = {},
@@ -84,8 +93,7 @@ describe("driverToolForStep", () => {
   });
 
   it("maps an unknown tool_call name to the safe get_window_state placeholder", () => {
-    const step: ActionStep = { id: "1", kind: "tool_call", label: "?", tool: "teleport", args: {} };
-    expect(driverToolForStep(step)).toBe("get_window_state");
+    expect(driverToolForStep(offSurfaceToolCall("teleport"))).toBe("get_window_state");
   });
 
   it("maps the legacy 6 kinds to their driver tool", () => {
@@ -113,8 +121,7 @@ describe("driverToolForStep", () => {
 
 describe("toolNameForStep", () => {
   it("returns the raw (possibly non-driver) tool string for a tool_call", () => {
-    const step: ActionStep = { id: "1", kind: "tool_call", label: "?", tool: "teleport", args: {} };
-    expect(toolNameForStep(step)).toBe("teleport");
+    expect(toolNameForStep(offSurfaceToolCall("teleport"))).toBe("teleport");
   });
 
   it("returns the mapped driver tool for a legacy kind", () => {
@@ -292,8 +299,7 @@ describe("planToolRisk", () => {
   });
 
   it("gates a hallucinated tool name as mutating (the safe default)", () => {
-    const step: ActionStep = { id: "1", kind: "tool_call", label: "?", tool: "teleport", args: {} };
-    const intent = readyIntent([step], { risk_level: "read_only" });
+    const intent = readyIntent([offSurfaceToolCall("teleport")], { risk_level: "read_only" });
     expect(planToolRisk(intent.action_plan, undefined)).toBe("mutating");
   });
 });

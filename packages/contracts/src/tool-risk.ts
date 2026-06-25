@@ -2,72 +2,21 @@ import { z } from "zod";
 
 import { riskLevelRequiresApproval } from "./action-plan";
 import type { RiskLevel } from "./action-plan";
+import { driverToolSchema } from "./driver-tools";
+import type { DriverTool } from "./driver-tools";
 
-// ---------------------------------------------------------------------------
-// The cua-driver tool surface (36 tools), as the driver self-describes it via
-// `cua-driver list-tools`. This is the static enumeration of every tool the
-// agentic loop (U3) can call through the generic `cua_driver_call` passthrough
-// (U1). It MUST stay in sync with the driver's tool list — `driverToolSchema`
-// is the validator the loop uses to reject a model-hallucinated tool name
-// before it reaches the driver. (The plan's prose says "38"; the live driver
-// reports 36 — the driver is the source of truth and this list mirrors it.)
+// The cua-driver tool surface (DRIVER_TOOLS / driverToolSchema / DriverTool /
+// safeParseDriverTool) now lives in the dependency-free `./driver-tools` module
+// so `action-plan` can type `tool_call.tool` against the enum without the
+// `tool-risk -> action-plan` import cycle. This module keys per-tool RISK off
+// that vocabulary (importers reach the vocabulary via the `@handsoff/contracts`
+// barrel or `./driver-tools` directly).
 //
 // Lives in `contracts` (not `intent`) deliberately: both `intent` (the loop's
 // reasoning side) and `actions` (the gate's execution side) need to key risk
 // off the tool name, and the boundary rule forbids one area package importing
 // another — so the shared tool vocabulary + risk classification can only live
 // in `contracts`, the one package every area may import.
-export const DRIVER_TOOLS = [
-  // session / cursor overlay
-  "start_session",
-  "end_session",
-  "set_agent_cursor_enabled",
-  "set_agent_cursor_motion",
-  "set_agent_cursor_style",
-  "get_agent_cursor_state",
-  // perception (read-only)
-  "get_window_state",
-  "get_accessibility_tree",
-  "get_cursor_position",
-  "get_screen_size",
-  "list_apps",
-  "list_windows",
-  "get_recording_state",
-  "get_config",
-  "check_permissions",
-  "check_for_update",
-  "zoom",
-  // pointer navigation (read-only — no commit)
-  "scroll",
-  "move_cursor",
-  // draft / reversible
-  "type_text",
-  "set_value",
-  "launch_app",
-  "bring_to_front",
-  // mutating (context-dependent for click/key)
-  "click",
-  "right_click",
-  "double_click",
-  "drag",
-  "press_key",
-  "hotkey",
-  "page",
-  "set_config",
-  "start_recording",
-  "stop_recording",
-  // destructive / external
-  "kill_app",
-  "replay_trajectory",
-  "install_ffmpeg",
-] as const;
-
-export const driverToolSchema = z.enum(DRIVER_TOOLS);
-export type DriverTool = z.infer<typeof driverToolSchema>;
-
-export function safeParseDriverTool(input: unknown): z.SafeParseReturnType<unknown, DriverTool> {
-  return driverToolSchema.safeParse(input);
-}
 
 // ---------------------------------------------------------------------------
 // Static per-tool risk classification (plan KD3). Each tool is keyed to one of

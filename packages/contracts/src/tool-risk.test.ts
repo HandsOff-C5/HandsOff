@@ -1,17 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import { riskLevelRequiresApproval } from "./action-plan";
+import { DRIVER_TOOLS, driverToolSchema, safeParseDriverTool } from "./driver-tools";
+import type { DriverTool } from "./driver-tools";
 import {
   COMMIT_PATTERNS,
-  DRIVER_TOOLS,
-  driverToolSchema,
   effectiveToolCallRisk,
   riskForToolCall,
   riskForToolName,
-  safeParseDriverTool,
   toolCallRequiresApproval,
 } from "./tool-risk";
-import type { DriverTool, ToolCallTarget } from "./tool-risk";
+import type { ToolCallTarget } from "./tool-risk";
 
 function commitElement(title: string): ToolCallTarget {
   return { element: { role: "AXButton", title } };

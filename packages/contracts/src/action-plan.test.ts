@@ -123,13 +123,16 @@ describe("action plan contract", () => {
     }
   });
 
-  it("rejects a tool_call step with an empty tool name", () => {
-    const result = safeParseActionPlan(
-      plan({
-        action_plan: [{ id: "step-1", kind: "tool_call", label: "No tool", tool: "", args: {} }],
-      }),
-    );
-
-    expect(result.success).toBe(false);
+  it("rejects a tool_call step whose tool is not on the driver surface", () => {
+    // `tool` is the DriverTool enum: an empty or off-surface name fails to parse
+    // at the schema boundary, not just at the loop's defense-in-depth check.
+    for (const tool of ["", "teleport"]) {
+      const result = safeParseActionPlan(
+        plan({
+          action_plan: [{ id: "step-1", kind: "tool_call", label: "Bad tool", tool, args: {} }],
+        }),
+      );
+      expect(result.success).toBe(false);
+    }
   });
 });

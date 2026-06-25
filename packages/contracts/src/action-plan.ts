@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { driverToolSchema } from "./driver-tools";
 import { surfaceSnapshotSchema } from "./surface";
 
 export const RISK_LEVELS = ["read_only", "reversible", "mutating", "destructive_external"] as const;
@@ -58,14 +59,17 @@ export const actionStepSchema = z.discriminatedUnion("kind", [
   // name with its raw flat args (the driver's own snake_case shape, e.g.
   // { pid, window_id, element_index, direction }). This is how the autonomous
   // loop reaches all 36 driver tools through the U1 passthrough instead of the
-  // closed 6-kind vocabulary above. `tool` is a plain string here to keep
-  // `contracts/action-plan` free of a `tool-risk` import cycle; the loop validates
-  // it with `safeParseDriverTool` and gates it with `riskForToolName` at dispatch
-  // (an unknown tool is gated, never auto-run). The legacy kinds remain for the
-  // rule resolver and typed executor.
+  // closed 6-kind vocabulary above. `tool` is the `DriverTool` enum (sourced from
+  // the dependency-free `./driver-tools` module, so this carries no `tool-risk`
+  // import cycle): an off-surface tool name fails to parse at the schema boundary
+  // rather than reaching dispatch. The loop's `safeParseDriverTool` /
+  // `riskForToolName` boundary check stays as defense-in-depth (and gates an
+  // unknown tool as mutating), now also a compile-time guarantee. The legacy
+  // kinds remain for the rule resolver. `args` stays a free record — the driver
+  // owns each tool's per-arg schema; this is a self-describing passthrough.
   actionStepBaseSchema.extend({
     kind: z.literal("tool_call"),
-    tool: z.string().min(1),
+    tool: driverToolSchema,
     args: z.record(z.unknown()).default({}),
   }),
 ]);

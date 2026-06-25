@@ -5,7 +5,8 @@ import { cuaActionRequestSchema, cuaActionResultSchema, cuaWindowStateSchema } f
 import { resolvedIntentSchema } from "./intent";
 import { selectedReferentSchema } from "./referent";
 import { surfaceSnapshotSchema } from "./surface";
-import { driverToolSchema, toolCallTargetSchema } from "./tool-risk";
+import { driverToolSchema } from "./driver-tools";
+import { toolCallTargetSchema } from "./tool-risk";
 
 // One audit-trail entry for the "select context" step of the core loop: the
 // user pointed (referent) at a surface (snapshot), which a session/action then
