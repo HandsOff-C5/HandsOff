@@ -17,14 +17,13 @@ import {
   type FinalTranscript,
   type GoalLoopObservation,
   type IntentInput,
-  type PointingEvidence,
   type ResolvedIntent,
   type SelectedReferent,
   type SupervisionAuditEvent,
   type SurfaceSnapshot,
 } from "@handsoff/contracts";
 import { createToolCatalog, cuaResultToActionResult, type CuaDriver } from "@handsoff/cua";
-import { resolveNextToolCall, type AttentionWindow } from "@handsoff/intent";
+import { resolveNextToolCall } from "@handsoff/intent";
 import {
   createActionAuditStore,
   createSupervisionSessionStore,
@@ -35,7 +34,6 @@ import { useRef, useState } from "react";
 
 import { makeApprovalDecision } from "../plan-preview/usePlanApproval";
 import type { HeadPointingSnapshot } from "../head-pointing/useHeadPointing";
-import type { CaptureTrace } from "../capture-trace";
 import { buildPointingEvidence, type PointingContext } from "./buildPointingEvidence";
 import type { NextToolCallResolver } from "./intentResolver";
 
@@ -100,25 +98,14 @@ export function useVoiceCuaController(args: {
   // for back-compat with existing callers/tests.)
   resolveIntent?: NextToolCallResolver;
   targetResolveDelayMs?: number;
-  // The live gesture referent (#35): when the camera has a locked point at intent
-  // time it returns gesture `PointingEvidence`; null when nothing is locked.
-  getGestureEvidence?: () => PointingEvidence | null;
-  // The live gesture cursor position (even without a locked referent). Provided per-frame
-  // by the CameraPanel and combined with head/face evidence in intent fusion.
-  getGestureCursor?: () => { x: number; y: number } | null;
-  // The most recent CLOSED capture trace (U5): the timestamped head + hand + word
-  // streams for the just-finished utterance, on one epoch-ms clock. When present
-  // (with per-word timings), the temporal binder (U6) aligns each deictic word
-  // with the surface pointed at while it was spoken — multiple targets in one
-  // utterance (U7). Null on a non-capture utterance → the single end-of-speech
-  // snapshot below is the fallback, so non-binding flows are unchanged.
-  getCaptureTrace?: () => CaptureTrace | null;
-  // The pointable windows (surface + screen bounds) the binder ranks a head point
-  // against and resolves a hand candidate's targetId to. Sourced live from the
-  // gesture pipeline's display layout (each monitor is one pointable surface).
-  // Empty when the camera/overlay hasn't reported a layout yet → the binder simply
-  // cannot resolve a surface and leaves the deictic to the snapshot fallback.
-  getPointableWindows?: () => readonly AttentionWindow[];
+  // The live pointing signals read once at intent time, gathered behind a single
+  // getter: the locked gesture referent (#35), the live gesture cursor, the most
+  // recent CLOSED capture trace (U5 — head + hand + word streams on one epoch-ms
+  // clock; null on a non-capture utterance), and the pointable-window layout the
+  // temporal binder (U6/U7) ranks against. All fields tolerate null/empty, in
+  // which case the single end-of-speech snapshot stays the sole signal (fallback
+  // preserved). See {@link PointingContext} and {@link buildPointingEvidence}.
+  getPointingContext?: () => PointingContext;
   // Per-goal autonomous-loop ceiling on executed tool calls (default
   // DEFAULT_TOOL_CALL_BUDGET). The loop stops with a clear blocked reason at the
   // ceiling so a misfiring loop cannot run away.
@@ -159,13 +146,15 @@ export function useVoiceCuaController(args: {
 
   // Gather the live pointing signals once (gesture lock, gesture cursor, the
   // just-closed capture trace, the pointable-window layout) for the pure fusion
-  // builder.
+  // builder. Defaults every field so a missing getter degrades to the snapshot
+  // fallback rather than throwing.
   function pointingContext(): PointingContext {
+    const context = args.getPointingContext?.();
     return {
-      gestureEvidence: args.getGestureEvidence?.() ?? null,
-      gestureCursor: args.getGestureCursor?.() ?? null,
-      captureTrace: args.getCaptureTrace?.() ?? null,
-      pointableWindows: args.getPointableWindows?.() ?? [],
+      gestureEvidence: context?.gestureEvidence ?? null,
+      gestureCursor: context?.gestureCursor ?? null,
+      captureTrace: context?.captureTrace ?? null,
+      pointableWindows: context?.pointableWindows ?? [],
     };
   }
 

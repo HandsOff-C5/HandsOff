@@ -160,13 +160,17 @@ export function Dashboard({
     now,
     resolveIntent: intentResolver,
     targetResolveDelayMs,
-    getGestureEvidence: () => gestureEvidence.current,
-    getGestureCursor: () => gestureCursor.current,
-    // U7: the just-closed capture trace + the live pointable-window layout feed
-    // the temporal binder so each deictic word binds to the surface pointed at
-    // while it was spoken (multi-target). Null/empty → snapshot fallback.
-    getCaptureTrace: () => lastCaptureTrace.current,
-    getPointableWindows: () => pointableWindows.current,
+    // The live pointing signals, read once per intent behind a single getter:
+    // gesture lock + gesture cursor + the just-closed capture trace + the live
+    // pointable-window layout. U7: the trace + layout feed the temporal binder so
+    // each deictic word binds to the surface pointed at while it was spoken
+    // (multi-target). Null/empty fields → snapshot fallback.
+    getPointingContext: () => ({
+      gestureEvidence: gestureEvidence.current,
+      gestureCursor: gestureCursor.current,
+      captureTrace: lastCaptureTrace.current,
+      pointableWindows: pointableWindows.current,
+    }),
   });
 
   // Drive the capture-trace recorder off the SAME capture-hotkey edges that arm

@@ -13,6 +13,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { createIntentWorkerResolver } from "./intentResolver";
+import type { PointingContext } from "./buildPointingEvidence";
 import { useVoiceCuaController } from "./useVoiceCuaController";
 import type { CaptureTrace } from "../capture-trace";
 import type { HeadPointingSnapshot } from "../head-pointing/useHeadPointing";
@@ -57,6 +58,18 @@ const gestureEvidence: PointingEvidence = {
     app: "Demo",
   }),
 };
+
+// Build a full PointingContext for the consolidated `getPointingContext` prop,
+// defaulting every field so a test only sets the signal it exercises.
+function pointingContext(partial: Partial<PointingContext> = {}): PointingContext {
+  return {
+    gestureEvidence: null,
+    gestureCursor: null,
+    captureTrace: null,
+    pointableWindows: [],
+    ...partial,
+  };
+}
 
 function ready(input: IntentInput): ResolvedIntent {
   return {
@@ -275,7 +288,7 @@ describe("useVoiceCuaController", () => {
     const { result } = renderHook(() =>
       useVoiceCuaController({
         driver,
-        getGestureEvidence: () => gestureEvidence,
+        getPointingContext: () => pointingContext({ gestureEvidence }),
         headPointing: headPointing(),
         now: () => NOW,
         resolveIntent,
@@ -322,7 +335,6 @@ describe("useVoiceCuaController", () => {
     const { result } = renderHook(() =>
       useVoiceCuaController({
         driver,
-        getGestureEvidence: () => null,
         now: () => NOW,
         resolveIntent,
         targetResolveDelayMs: 0,
@@ -410,7 +422,7 @@ describe("useVoiceCuaController", () => {
     const { result } = renderHook(() =>
       useVoiceCuaController({
         driver,
-        getGestureCursor: () => ({ x: 0.6, y: 0.4 }),
+        getPointingContext: () => pointingContext({ gestureCursor: { x: 0.6, y: 0.4 } }),
         headPointing: headPointing(),
         now: () => NOW,
         resolveIntent,
@@ -439,7 +451,7 @@ describe("useVoiceCuaController", () => {
     const { result } = renderHook(() =>
       useVoiceCuaController({
         driver,
-        getGestureCursor: () => ({ x: 0.5, y: 0.5 }),
+        getPointingContext: () => pointingContext({ gestureCursor: { x: 0.5, y: 0.5 } }),
         headPointing: headPointing(),
         now: () => NOW,
         resolveIntent,
@@ -1455,8 +1467,8 @@ describe("U7 temporal multi-target binding into IntentInput", () => {
         now: () => NOW,
         resolveIntent,
         targetResolveDelayMs: 0,
-        getCaptureTrace: () => twoTargetTrace,
-        getPointableWindows: () => pointableWindows,
+        getPointingContext: () =>
+          pointingContext({ captureTrace: twoTargetTrace, pointableWindows }),
       }),
     );
 
@@ -1508,8 +1520,8 @@ describe("U7 temporal multi-target binding into IntentInput", () => {
         now: () => NOW,
         resolveIntent: createIntentWorkerResolver(invoke),
         targetResolveDelayMs: 0,
-        getCaptureTrace: () => twoTargetTrace,
-        getPointableWindows: () => pointableWindows,
+        getPointingContext: () =>
+          pointingContext({ captureTrace: twoTargetTrace, pointableWindows }),
       }),
     );
 
@@ -1538,8 +1550,8 @@ describe("U7 temporal multi-target binding into IntentInput", () => {
         now: () => NOW,
         resolveIntent,
         targetResolveDelayMs: 0,
-        // No getCaptureTrace → the binder never runs.
-        getPointableWindows: () => pointableWindows,
+        // No captureTrace → the binder never runs.
+        getPointingContext: () => pointingContext({ pointableWindows }),
       }),
     );
 
@@ -1579,12 +1591,11 @@ describe("U7 temporal multi-target binding into IntentInput", () => {
         targetResolveDelayMs: 0,
         // A trace with samples but NO words on either the trace or the transcript →
         // the binder has nothing to align against, so nothing binds.
-        getCaptureTrace: () => ({
-          headTrace: [],
-          handTrace: [handAt(1100, "win-notes")],
-          words: [],
-        }),
-        getPointableWindows: () => pointableWindows,
+        getPointingContext: () =>
+          pointingContext({
+            captureTrace: { headTrace: [], handTrace: [handAt(1100, "win-notes")], words: [] },
+            pointableWindows,
+          }),
       }),
     );
 
