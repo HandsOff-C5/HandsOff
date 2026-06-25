@@ -1,10 +1,12 @@
 import { z } from "zod";
 
-import { approvalDecisionSchema, executionStatusSchema } from "./action-plan";
+import { approvalDecisionSchema, executionStatusSchema, riskLevelSchema } from "./action-plan";
 import { cuaActionRequestSchema, cuaActionResultSchema, cuaWindowStateSchema } from "./cua";
 import { resolvedIntentSchema } from "./intent";
 import { selectedReferentSchema } from "./referent";
 import { surfaceSnapshotSchema } from "./surface";
+import { driverToolSchema } from "./driver-tools";
+import { toolCallTargetSchema } from "./tool-risk";
 
 // One audit-trail entry for the "select context" step of the core loop: the
 // user pointed (referent) at a surface (snapshot), which a session/action then
@@ -63,6 +65,25 @@ export const supervisionAuditEventSchema = z
       kind: z.literal("cua_call"),
       stepId: z.string().min(1),
       request: cuaActionRequestSchema,
+      result: cuaActionResultSchema,
+    }),
+    // Per-call record for the autonomous loop (U3): every generic driver tool
+    // call the agentic loop dispatches, with the full provenance the Intention
+    // Log replays — the originating transcript, the bound referent (absent for
+    // referent-less calls like get_window_state), the driver tool + its
+    // risk-relevant target, the derived risk + approval state, and the typed
+    // result. Distinct from `cua_call` (which is keyed to the 6-kind typed
+    // ActionRequest) because the full driver surface is dispatched by tool name
+    // and a per-call record needs transcript/referent/approval provenance the
+    // ActionPlan executor never carried.
+    auditEventBaseSchema.extend({
+      kind: z.literal("tool_call"),
+      transcript: z.string(),
+      referent: selectedReferentSchema.nullable(),
+      tool: driverToolSchema,
+      target: toolCallTargetSchema.optional(),
+      risk: riskLevelSchema,
+      approval: z.enum(["auto", "approved", "rejected"]),
       result: cuaActionResultSchema,
     }),
     auditEventBaseSchema.extend({

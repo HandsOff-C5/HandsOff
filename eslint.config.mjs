@@ -13,6 +13,7 @@ export default tseslint.config(
       "apps/**/public/models/**",
       // Worktree scratch space managed by the agent harness — not project source.
       ".claude/**",
+      ".worktrees/**",
     ],
   },
   js.configs.recommended,

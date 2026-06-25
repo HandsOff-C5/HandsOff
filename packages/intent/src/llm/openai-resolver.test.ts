@@ -371,12 +371,17 @@ describe("resolveWithOpenAi", () => {
 });
 
 describe("buildResolveIntentMessages", () => {
-  it("sends transcript and candidate surface metadata without camera data", () => {
+  it("sends goal, transcript and candidate surface metadata without raw camera data", () => {
     const messages = buildResolveIntentMessages(input());
     const payload = JSON.parse(messages[1]!.content);
 
+    // U3: goal + transcript + candidates + (null on the first turn) live
+    // snapshot and (empty) loop memory — but never the raw pointing evidence.
     expect(payload).toEqual({
+      goal: "click that button",
       transcript: { text: "click that button", confidence: 0.95 },
+      latestSnapshot: null,
+      recentResults: [],
       candidateSurfaces: [
         {
           rank: 1,
@@ -392,5 +397,51 @@ describe("buildResolveIntentMessages", () => {
     });
     expect(messages[1]!.content).not.toContain("pointingEvidence");
     expect(messages[1]!.content).not.toContain("cursor");
+  });
+
+  it("includes the live perception snapshot with element indices and the prior result (U3)", () => {
+    const focused = surface({ id: "notes:1", title: "Quick Note", app: "Notes" });
+    const messages = buildResolveIntentMessages(
+      input({
+        goalSession: {
+          goal: "type hello into Notes",
+          tick: 1,
+          observations: [
+            {
+              tick: 0,
+              capturedAt: "2026-06-22T12:00:00.000Z",
+              windows: [focused],
+            },
+            {
+              tick: 1,
+              capturedAt: "2026-06-22T12:00:01.000Z",
+              windows: [focused],
+              state: {
+                surface: focused,
+                capturedAt: "2026-06-22T12:00:01.000Z",
+                elementCount: 1,
+                elements: [{ id: "el-1", index: 4, role: "AXTextField", label: "Note body" }],
+              },
+              previousAction: {
+                actionId: "plan-open-notes",
+                result: { status: "failed", error: "Field not focused" },
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const payload = JSON.parse(messages[1]!.content);
+
+    expect(payload.goal).toBe("type hello into Notes");
+    // The model can now cite the element by its perceived index.
+    expect(payload.latestSnapshot).toMatchObject({
+      focusedWindow: { id: "notes:1", app: "Notes" },
+      elements: [{ index: 4, role: "AXTextField", label: "Note body" }],
+    });
+    // Loop memory: the prior failed result reaches the model so it can recover.
+    expect(payload.recentResults).toEqual([
+      { tick: 1, status: "failed", detail: "Field not focused" },
+    ]);
   });
 });

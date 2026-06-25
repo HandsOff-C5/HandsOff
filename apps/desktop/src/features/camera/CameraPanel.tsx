@@ -19,11 +19,13 @@ import {
   type Point,
   type ReferentLoop,
 } from "@handsoff/gesture";
+import type { AttentionWindow } from "@handsoff/intent";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { toGestureEvidence } from "../fusion/gestureEvidence";
 import {
   displaySurfaceSnapshot,
+  toAttentionWindows,
   toArbitrationDisplays,
   toDisplaySurfaces,
 } from "./display-surfaces";
@@ -53,6 +55,25 @@ interface CameraPanelProps {
   // the wrist-ray projected point when hands are present, or null when no hands are detected.
   // The dashboard feeds this into the intent fusion as an additional pointing signal.
   onGestureCursor?: (cursor: { x: number; y: number } | null) => void;
+  // Full per-frame hand sample for the capture-trace recorder (U5): the frame's
+  // `performance.now`-based timestamp, the projected point, the loop's candidate
+  // (null when no surface/hand), and the FSM phase. Fired every frame regardless of
+  // hand presence so the recorder can window the stream; the recorder normalizes
+  // the timestamp onto the shared epoch clock. The dashboard wires this when a
+  // capture window is open.
+  onGestureSample?: (sample: {
+    frameTimestampMs: number;
+    point: { x: number; y: number };
+    candidate: PointingCandidate | null;
+    phase: GestureState;
+  }) => void;
+  // The live pointable-window layout (U7): each connected display as one
+  // AttentionWindow (surface + global-px bounds), the same display-as-surface
+  // model the referent loop hit-tests against. The temporal binder consumes this
+  // to resolve a hand candidate's targetId (a display id) to its surface and to
+  // rank a head point geometrically. Published whenever the display layout
+  // changes; the dashboard hands it to the controller for binding at intent time.
+  onPointableWindows?: (windows: readonly AttentionWindow[]) => void;
   // When true the camera starts automatically on mount without requiring a button click.
   autoStart?: boolean;
 }
@@ -100,6 +121,8 @@ export function CameraPanel({
   overlay: injectedOverlay,
   onGestureEvidence,
   onGestureCursor,
+  onGestureSample,
+  onPointableWindows,
   autoStart = false,
 }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -140,6 +163,9 @@ export function CameraPanel({
     ((cursor: { x: number; y: number } | null) => void) | undefined
   >(onGestureCursor);
   gestureCursorCallbackRef.current = onGestureCursor;
+  // Same pattern for the capture-trace hand-sample callback (U5).
+  const gestureSampleCallbackRef = useRef(onGestureSample);
+  gestureSampleCallbackRef.current = onGestureSample;
 
   // Refs mirror the state the per-frame loop reads, so the rAF closure always sees the latest
   // calibration + overlay handle without being rebuilt.
@@ -176,6 +202,13 @@ export function CameraPanel({
     rebuildLoop();
     if (!multiCal) overlayRef.current.clear("main");
   }, [rebuildLoop, multiCal]);
+
+  // Publish the pointable-window layout (U7) whenever the displays change, so the
+  // controller can hand it to the temporal binder at intent time. Each display is
+  // one pointable surface (the same model the referent loop hit-tests against).
+  useEffect(() => {
+    onPointableWindows?.(toAttentionWindows(displays));
+  }, [displays, onPointableWindows]);
 
   const stop = useCallback(() => {
     const r = resources.current;
@@ -258,6 +291,16 @@ export function CameraPanel({
             } else {
               gestureCursorCallbackRef.current?.(null);
             }
+            // Publish the full hand sample to the capture-trace recorder (U5). Fire
+            // every frame, including no-hand frames (candidate null), so the recorder
+            // sees the real hand timeline; `f.timestampMs` is the frame's
+            // `performance.now` stamp, which the recorder normalizes to epoch ms.
+            gestureSampleCallbackRef.current?.({
+              frameTimestampMs: f.timestampMs,
+              point: { x: out.point[0], y: out.point[1] },
+              candidate: out.candidate,
+              phase: out.state.phase,
+            });
             // Drive the separate desktop cursor only while calibrated; hide it when no hand.
             if (multiCalRef.current) {
               if (f.hands.length) overlayRef.current.move("main", out.point[0], out.point[1]);

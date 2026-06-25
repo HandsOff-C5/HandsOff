@@ -276,4 +276,71 @@ describe("Tauri CUA driver", () => {
     expect(result).toEqual({ status: "blocked", reason: "No accessible CUA window was found" });
     expect(calls).toEqual(["cua_list_windows"]);
   });
+
+  it("passes a generic tool call through with the input serialized as JSON", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const invoke: CuaInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (command === "cua_driver_call") return { width: 1512, height: 982 } as T;
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const result = await createTauriCuaDriver(invoke).call("scroll", {
+      pid: 42,
+      direction: "down",
+    });
+
+    expect(result).toEqual({ status: "succeeded", value: { width: 1512, height: 982 } });
+    expect(calls).toEqual([
+      {
+        command: "cua_driver_call",
+        args: { tool: "scroll", args: '{"pid":42,"direction":"down"}' },
+      },
+    ]);
+  });
+
+  it("returns a typed failure when a generic tool call rejects", async () => {
+    const invoke: CuaInvoke = async (command: string) => {
+      if (command === "cua_driver_call") throw new Error("Unknown tool: bogus");
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const result = await createTauriCuaDriver(invoke).call("bogus", {});
+
+    expect(result).toEqual({ status: "failed", error: "Unknown tool: bogus" });
+  });
+
+  it("parses the driver tool catalog", async () => {
+    const catalog = [
+      {
+        name: "get_screen_size",
+        description: "Return the logical size of the main display in points.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "scroll",
+        description: "Scroll the target pid's focused region.",
+        inputSchema: { type: "object", required: ["pid", "direction"] },
+      },
+    ];
+    const invoke: CuaInvoke = async <T>(command: string) => {
+      if (command === "cua_driver_tools") return catalog as T;
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const result = await createTauriCuaDriver(invoke).listTools();
+
+    expect(result).toEqual({ status: "succeeded", value: catalog });
+  });
+
+  it("fails an invalid tool catalog instead of trusting it", async () => {
+    const invoke: CuaInvoke = async <T>(command: string) => {
+      if (command === "cua_driver_tools") return [{ name: "" }] as T;
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const result = await createTauriCuaDriver(invoke).listTools();
+
+    expect(result).toMatchObject({ status: "failed" });
+  });
 });

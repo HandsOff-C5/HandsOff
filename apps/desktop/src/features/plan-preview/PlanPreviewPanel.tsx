@@ -9,6 +9,10 @@ type PlanPreviewPanelProps = {
   runResult?: PlanRunResult | null;
   onApprove?: () => void;
   onReject?: () => void;
+  // Interrupt the in-flight autonomous loop (U3): cancels queued/pending calls
+  // and stops the goal. Shown while a plan is live so the loop is always
+  // stoppable.
+  onStop?: () => void;
 };
 
 function runSummary(runResult: PlanRunResult): string {
@@ -33,6 +37,7 @@ export function PlanPreviewPanel({
   runResult,
   onApprove,
   onReject,
+  onStop,
 }: PlanPreviewPanelProps) {
   if (!intent) {
     return (
@@ -100,6 +105,14 @@ export function PlanPreviewPanel({
           </button>
           <button type="button" onClick={onReject}>
             Reject
+          </button>
+        </div>
+      ) : onStop ? (
+        // An auto-running / paused autonomous loop is always stoppable: a single
+        // interrupt cancels the in-flight + queued calls and ends the goal.
+        <div className="plan-preview__actions">
+          <button type="button" onClick={onStop}>
+            Stop
           </button>
         </div>
       ) : null}

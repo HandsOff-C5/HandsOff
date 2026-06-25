@@ -21,6 +21,26 @@ describe("action audit store", () => {
     expect(store.forAction("plan-1")).toEqual([recorded]);
   });
 
+  it("persists per-call tool_call records and fetches them by session and action", () => {
+    const store = createActionAuditStore();
+    const recorded = store.record({
+      kind: "tool_call",
+      sessionId: "session-1",
+      actionId: "plan-1",
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      transcript: "open Notes",
+      referent: null,
+      tool: "launch_app",
+      risk: "reversible",
+      approval: "auto",
+      result: fakeCuaActionResult(),
+    });
+
+    expect(store.list()).toEqual([recorded]);
+    expect(store.forSession("session-1")).toEqual([recorded]);
+    expect(store.forAction("plan-1")).toEqual([recorded]);
+  });
+
   it("rejects invalid records and keeps the log unchanged", () => {
     const store = createActionAuditStore();
 

@@ -35,6 +35,17 @@ struct DriverWindowList {
     windows: Vec<DriverWindow>,
 }
 
+/// Window geometry from the driver, in global virtual-desktop px (a secondary
+/// display's origin may be negative). Deserialized so a head/hand point can be
+/// intersected with the real window under it.
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct DriverBounds {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
 #[derive(Debug, Deserialize)]
 struct DriverWindow {
     app_name: String,
@@ -43,6 +54,19 @@ struct DriverWindow {
     window_id: u32,
     is_on_screen: bool,
     z_index: i64,
+    // Tolerant: a window the driver can't measure degrades to no geometry rather
+    // than failing the whole list parse.
+    #[serde(default)]
+    bounds: Option<DriverBounds>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CuaBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +80,12 @@ pub struct CuaWindow {
     pub availability: &'static str,
     pub access_status: &'static str,
     pub focused: bool,
+    // Geometry + stacking order so the JS binder can resolve a point to the
+    // frontmost window under it. `z_index`: HIGHER = frontmost (see frontmost =
+    // max below). `bounds` omitted when the driver couldn't measure the window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<CuaBounds>,
+    pub z_index: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -96,13 +126,19 @@ pub struct CuaActionResult {
 }
 
 fn run_cua(args: &[&str]) -> Result<Value, String> {
+    parse_json_stdout(&run_cua_raw(args)?)
+}
+
+/// Run `cua-driver` and return raw stdout bytes once the process succeeded.
+/// Non-zero exit (unknown tool, malformed arg) becomes a typed `Err(String)`.
+fn run_cua_raw(args: &[&str]) -> Result<Vec<u8>, String> {
     let output = Command::new("cua-driver")
         .args(args)
         .output()
         .map_err(|error| format!("cua-driver failed to start: {error}"))?;
 
     ensure_success(output.status.success(), &output.stderr)?;
-    parse_json_stdout(&output.stdout)
+    Ok(output.stdout)
 }
 
 fn run_cua_action(args: &[&str]) -> Result<(), String> {
@@ -131,6 +167,52 @@ fn parse_json_stdout(stdout: &[u8]) -> Result<Value, String> {
 
 fn call_tool(tool: &str, input: Value) -> Result<Value, String> {
     run_cua(&["call", tool, &input.to_string()])
+}
+
+/// Run a driver tool generically and return its stdout as a JSON value.
+///
+/// Read tools (`get_screen_size`, `get_cursor_position`, …) print JSON; action
+/// tools (`scroll`, `type_text`, …) print a human-readable confirmation line.
+/// We preserve both: valid JSON passes through unchanged; a plain-text line is
+/// returned as a JSON string so the generic command never fails on a tool that
+/// happens to confirm in prose. Driver errors (unknown tool, bad arg) surface
+/// as a typed `Err(String)` via `run_cua_raw`, not a panic.
+fn run_cua_value(tool: &str, input: &str) -> Result<Value, String> {
+    let stdout = run_cua_raw(&["call", tool, input])?;
+    let text = String::from_utf8_lossy(&stdout);
+    Ok(serde_json::from_str::<Value>(text.trim())
+        .unwrap_or_else(|_| Value::String(text.into_owned())))
+}
+
+/// Parse one `name: description` line from `cua-driver list-tools`.
+fn parse_tool_line(line: &str) -> Option<(String, String)> {
+    let (name, description) = line.split_once(": ")?;
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some((name.to_string(), description.trim().to_string()))
+}
+
+/// Extract the `input_schema:` JSON block from `cua-driver describe <tool>`
+/// output. The block is everything after the `input_schema:` marker; the driver
+/// emits it as the final section, so we parse from the first `{` to the end.
+fn parse_describe_schema(describe_output: &str) -> Option<Value> {
+    let after_marker = describe_output.split("input_schema:").nth(1)?;
+    let start = after_marker.find('{')?;
+    serde_json::from_str::<Value>(after_marker[start..].trim()).ok()
+}
+
+fn tool_catalog_entry(name: String, description: String) -> Value {
+    let input_schema = run_cua_raw(&["describe", &name])
+        .ok()
+        .map(|stdout| String::from_utf8_lossy(&stdout).into_owned())
+        .and_then(|output| parse_describe_schema(&output));
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": input_schema.unwrap_or(Value::Null),
+    })
 }
 
 fn call_action_tool(tool: &str, input: Value) -> Result<(), String> {
@@ -167,6 +249,13 @@ fn map_window(window: DriverWindow, focused: bool) -> CuaWindow {
         },
         access_status: "accessible",
         focused,
+        bounds: window.bounds.map(|b| CuaBounds {
+            x: b.x,
+            y: b.y,
+            width: b.width,
+            height: b.height,
+        }),
+        z_index: window.z_index,
     }
 }
 
@@ -370,6 +459,35 @@ pub fn cua_set_value(
     })
 }
 
+/// Generic passthrough to any cua-driver tool.
+///
+/// Exposes the full driver surface (not just the typed wrappers above) so the
+/// agentic loop can reach every tool the binary describes. `args` is the raw
+/// JSON argument string the driver expects; the returned `Value` is the driver's
+/// stdout (parsed JSON, or the confirmation line as a JSON string). Unknown tool
+/// names and malformed args become a typed `Err`, never a panic.
+#[tauri::command]
+pub fn cua_driver_call(tool: String, args: String) -> Result<Value, String> {
+    run_cua_value(&tool, &args)
+}
+
+/// Return the driver's self-described tool catalog as JSON.
+///
+/// Reads `cua-driver list-tools` for the names + descriptions, then
+/// `cua-driver describe <tool>` for each tool's `input_schema`. The catalog is
+/// the agent's function-definition set, with zero HandsOff-side schema
+/// duplication.
+#[tauri::command]
+pub fn cua_driver_tools() -> Result<Vec<Value>, String> {
+    let stdout = run_cua_raw(&["list-tools"])?;
+    let listing = String::from_utf8_lossy(&stdout);
+    Ok(listing
+        .lines()
+        .filter_map(parse_tool_line)
+        .map(|(name, description)| tool_catalog_entry(name, description))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,6 +514,12 @@ mod tests {
                 window_id: 7,
                 is_on_screen: true,
                 z_index: 10,
+                bounds: Some(DriverBounds {
+                    x: 100.0,
+                    y: 200.0,
+                    width: 300.0,
+                    height: 400.0,
+                }),
             },
             true,
         );
@@ -406,6 +530,10 @@ mod tests {
         assert_eq!(window.availability, "available");
         assert_eq!(window.access_status, "accessible");
         assert!(window.focused);
+        assert_eq!(window.z_index, 10);
+        let bounds = window.bounds.expect("geometry is mapped through");
+        assert_eq!(bounds.x, 100.0);
+        assert_eq!(bounds.height, 400.0);
     }
 
     #[test]
@@ -482,5 +610,39 @@ mod tests {
     fn json_output_still_requires_valid_json() {
         assert!(parse_json_stdout(br#"{"ok":true}"#).is_ok());
         assert!(parse_json_stdout(b"Inserted text").is_err());
+    }
+
+    #[test]
+    fn parses_list_tools_lines_into_name_and_description() {
+        assert_eq!(
+            parse_tool_line("scroll: Scroll the target pid's focused region by keystrokes"),
+            Some((
+                "scroll".to_string(),
+                "Scroll the target pid's focused region by keystrokes".to_string()
+            ))
+        );
+        // Descriptions can themselves contain a colon; only the first split counts.
+        assert_eq!(
+            parse_tool_line("list_apps: List macOS apps: running and installed"),
+            Some((
+                "list_apps".to_string(),
+                "List macOS apps: running and installed".to_string()
+            ))
+        );
+        assert_eq!(parse_tool_line(""), None);
+        assert_eq!(parse_tool_line("no colon here"), None);
+    }
+
+    #[test]
+    fn extracts_input_schema_block_from_describe_output() {
+        let describe_output = "name: scroll\n\ndescription:\nScroll a region.\n\ninput_schema:\n{\n  \"type\": \"object\",\n  \"required\": [\"pid\", \"direction\"]\n}\n";
+        let schema = parse_describe_schema(describe_output).expect("schema parses");
+        assert_eq!(schema["type"], json!("object"));
+        assert_eq!(schema["required"], json!(["pid", "direction"]));
+    }
+
+    #[test]
+    fn describe_without_schema_block_yields_none() {
+        assert!(parse_describe_schema("name: x\n\ndescription:\nNo schema here.\n").is_none());
     }
 }

@@ -4,6 +4,7 @@ import {
   cuaScreenshotSchema,
   cuaWindowSchema,
   safeParseCuaWindowState,
+  safeParseDriverToolDefinitions,
   type ActionTarget,
   type CuaActionResult,
   type CuaApp,
@@ -11,6 +12,7 @@ import {
   type CuaResult,
   type CuaScreenshot,
   type CuaWindow,
+  type DriverToolDefinition,
 } from "@handsoff/contracts";
 import type { CuaWindowState } from "@handsoff/contracts";
 
@@ -217,5 +219,26 @@ export function createTauriCuaDriver(invoke: CuaInvoke): CuaDriver {
       });
     },
     screenshot,
+    async call(tool, input): Promise<CuaResult<unknown>> {
+      try {
+        const value = await invoke<unknown>("cua_driver_call", {
+          tool,
+          args: JSON.stringify(input ?? {}),
+        });
+        return cuaSucceeded(value);
+      } catch (caught) {
+        return cuaFailed(errorMessage(caught));
+      }
+    },
+    async listTools(): Promise<CuaResult<readonly DriverToolDefinition[]>> {
+      try {
+        const parsed = safeParseDriverToolDefinitions(await invoke("cua_driver_tools"));
+        return parsed.success
+          ? cuaSucceeded(parsed.data)
+          : cuaFailed(`Invalid CUA tool catalog: ${parsed.error.message}`);
+      } catch (caught) {
+        return cuaFailed(errorMessage(caught));
+      }
+    },
   };
 }

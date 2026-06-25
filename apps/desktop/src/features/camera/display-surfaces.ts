@@ -1,5 +1,6 @@
 import type { Surface, SurfaceSnapshot } from "@handsoff/contracts";
 import type { Display } from "@handsoff/gesture";
+import type { AttentionWindow } from "@handsoff/intent";
 
 import type { DisplayInfo } from "./useGestureOverlay";
 
@@ -44,3 +45,14 @@ export const displaySurfaceSnapshot = (
     accessStatus: "accessible",
   };
 };
+
+// Each display as one pointable `AttentionWindow` (surface snapshot + global-px
+// bounds) for the temporal binder (U7). The binder resolves a hand candidate's
+// `targetId` (a display id) to `surface` and ranks a head point against `bounds`.
+// The surface id == the display id, so it matches the hand candidate's targetId
+// and the calibration's per-display key.
+export const toAttentionWindows = (infos: DisplayInfo[]): AttentionWindow[] =>
+  infos.map((info) => ({
+    surface: displaySurfaceSnapshot(info.id, infos),
+    bounds: { x: info.x, y: info.y, width: info.width, height: info.height },
+  }));

@@ -5,6 +5,7 @@ import type {
   SttStream,
   SttStreamEvent,
   SttStreamListener,
+  TranscriptWord,
 } from "@handsoff/contracts";
 import { SttLifecycleError } from "@handsoff/contracts";
 
@@ -88,12 +89,36 @@ export class FakeSttStream implements SttStream {
 
   // --- test controls -----------------------------------------------------
 
-  emitPartial(text: string, confidence: SttConfidence = 1, latencyMs: SttLatencyMs = 0): void {
-    this.dispatch({ kind: "partial", text, confidence, latencyMs, receivedAt: this.clock() });
+  emitPartial(
+    text: string,
+    confidence: SttConfidence = 1,
+    latencyMs: SttLatencyMs = 0,
+    words?: ReadonlyArray<TranscriptWord>,
+  ): void {
+    this.dispatch({
+      kind: "partial",
+      text,
+      confidence,
+      latencyMs,
+      receivedAt: this.clock(),
+      ...(words ? { words } : {}),
+    });
   }
 
-  emitFinal(text: string, confidence: SttConfidence = 1, latencyMs: SttLatencyMs = 0): void {
-    this.dispatch({ kind: "final", text, confidence, latencyMs, receivedAt: this.clock() });
+  emitFinal(
+    text: string,
+    confidence: SttConfidence = 1,
+    latencyMs: SttLatencyMs = 0,
+    words?: ReadonlyArray<TranscriptWord>,
+  ): void {
+    this.dispatch({
+      kind: "final",
+      text,
+      confidence,
+      latencyMs,
+      receivedAt: this.clock(),
+      ...(words ? { words } : {}),
+    });
   }
 
   emitError(error: SttError): void {

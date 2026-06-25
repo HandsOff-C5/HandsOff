@@ -72,6 +72,8 @@ fn main() {
             commands::cua::cua_click,
             commands::cua::cua_type_text,
             commands::cua::cua_set_value,
+            commands::cua::cua_driver_call,
+            commands::cua::cua_driver_tools,
             commands::permissions::request_media_permissions,
             commands::permissions::request_screen_recording,
             commands::permissions::restart_app,

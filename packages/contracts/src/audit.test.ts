@@ -107,6 +107,61 @@ describe("supervision audit event contract", () => {
     expect(result.success && result.data).toEqual(event);
   });
 
+  it("round-trips a per-call tool_call event with referent + approval provenance", () => {
+    const event: SupervisionAuditEvent = {
+      kind: "tool_call",
+      sessionId: "session-1",
+      actionId: "plan-1",
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      transcript: "send it",
+      referent: { id: "mail:1", source: "head", confidence: 0.9 },
+      tool: "click",
+      target: { element: { role: "AXButton", title: "Send" } },
+      risk: "mutating",
+      approval: "approved",
+      result: { status: "succeeded", summary: "Clicked Send" },
+    };
+
+    const result = safeParseSupervisionAuditEvent(event);
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data).toEqual(event);
+  });
+
+  it("accepts a referent-less tool_call (e.g. get_window_state)", () => {
+    const result = safeParseSupervisionAuditEvent({
+      kind: "tool_call",
+      sessionId: "session-1",
+      actionId: "plan-1",
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      transcript: "what is open",
+      referent: null,
+      tool: "get_window_state",
+      risk: "read_only",
+      approval: "auto",
+      result: { status: "succeeded", summary: "Window state captured" },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a tool_call naming a tool outside the driver surface", () => {
+    const result = safeParseSupervisionAuditEvent({
+      kind: "tool_call",
+      sessionId: "session-1",
+      actionId: "plan-1",
+      recordedAt: "2026-06-22T12:00:00.000Z",
+      transcript: "do the thing",
+      referent: null,
+      tool: "format_disk",
+      risk: "mutating",
+      approval: "auto",
+      result: { status: "succeeded", summary: "ok" },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("rejects approval events that point at a different action", () => {
     const result = safeParseSupervisionAuditEvent({
       kind: "approval_decided",
