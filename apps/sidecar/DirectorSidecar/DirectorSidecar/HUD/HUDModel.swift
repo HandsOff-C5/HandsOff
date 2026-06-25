@@ -4,7 +4,7 @@
 //
 //  G2 Listening HUD state model. A BridgeFrame reducer derives the HUD phase from the loop
 //  topics (transcript/referents/intent/runResult), latest-wins. G2a renders these read-only;
-//  the commit-to-execute + optional destructive Greenlight footer wire up in G2b. The phase +
+//  the commit-to-execute + Greenlight footer wire up in G2b. The phase +
 //  Greenlight-policy derivations are pure/nonisolated → unit-tested without a panel.
 //
 
@@ -16,8 +16,8 @@ enum HUDPhase: Equatable, Sendable {
     case listening           // header only (fn active, before transcript)
     case transcribing        // partial/final transcript streaming
     case referentsResolved   // ≥1 referent chip
-    case intentReady         // intent resolved, non-destructive (auto-runs on commit, no footer)
-    case awaitingGreenlight  // destructive intent — optional Greenlight footer shown
+    case intentReady         // intent resolved, read-only/reversible (auto-runs on commit)
+    case awaitingGreenlight  // mutating/destructive_external intent awaits approval
     case executing
     case complete
     case error
@@ -42,27 +42,27 @@ final class HUDModel {
     /// the micro-HUD's job (G3). This keeps the two overlays from both showing at once.
     var showsFullPanel: Bool { isVisible && phase != .listening }
 
-    // MARK: Greenlight-policy derivations (revised: destructive-only)
+    // MARK: Greenlight-policy derivations
 
-    var isDestructive: Bool { intent?.riskLevel == .destructive }
-    /// Footer (Greenlight/Dismiss) shows ONLY for a ready destructive intent.
+    /// Footer (Greenlight/Dismiss) shows only for ready approval-required risk.
     var showFooter: Bool { Self.showFooter(for: intent) }
-    /// Everything non-destructive auto-runs on commit (read_only/reversible/mutating).
+    /// read_only/reversible auto-run on commit; mutating/destructive_external require approval.
     var autoRun: Bool { Self.autoRun(for: intent) }
 
     nonisolated static func showFooter(for intent: ResolvedIntentLite?) -> Bool {
-        intent?.status == .ready && intent?.riskLevel == .destructive
+        intent?.status == .ready && intent?.riskLevel?.requiresApproval == true
     }
 
     nonisolated static func autoRun(for intent: ResolvedIntentLite?) -> Bool {
-        intent?.status == .ready && intent?.riskLevel != .destructive
+        intent?.status == .ready && intent?.riskLevel?.requiresApproval == false
     }
 
-    /// Pure phase for a resolved intent (destructive gates; everything else is ready-to-run).
+    /// Pure phase for a resolved intent (approval-required risk gates; auto-runnable risk commits).
     nonisolated static func phase(for intent: ResolvedIntentLite) -> HUDPhase {
         switch intent.status {
         case .ready:
-            return intent.riskLevel == .destructive ? .awaitingGreenlight : .intentReady
+            guard let risk = intent.riskLevel else { return .error }
+            return risk.requiresApproval ? .awaitingGreenlight : .intentReady
         case .clarificationRequired, .blocked:
             return .error
         }
@@ -97,13 +97,13 @@ final class HUDModel {
 
     // MARK: Commit / Greenlight (G2b)
 
-    /// Whether a non-destructive ready intent can commit-and-execute directly (fn-end).
+    /// Whether a ready intent can commit-and-execute directly (fn-end).
     nonisolated static func canCommit(_ intent: ResolvedIntentLite?) -> Bool {
-        intent?.status == .ready && intent?.riskLevel != .destructive
+        intent?.status == .ready && intent?.riskLevel?.requiresApproval == false
     }
 
-    /// fn-end COMMIT: execute the resolved intent. Non-destructive only — a destructive intent
-    /// must go through `greenlight()`. Sends `commit`; engine runs the plan; runResult flips us
+    /// fn-end COMMIT: execute the resolved intent. Approval-required risk must go through
+    /// `greenlight()`. Sends `commit`; engine runs the plan; runResult flips us
     /// to .complete. (fn-end detection is engine-owned — confirm the hotkey wiring.)
     func commit() {
         guard Self.canCommit(intent) else { return }
@@ -111,14 +111,15 @@ final class HUDModel {
         phase = .executing
     }
 
-    /// Optional destructive approval: send greenlight, then execute.
+    /// Approval path: send greenlight, then execute.
     func greenlight(now: Date = Date()) {
-        guard intent?.status == .ready, isDestructive, let actionId = intent?.id else { return }
+        guard intent?.status == .ready, intent?.riskLevel?.requiresApproval == true,
+              let actionId = intent?.id else { return }
         send(.greenlight(actionId: actionId, decidedAt: Self.iso(now)))
         phase = .executing
     }
 
-    /// Reject the (destructive) plan and dismiss without executing.
+    /// Reject the approval-required plan and dismiss without executing.
     func reject(now: Date = Date()) {
         if let actionId = intent?.id {
             send(.reject(actionId: actionId, decidedAt: Self.iso(now)))

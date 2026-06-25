@@ -36,9 +36,10 @@ private func session(_ id: String, _ status: ExecutionStatus, title: String? = n
 }
 
 @Test func loadStateReflectsConnectionAndCount() {
-    #expect(HomeDashboardModel.loadState(sessionCount: 0, connected: false) == .error)
-    #expect(HomeDashboardModel.loadState(sessionCount: 0, connected: true) == .empty)
-    #expect(HomeDashboardModel.loadState(sessionCount: 2, connected: true) == .loaded)
+    #expect(HomeDashboardModel.loadState(sessionCount: 0, connected: false, readiness: .ready) == .error)
+    #expect(HomeDashboardModel.loadState(sessionCount: 0, connected: true, readiness: .ready) == .empty)
+    #expect(HomeDashboardModel.loadState(sessionCount: 2, connected: true, readiness: .ready) == .loaded)
+    #expect(HomeDashboardModel.loadState(sessionCount: 2, connected: true, readiness: .blocked) == .denied)
 }
 
 @MainActor
@@ -66,4 +67,20 @@ private func session(_ id: String, _ status: ExecutionStatus, title: String? = n
     model.setConnection(.connected)
     model.apply(.sessions(SessionsPayload(sessions: [], counts: nil)))
     #expect(model.loadState == .empty)
+}
+
+@MainActor
+@Test func blockedReadinessShowsDeniedStateInHomeShell() {
+    let model = HomeDashboardModel()
+    model.setConnection(.connected)
+    model.apply(.state(topic: "readiness", readiness: ReadinessPayload(capabilities: [
+        CapabilityProbe(id: "microphone", kind: "permission", state: "denied"),
+        CapabilityProbe(id: "speech-recognition", kind: "permission", state: "granted"),
+    ])))
+    model.apply(.sessions(SessionsPayload(sessions: [
+        session("a", .running, title: "Refactor auth"),
+    ], counts: nil)))
+
+    #expect(model.readiness == .blocked)
+    #expect(model.loadState == .denied)
 }

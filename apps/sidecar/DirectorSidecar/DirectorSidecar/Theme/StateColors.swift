@@ -26,19 +26,19 @@ enum ReadinessLevel: Sendable {
 }
 
 /// Risk of a resolved intent — @handsoff/contracts `risk_level`. Drives the risk tag color
-/// only; Greenlight is gesture-to-execute by default and an optional gate for `.destructive`.
+/// and local approval policy; the shell does not trust model-provided `requires_approval`.
 enum RiskLevel: String, Codable, Sendable, CaseIterable {
     case readOnly = "read_only"
     case reversible
     case mutating
-    case destructive
+    case destructiveExternal = "destructive_external"
 
     var spoken: String {
         switch self {
         case .readOnly: return "read only"
         case .reversible: return "reversible"
         case .mutating: return "mutating"
-        case .destructive: return "destructive"
+        case .destructiveExternal: return "destructive external"
         }
     }
 }
@@ -70,7 +70,7 @@ extension Theme {
         case .readOnly: return textSecondary
         case .reversible: return info
         case .mutating: return warning
-        case .destructive: return danger
+        case .destructiveExternal: return danger
         }
     }
 }

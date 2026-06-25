@@ -4,7 +4,7 @@
 //
 //  G2a drift + state-model guards: transcript/referents/intent decode, the HUDModel phase reducer
 //  per HUDPhase (the headless "snapshot per phase"), and the revised Greenlight-policy derivations
-//  (destructive-only footer; everything else auto-runs).
+//  (approval footer for locally gated contract risk levels; read-only/reversible auto-run).
 //
 
 import Testing
@@ -54,28 +54,37 @@ import Foundation
     #expect(intent.reason == "Which window did you mean?")
 }
 
-// MARK: Greenlight-policy derivations (destructive-only)
+// MARK: Greenlight-policy derivations
 
 private func intent(_ risk: RiskLevel?, _ status: ResolvedIntentLite.Status = .ready) -> ResolvedIntentLite {
     ResolvedIntentLite(status: status, intentType: "x", riskLevel: risk, requiresApproval: false, summary: "s", reason: nil)
 }
 
-@Test func footerShowsOnlyForDestructive() {
+@Test func decodesDestructiveExternalRisk() throws {
+    let json = #"{"v":1,"type":"state","topic":"intent","payload":{"status":"ready","id":"i3","intent_type":"delete","risk_level":"destructive_external","requires_approval":true,"action_plan":{"id":"p1","summary":"Delete exported files","risk_level":"destructive_external","requires_approval":true,"target_agent":"cua-driver","action_plan":[]}}}"#
+    guard case let .intent(intent) = try JSONDecoder().decode(BridgeFrame.self, from: Data(json.utf8))
+    else { Issue.record("expected intent"); return }
+    #expect(intent.riskLevel == .destructiveExternal)
+}
+
+@Test func footerShowsForApprovalRequiredRisk() {
     #expect(!HUDModel.showFooter(for: intent(.readOnly)))
     #expect(!HUDModel.showFooter(for: intent(.reversible)))
-    #expect(!HUDModel.showFooter(for: intent(.mutating)))   // mutating auto-runs (revised policy)
-    #expect(HUDModel.showFooter(for: intent(.destructive))) // the only tier that gates
+    #expect(HUDModel.showFooter(for: intent(.mutating)))
+    #expect(HUDModel.showFooter(for: intent(.destructiveExternal)))
 }
 
-@Test func autoRunIsEverythingNonDestructive() {
+@Test func autoRunIsReadOnlyAndReversibleOnly() {
     #expect(HUDModel.autoRun(for: intent(.readOnly)))
-    #expect(HUDModel.autoRun(for: intent(.mutating)))
-    #expect(!HUDModel.autoRun(for: intent(.destructive)))
+    #expect(HUDModel.autoRun(for: intent(.reversible)))
+    #expect(!HUDModel.autoRun(for: intent(.mutating)))
+    #expect(!HUDModel.autoRun(for: intent(.destructiveExternal)))
 }
 
-@Test func intentPhaseGatesDestructiveOnly() {
-    #expect(HUDModel.phase(for: intent(.mutating)) == .intentReady)
-    #expect(HUDModel.phase(for: intent(.destructive)) == .awaitingGreenlight)
+@Test func intentPhaseGatesApprovalRequiredRisk() {
+    #expect(HUDModel.phase(for: intent(.reversible)) == .intentReady)
+    #expect(HUDModel.phase(for: intent(.mutating)) == .awaitingGreenlight)
+    #expect(HUDModel.phase(for: intent(.destructiveExternal)) == .awaitingGreenlight)
     #expect(HUDModel.phase(for: intent(.readOnly, .clarificationRequired)) == .error)
 }
 
@@ -105,13 +114,12 @@ private func intent(_ risk: RiskLevel?, _ status: ResolvedIntentLite.Status = .r
 }
 
 @MainActor
-@Test func reducerGatesDestructiveIntent() {
+@Test func reducerGatesApprovalRequiredIntent() {
     let model = HUDModel()
     model.setListening(true)
-    model.apply(.intent(intent(.destructive)))
+    model.apply(.intent(intent(.mutating)))
     #expect(model.phase == .awaitingGreenlight)
     #expect(model.showFooter)
-    #expect(model.isDestructive)
 }
 
 @MainActor

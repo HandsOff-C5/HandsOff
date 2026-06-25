@@ -7,10 +7,10 @@
 //  envelope `{ v:1, type:"command", topic, payload }`; the engine acks and forwards to React.
 //
 //  `commit` (fn-end → execute the resolved intent) is modeled as its OWN topic, distinct
-//  from `greenlight` (the optional destructive-only approval). This is the recommended
+//  from `greenlight` (approval for mutating/destructive_external risk). This is the recommended
 //  resolution of the open question in §4.2 ("reuse greenlight as the universal go-signal,
-//  or add commit?"): commit fires for every risk level on fn-end; greenlight is the narrow
-//  destructive gate. Confirm with the engine owner; the engine-side route is co-owned.
+//  or add commit?"): commit fires for direct-commit risks on fn-end; greenlight is the approval
+//  gate. Confirm with the engine owner; the engine-side route is co-owned.
 //
 
 import Foundation
@@ -23,7 +23,7 @@ enum Command: Equatable {
     case pauseAll                    // interrupt path (per-agent pause UI is cut for the demo)
     case openHome                    // focus/show the main Home Dashboard window
     case selectSession(String)       // Inspector binding (sessionId)
-    case greenlight(actionId: String, decidedAt: String)  // optional destructive approval
+    case greenlight(actionId: String, decidedAt: String)  // approval-required risk
     case reject(actionId: String, decidedAt: String)
 
     /// The wire `topic` for this command.

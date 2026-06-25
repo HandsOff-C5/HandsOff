@@ -3,8 +3,8 @@
 //  DirectorSidecar
 //
 //  G2a: the read-only Listening HUD — four zones filled live from the bridge (header + waveform +
-//  StopControl, transcript, referent chips, intent+risk). Non-destructive intents auto-run and
-//  show NO footer; the commit-to-execute + optional destructive Greenlight footer arrives in G2b.
+//  StopControl, transcript, referent chips, intent+risk). Read-only/reversible intents auto-run
+//  and show NO footer; the commit-to-execute + approval Greenlight footer arrives in G2b.
 //  Glass → opaque under Reduce Transparency; pulse/caret honor Reduce Motion.
 //
 
@@ -39,8 +39,8 @@ struct ListeningHUDView: View {
                     .font(theme.body).foregroundStyle(theme.success)
             }
 
-            // Optional footer — shown ONLY for a ready destructive intent (revised Greenlight
-            // policy). Everything else auto-runs on fn-end commit with no footer.
+            // Footer — shown only for ready approval-required risk. Auto-runnable intents commit
+            // directly and show no footer.
             if model.showFooter {
                 FooterRow(onDismiss: { model.reject() }, onGreenlight: { model.greenlight() })
             }

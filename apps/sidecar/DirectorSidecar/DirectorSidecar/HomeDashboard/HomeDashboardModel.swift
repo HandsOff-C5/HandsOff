@@ -80,10 +80,10 @@ final class HomeDashboardModel {
         }
     }
 
-    /// Optional Greenlight/Reject footer — destructive-only AND not yet executed (revised policy).
+    /// Greenlight/Reject footer — approval-required risk AND not yet executed.
     var showInspectorFooter: Bool {
         guard case let .ready(intent) = inspectorState else { return false }
-        return intent.riskLevel == .destructive && selectedRunResult == nil
+        return intent.riskLevel?.requiresApproval == true && selectedRunResult == nil
     }
 
     // MARK: frame application
@@ -93,7 +93,7 @@ final class HomeDashboardModel {
         case let .sessions(payload):
             sessions = payload.sessions.map(SessionVM.init)
             counts = payload.resolvedCounts
-            loadState = Self.loadState(sessionCount: sessions.count, connected: connected)
+            recomputeLoadState()
         case let .runResult(result):
             applyRunResult(result)
         case let .intent(intent):
@@ -102,6 +102,7 @@ final class HomeDashboardModel {
         case let .state(topic, readiness):
             if topic == "readiness", let readiness {
                 self.readiness = BridgeStore.readinessLevel(for: readiness.capabilities)
+                recomputeLoadState()
             }
         case .cursor, .transcript, .referents, .gaze, .error, .unknown:
             break
@@ -110,7 +111,7 @@ final class HomeDashboardModel {
 
     func setConnection(_ state: ConnectionState) {
         connected = state == .connected
-        loadState = Self.loadState(sessionCount: sessions.count, connected: connected)
+        recomputeLoadState()
     }
 
     /// Select a session → bind the Inspector and ask the engine to (re)publish its intent.
@@ -122,7 +123,7 @@ final class HomeDashboardModel {
     }
 
     func greenlight(now: Date = Date()) {
-        guard case let .ready(intent) = inspectorState, intent.riskLevel == .destructive,
+        guard case let .ready(intent) = inspectorState, intent.riskLevel?.requiresApproval == true,
               let actionId = intent.id else { return }
         send(.greenlight(actionId: actionId, decidedAt: Self.iso(now)))
     }
@@ -137,6 +138,10 @@ final class HomeDashboardModel {
     private func send(_ command: Command) {
         guard let bridge else { return }
         Task { await bridge.send(command) }
+    }
+
+    private func recomputeLoadState() {
+        loadState = Self.loadState(sessionCount: sessions.count, connected: connected, readiness: readiness)
     }
 
     private nonisolated static func iso(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
@@ -161,8 +166,9 @@ final class HomeDashboardModel {
         }
     }
 
-    nonisolated static func loadState(sessionCount: Int, connected: Bool) -> LoadState {
+    nonisolated static func loadState(sessionCount: Int, connected: Bool, readiness: ReadinessLevel) -> LoadState {
         if !connected { return .error }
+        if readiness == .blocked { return .denied }
         return sessionCount == 0 ? .empty : .loaded
     }
 }

@@ -54,7 +54,7 @@ enum DevMockFleet {
     static func mockIntent(destructive: Bool) -> ResolvedIntentLite {
         if destructive {
             return ResolvedIntentLite(
-                id: "intent-9", status: .ready, intentType: "delete", riskLevel: .destructive,
+                id: "intent-9", status: .ready, intentType: "delete", riskLevel: .destructiveExternal,
                 requiresApproval: true, summary: "Delete everything in ~/Documents", reason: nil,
                 steps: [ActionStepLite(id: "s1", label: "Empty the Documents folder", kind: "set_value", targetTitle: "Finder", proposed: "(removes 412 files)")]
             )

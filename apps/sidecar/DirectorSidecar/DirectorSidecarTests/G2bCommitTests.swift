@@ -2,9 +2,9 @@
 //  G2bCommitTests.swift
 //  DirectorSidecarTests
 //
-//  G2b: commit-to-execute (fn-end) for non-destructive intents, and the optional destructive
-//  Greenlight/Reject path. Verifies the revised policy — non-destructive commits directly;
-//  destructive holds until greenlight; reject dismisses without executing.
+//  G2b: commit-to-execute (fn-end) for read-only/reversible intents, and the Greenlight/Reject
+//  path for approval-required contract risks. Mutating and destructive_external hold until
+//  approval; reject dismisses without executing.
 //
 
 import Testing
@@ -13,52 +13,53 @@ import Foundation
 
 private func readyIntent(_ risk: RiskLevel, id: String = "intent-1") -> ResolvedIntentLite {
     ResolvedIntentLite(id: id, status: .ready, intentType: "x", riskLevel: risk,
-                       requiresApproval: risk == .destructive, summary: "s", reason: nil)
+                       requiresApproval: risk.requiresApproval, summary: "s", reason: nil)
 }
 
-@Test func canCommitForNonDestructiveOnly() {
+@Test func canCommitForAutoRunnableRiskOnly() {
     #expect(HUDModel.canCommit(readyIntent(.readOnly)))
-    #expect(HUDModel.canCommit(readyIntent(.mutating)))
-    #expect(!HUDModel.canCommit(readyIntent(.destructive)))
+    #expect(HUDModel.canCommit(readyIntent(.reversible)))
+    #expect(!HUDModel.canCommit(readyIntent(.mutating)))
+    #expect(!HUDModel.canCommit(readyIntent(.destructiveExternal)))
     #expect(!HUDModel.canCommit(nil))
 }
 
 @MainActor
-@Test func commitExecutesNonDestructiveIntent() {
+@Test func commitExecutesAutoRunnableIntent() {
     let model = HUDModel()
     model.setListening(true)
-    model.apply(.intent(readyIntent(.mutating)))
+    model.apply(.intent(readyIntent(.reversible)))
     #expect(model.phase == .intentReady)
     model.commit()
     #expect(model.phase == .executing)
 }
 
 @MainActor
-@Test func commitIsNoOpForDestructive() {
+@Test func commitIsNoOpForApprovalRequiredRisk() {
     let model = HUDModel()
     model.setListening(true)
-    model.apply(.intent(readyIntent(.destructive)))
+    model.apply(.intent(readyIntent(.mutating)))
     #expect(model.phase == .awaitingGreenlight)
-    model.commit() // must NOT execute — destructive needs greenlight
+    model.commit() // must NOT execute — approval-required risk needs greenlight
     #expect(model.phase == .awaitingGreenlight)
 }
 
 @MainActor
-@Test func greenlightExecutesDestructiveIntent() {
+@Test func greenlightExecutesApprovalRequiredIntent() {
     let model = HUDModel()
     model.setListening(true)
-    model.apply(.intent(readyIntent(.destructive)))
+    model.apply(.intent(readyIntent(.destructiveExternal)))
     #expect(model.showFooter)
     model.greenlight()
     #expect(model.phase == .executing)
 }
 
 @MainActor
-@Test func greenlightIsNoOpForNonDestructive() {
+@Test func greenlightIsNoOpForAutoRunnableRisk() {
     let model = HUDModel()
     model.setListening(true)
     model.apply(.intent(readyIntent(.readOnly)))
-    model.greenlight() // greenlight only applies to destructive
+    model.greenlight() // greenlight only applies to approval-required risks
     #expect(model.phase == .intentReady)
 }
 
@@ -66,7 +67,7 @@ private func readyIntent(_ risk: RiskLevel, id: String = "intent-1") -> Resolved
 @Test func rejectDismissesWithoutExecuting() {
     let model = HUDModel()
     model.setListening(true)
-    model.apply(.intent(readyIntent(.destructive)))
+    model.apply(.intent(readyIntent(.destructiveExternal)))
     model.reject()
     #expect(model.phase == .hidden)
     #expect(model.intent == nil)
