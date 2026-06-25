@@ -35,6 +35,17 @@ struct DriverWindowList {
     windows: Vec<DriverWindow>,
 }
 
+/// Window geometry from the driver, in global virtual-desktop px (a secondary
+/// display's origin may be negative). Deserialized so a head/hand point can be
+/// intersected with the real window under it.
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct DriverBounds {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
 #[derive(Debug, Deserialize)]
 struct DriverWindow {
     app_name: String,
@@ -43,6 +54,19 @@ struct DriverWindow {
     window_id: u32,
     is_on_screen: bool,
     z_index: i64,
+    // Tolerant: a window the driver can't measure degrades to no geometry rather
+    // than failing the whole list parse.
+    #[serde(default)]
+    bounds: Option<DriverBounds>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CuaBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +80,12 @@ pub struct CuaWindow {
     pub availability: &'static str,
     pub access_status: &'static str,
     pub focused: bool,
+    // Geometry + stacking order so the JS binder can resolve a point to the
+    // frontmost window under it. `z_index`: HIGHER = frontmost (see frontmost =
+    // max below). `bounds` omitted when the driver couldn't measure the window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<CuaBounds>,
+    pub z_index: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -219,6 +249,13 @@ fn map_window(window: DriverWindow, focused: bool) -> CuaWindow {
         },
         access_status: "accessible",
         focused,
+        bounds: window.bounds.map(|b| CuaBounds {
+            x: b.x,
+            y: b.y,
+            width: b.width,
+            height: b.height,
+        }),
+        z_index: window.z_index,
     }
 }
 
@@ -477,6 +514,12 @@ mod tests {
                 window_id: 7,
                 is_on_screen: true,
                 z_index: 10,
+                bounds: Some(DriverBounds {
+                    x: 100.0,
+                    y: 200.0,
+                    width: 300.0,
+                    height: 400.0,
+                }),
             },
             true,
         );
@@ -487,6 +530,10 @@ mod tests {
         assert_eq!(window.availability, "available");
         assert_eq!(window.access_status, "accessible");
         assert!(window.focused);
+        assert_eq!(window.z_index, 10);
+        let bounds = window.bounds.expect("geometry is mapped through");
+        assert_eq!(bounds.x, 100.0);
+        assert_eq!(bounds.height, 400.0);
     }
 
     #[test]

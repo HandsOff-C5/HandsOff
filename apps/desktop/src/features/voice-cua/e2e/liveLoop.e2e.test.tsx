@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type {
   FinalTranscript,
@@ -82,20 +85,47 @@ function listDriverWindows(): readonly DriverWindow[] {
   return (raw as { windows?: DriverWindow[] }).windows ?? [];
 }
 
-// The first on-screen TextEdit window, retried briefly because launch_app is
-// async (the window appears a beat after the call returns).
+// The FRONTMOST on-screen TextEdit window (max z_index), retried briefly because
+// `open` is async (the window appears a beat after the call returns). Frontmost,
+// not first-found: the binder resolves a point to the frontmost window under it,
+// so the scratch window the test points at must be that same frontmost window —
+// otherwise a second stray TextEdit window (cascaded on top) would bind instead
+// and the exact-window assertion would flake.
+function frontmostTextEdit(windows: readonly DriverWindow[]): DriverWindow | undefined {
+  return [...windows]
+    .filter((w) => w.app_name === "TextEdit" && w.is_on_screen)
+    .sort((a, b) => b.z_index - a.z_index)[0];
+}
+
 async function waitForTextEditWindow(): Promise<DriverWindow> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const window = listDriverWindows().find(
-      (w) => w.app_name === "TextEdit" && w.is_on_screen && w.title.length > 0,
-    );
-    if (window) return window;
+    const window = frontmostTextEdit(listDriverWindows());
+    // Prefer a titled window once one appears (an untitled doc reports "").
+    if (window && window.title.length > 0) return window;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  // Fall back to any TextEdit window (an untitled doc may report an empty title).
-  const any = listDriverWindows().find((w) => w.app_name === "TextEdit" && w.is_on_screen);
+  const any = frontmostTextEdit(listDriverWindows());
   if (any) return any;
   throw new Error("TextEdit scratch window did not appear");
+}
+
+// The frontmost on-screen window whose bounds contain the point — the OS
+// stacking-order GROUND TRUTH the binder must agree with (max z_index among the
+// windows containing the point). On a busy desktop the scratch window's centre
+// may sit under another app's window; the binder correctly resolves to whatever
+// is frontmost there, so the test asserts against this rather than a fixed
+// window.
+function frontmostWindowAt(x: number, y: number): DriverWindow | undefined {
+  return listDriverWindows()
+    .filter(
+      (w) =>
+        w.is_on_screen &&
+        x >= w.bounds.x &&
+        x <= w.bounds.x + w.bounds.width &&
+        y >= w.bounds.y &&
+        y <= w.bounds.y + w.bounds.height,
+    )
+    .sort((a, b) => b.z_index - a.z_index)[0];
 }
 
 // A SurfaceSnapshot for a real window, in the same id/availability shape the
@@ -149,11 +179,15 @@ describe.skipIf(!LIVE)("voice-cua LIVE e2e loop (real driver + real worker)", ()
   let scratch: DriverWindow;
 
   beforeAll(async () => {
-    // Launch a disposable TextEdit scratch window to drive instead of any real
-    // user app, then resolve its real pid/windowId from list_windows.
-    execFileSync(CUA_DRIVER_BIN, ["call", "launch_app", JSON.stringify({ name: "TextEdit" })], {
-      encoding: "utf8",
-    });
+    // Open a disposable TextEdit scratch window to drive instead of any real user
+    // app, then resolve its real pid/windowId from list_windows. We open a real
+    // temp FILE (not a bare `launch_app TextEdit`): a plain launch only activates
+    // the app, and a TextEdit with no default new document then shows no window —
+    // the exact "running, no windows" state Bug 5 came from. Opening a file
+    // guarantees a titled, frontmost, on-screen document window.
+    const scratchFile = join(tmpdir(), `handsoff-e2e-scratch-${process.pid}.txt`);
+    writeFileSync(scratchFile, "handsoff e2e scratch\n");
+    execFileSync("open", ["-a", "TextEdit", scratchFile], { encoding: "utf8" });
     scratch = await waitForTextEditWindow();
     printTrace("scratch TextEdit window (from real list_windows)", scratch);
   }, 30_000);
@@ -344,6 +378,11 @@ describe.skipIf(!LIVE)("voice-cua LIVE e2e loop (real driver + real worker)", ()
       }),
     );
 
+    // Ground truth: which real window is frontmost at the pointed location right
+    // now. The binder must resolve "here" to this same window (not a Display).
+    const expected = frontmostWindowAt(centreX, centreY);
+    expect(expected, "a real window must be on-screen at the pointed location").toBeDefined();
+
     act(() => result.current.handleFinalTranscript(finalTranscript("type hello here", words)));
 
     await waitFor(() => expect(captured.input).not.toBeNull(), { timeout: 120_000 });
@@ -369,13 +408,13 @@ describe.skipIf(!LIVE)("voice-cua LIVE e2e loop (real driver + real worker)", ()
     // The deictic "here" produced a bound referent at all.
     expect(boundSurfaces.length).toBeGreaterThan(0);
     const bound = boundSurfaces[0]!;
-    // DESIRED invariant: the bound surface is the real WINDOW (has pid +
-    // windowId, app is the real app, id is "pid:windowId"). When the bug is
-    // present the bound surface is the Display (app "Display", no pid) — the
-    // printed trace above shows exactly that.
+    // DESIRED invariant: the bound surface is a real WINDOW (has pid + windowId,
+    // a real app, id "pid:windowId") — specifically the frontmost window at the
+    // point per OS stacking. When the bug is present the bound surface is the
+    // Display (app "Display", no pid) — the printed trace shows exactly that.
     expect(bound.app).not.toBe("Display");
     expect(bound.pid).toBeDefined();
     expect(bound.windowId).toBeDefined();
-    expect(bound.id).toBe(`${scratch.pid}:${scratch.window_id}`);
+    expect(bound.id).toBe(`${expected!.pid}:${expected!.window_id}`);
   }, 140_000);
 });

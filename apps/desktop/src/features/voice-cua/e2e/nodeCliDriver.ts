@@ -51,6 +51,12 @@ interface DriverWindow {
   readonly window_id: number;
   readonly is_on_screen: boolean;
   readonly z_index: number;
+  readonly bounds?: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  };
 }
 
 export interface NodeCliCall {
@@ -118,6 +124,8 @@ function mapWindow(window: DriverWindow, focused: boolean): CuaWindow {
     availability: window.is_on_screen ? "available" : "unknown",
     accessStatus: "accessible",
     focused,
+    ...(window.bounds ? { bounds: window.bounds } : {}),
+    zIndex: window.z_index,
   };
 }
 

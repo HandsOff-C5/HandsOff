@@ -1178,6 +1178,49 @@ describe("U3b full-surface tool_call dispatch", () => {
       result: { status: "succeeded" },
     });
   });
+
+  it("BUG 4: stops instead of re-dispatching a call that already failed (no runaway repeat)", async () => {
+    const notes = surface({ id: "notes:1", title: "Quick Note", app: "Notes" });
+    // The driver fails the call; the resolver — mimicking the model ignoring the
+    // "never repeat a failed call" instruction — re-issues the IDENTICAL failing
+    // launch_app every tick. Without a code-level floor this runs to the budget;
+    // the dedup guard must stop after the first failure.
+    const driver = createFakeCuaDriver({
+      state: fakeCuaWindowState({ surface: notes }),
+      windows: [notes],
+      nextCallResult: cuaFailed("App does not exist"),
+    });
+    const launchArgs = { name: "Timeless" }; // no such app — the call fails
+    const resolveIntent = vi.fn(
+      async (input: IntentInput): Promise<ResolvedIntent> =>
+        readyToolCall(input, "launch_app", launchArgs, "reversible"),
+    );
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: null, candidates: [] },
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+        // A budget well above 1, so the assertion proves the GUARD (not the
+        // budget) stopped the runaway.
+        toolCallBudget: 8,
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript({ ...finalTranscript, text: "open Timeless" }));
+
+    await waitFor(() => expect(result.current.session?.status).toBe("blocked"));
+    // The identical failing call was dispatched exactly ONCE, not 8× to the budget.
+    expect(driver.calls().filter((c) => c.kind === "call" && c.tool === "launch_app")).toHaveLength(
+      1,
+    );
+    // Stopped with a clear "already failed" reason (not the budget message).
+    expect(result.current.runResult).toMatchObject({
+      status: "blocked",
+      result: { status: "blocked", reason: expect.stringContaining("already failed") },
+    });
+  });
 });
 
 // Characterization of the SUPERVISED invariants the U3 autonomous-loop refactor

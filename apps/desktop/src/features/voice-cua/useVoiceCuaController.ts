@@ -13,6 +13,7 @@ import {
   riskLevelRequiresApproval,
   type ActionStep,
   type CuaActionResult,
+  type CuaWindow,
   type DriverToolDefinition,
   type FinalTranscript,
   type GoalLoopObservation,
@@ -23,7 +24,7 @@ import {
   type SurfaceSnapshot,
 } from "@handsoff/contracts";
 import { createToolCatalog, cuaResultToActionResult, type CuaDriver } from "@handsoff/cua";
-import { resolveNextToolCall } from "@handsoff/intent";
+import { resolveNextToolCall, type AttentionWindow } from "@handsoff/intent";
 import {
   createActionAuditStore,
   createSupervisionSessionStore,
@@ -58,6 +59,52 @@ function wait(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
+// A stable (tool, args) signature for loop-dedup (KD2): the actual driver call a
+// step dispatches, with args' keys sorted so the same logical call always hashes
+// the same regardless of key order. Used to refuse re-dispatching a call that
+// already FAILED this goal.
+function callSignature(step: ActionStep): string {
+  const { tool, args: callArgs } = driverCallForStep(step);
+  const keys = Object.keys(callArgs).sort();
+  return `${tool}:${keys.map((key) => `${key}=${JSON.stringify(callArgs[key])}`).join("&")}`;
+}
+
+// The clean SurfaceSnapshot fields of a CuaWindow (dropping focused/bounds/
+// zIndex), so a window resolved by pointing carries the exact surface shape the
+// audit trail + candidate list expect.
+function cuaWindowSurface(window: CuaWindow): SurfaceSnapshot {
+  return {
+    id: window.id,
+    title: window.title,
+    app: window.app,
+    ...(window.pid !== undefined ? { pid: window.pid } : {}),
+    ...(window.windowId !== undefined ? { windowId: window.windowId } : {}),
+    availability: window.availability,
+    accessStatus: window.accessStatus,
+  };
+}
+
+// Map the live CUA windows (real geometry + stacking order from list_windows)
+// into the binder's AttentionWindow shape — the real pointable layout the
+// temporal binder ranks a head/hand point against, so a deictic ("here") binds
+// to the frontmost WINDOW under the point instead of a whole display. A window
+// the driver couldn't measure (no bounds) can't be hit-tested, so it is dropped.
+// ponytail: coordinate space — bounds + the head/hand cursor must share the
+// global virtual-desktop px space; a Retina points-vs-pixels scale mismatch is a
+// calibration knob to tune in manual testing, not a logic change here.
+function driverWindowsToPointable(windows: readonly CuaWindow[]): readonly AttentionWindow[] {
+  return windows
+    .filter(
+      (window): window is CuaWindow & { bounds: NonNullable<CuaWindow["bounds"]> } =>
+        window.bounds !== undefined,
+    )
+    .map((window) => ({
+      surface: cuaWindowSurface(window),
+      bounds: window.bounds,
+      ...(window.zIndex !== undefined ? { zIndex: window.zIndex } : {}),
+    }));
+}
+
 function blockedIntent(
   input: IntentInput,
   id: string,
@@ -87,6 +134,12 @@ type GoalRunState = {
   toolCalls: number;
   toolCallBudget: number;
   referent: SelectedReferent | null;
+  // (tool,args) signatures that already FAILED this goal (KD2 recovery floor).
+  // The resolver sometimes re-issues an identical failing call; the loop refuses
+  // to dispatch any signature in here again, so a dead action can't run away to
+  // the budget. Successful calls are never recorded, so legitimate repeats (a
+  // second scroll) still flow.
+  failedSignatures: ReadonlySet<string>;
 };
 
 export function useVoiceCuaController(args: {
@@ -158,6 +211,14 @@ export function useVoiceCuaController(args: {
     };
   }
 
+  // The live CUA window layout (real geometry + z-order) for the temporal
+  // binder. Returns [] when the driver is unavailable, so the caller falls back
+  // to the camera display layout the gesture lane publishes.
+  async function pointableWindowsFromDriver(): Promise<readonly AttentionWindow[]> {
+    const result = await args.driver.listWindows();
+    return result.status === "succeeded" ? driverWindowsToPointable(result.value) : [];
+  }
+
   async function createIntent(finalTranscript: FinalTranscript) {
     interrupted.current = false;
     await wait(args.targetResolveDelayMs ?? DEFAULT_TARGET_RESOLVE_DELAY_MS);
@@ -168,9 +229,21 @@ export function useVoiceCuaController(args: {
     // surface candidates (combinative, U7 multi-target binding included). Pure
     // builder — the active-window fallback is the only async step, run only when
     // no gesture/head/bound evidence exists.
+    // Prefer the live CUA window layout (real geometry + z-order) so the temporal
+    // binder resolves a deictic to the frontmost WINDOW under the point, not the
+    // display placeholder. The binder is the only consumer of pointableWindows and
+    // only runs when there's a capture trace to align words against, so a
+    // non-capture utterance skips the extra driver round-trip; fall back to the
+    // camera display layout when the driver returns nothing.
+    const baseContext = pointingContext();
+    const driverWindows = baseContext.captureTrace ? await pointableWindowsFromDriver() : [];
+    const context: PointingContext = {
+      ...baseContext,
+      pointableWindows: driverWindows.length > 0 ? driverWindows : baseContext.pointableWindows,
+    };
     const { pointingEvidence, surfaceCandidates } = await buildPointingEvidence(
       finalTranscript,
-      pointingContext(),
+      context,
       headPointingRef.current,
       resolveActiveWindowSurface,
     );
@@ -189,6 +262,7 @@ export function useVoiceCuaController(args: {
       toolCalls: 0,
       toolCallBudget: args.toolCallBudget ?? DEFAULT_TOOL_CALL_BUDGET,
       referent: null,
+      failedSignatures: new Set(),
     };
     goalRun.current = run;
     setSession(started);
@@ -428,6 +502,27 @@ export function useVoiceCuaController(args: {
     const runningAt = timestamp();
     const approvalState: "auto" | "approved" | "rejected" = approval ? "approved" : "auto";
 
+    // Loop-dedup guard (KD2 recovery floor): the resolver sometimes re-issues a
+    // call that already failed this goal (e.g. launch_app on an app that doesn't
+    // exist). Refuse to dispatch a (tool,args) we've already seen fail — stop
+    // with a clear blocked reason instead of looping the dead action to the
+    // budget. Only verbatim-failed signatures are blocked, so a genuine
+    // alternative the resolver tries still runs.
+    const repeated = readyIntent.action_plan.action_plan.find((step) =>
+      run.failedSignatures.has(callSignature(step)),
+    );
+    if (repeated) {
+      const result: CuaActionResult = {
+        status: "blocked",
+        reason: `Stopped: the resolver kept retrying a call that already failed (${toolNameForStep(repeated)}).`,
+      };
+      setSession(sessions.current.run(run.sessionId, runningAt));
+      recordToolCalls(run, readyIntent, observation, approvalState, result, runningAt);
+      setRunResult({ status: "blocked", result });
+      finishGoal(run, "blocked", runningAt);
+      return;
+    }
+
     // Per-call gate (U2): ask gateToolCall for EVERY step before dispatch,
     // deriving the gate from the real tool + target, never the model's claim. A
     // commit step with no matching approval blocks the whole tick here — the
@@ -449,7 +544,9 @@ export function useVoiceCuaController(args: {
     // is no longer bound to the typed 6-kind executor, so the full 36-tool
     // surface (scroll/hotkey/drag/right_click/…) is reachable. Stop at the first
     // failure and feed it forward for recovery.
-    const actionResult = await dispatchPlan(readyIntent.action_plan.action_plan);
+    const { result: actionResult, failedSignature } = await dispatchPlan(
+      readyIntent.action_plan.action_plan,
+    );
     const status: PlanRunResult["status"] =
       actionResult.status === "succeeded" ? "succeeded" : actionResult.status;
     const result: PlanRunResult = { status, result: actionResult };
@@ -460,6 +557,11 @@ export function useVoiceCuaController(args: {
     const ranRun: GoalRunState = {
       ...run,
       toolCalls: run.toolCalls + readyIntent.action_plan.action_plan.length,
+      // Remember a failed (tool,args) so the dedup guard above won't re-dispatch
+      // it next turn — the loop's floor against a runaway repeat.
+      failedSignatures: failedSignature
+        ? new Set([...run.failedSignatures, failedSignature])
+        : run.failedSignatures,
     };
     goalRun.current = ranRun;
 
@@ -479,15 +581,18 @@ export function useVoiceCuaController(args: {
   // driver result to a CuaActionResult. Stops at the first non-success so a
   // failed step is surfaced for recovery; the last step's result represents the
   // tick. The fallback summary names the tool that ran.
-  async function dispatchPlan(steps: readonly ActionStep[]): Promise<CuaActionResult> {
+  async function dispatchPlan(
+    steps: readonly ActionStep[],
+  ): Promise<{ result: CuaActionResult; failedSignature: string | null }> {
     let last: CuaActionResult = { status: "succeeded", summary: "No action" };
     for (const step of steps) {
       const { tool, args: callArgs } = driverCallForStep(step);
       const callResult = await args.driver.call(tool, callArgs);
       last = cuaResultToActionResult(callResult, `Called ${tool}`);
-      if (last.status !== "succeeded") return last;
+      if (last.status !== "succeeded")
+        return { result: last, failedSignature: callSignature(step) };
     }
-    return last;
+    return { result: last, failedSignature: null };
   }
 
   async function approve() {

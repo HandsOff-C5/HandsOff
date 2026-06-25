@@ -158,7 +158,19 @@ function bindWord(word: TranscriptWord, input: TemporalBindInput): TemporalBindi
   // Tier 1+2: hand lock / hand cursor.
   const hand = pickHandSample(input.handTrace, word.startMs, word.endMs, toleranceMs);
   if (hand && hand.candidate) {
-    const surface = surfaceForTargetId(hand.candidate.targetId, input.windows);
+    // Prefer the candidate's exact resolved surface (when the gesture lane already
+    // resolved a window id). When that targetId doesn't match a pointable window
+    // — e.g. the lane resolved a DISPLAY id while the windows are real app windows
+    // — fall back to the frontmost window under the hand point, the same
+    // point→window resolution the head tier uses. This keeps the precise hand
+    // (the primary modality) bound to a real window instead of dropping to a
+    // whole display.
+    const surface =
+      surfaceForTargetId(hand.candidate.targetId, input.windows) ??
+      rankAttentionCandidates({ x: hand.x, y: hand.y }, input.windows, {
+        ...(input.headRadius !== undefined ? { radius: input.headRadius } : {}),
+      })[0]?.surface ??
+      null;
     if (surface) {
       return {
         ...base,

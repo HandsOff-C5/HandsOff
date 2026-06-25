@@ -163,10 +163,39 @@ describe("bindTemporalDeixis — unbound, not mis-bound", () => {
     expect(bindings[1]?.evidence).toBeNull();
   });
 
-  it("leaves a word unbound when the hand candidate's targetId is unknown", () => {
+  it("binds to the window UNDER the hand point when the targetId doesn't match a window", () => {
     const words = [word("this", 1000, 1300)];
-    // Candidate points at a surface not in `windows` → cannot resolve a snapshot.
-    const handTrace = [handAt(1100, "win-ghost")];
+    // Bug 5: the gesture lane resolved a DISPLAY id ("display-1") that isn't a
+    // pointable window, but the hand point sits inside Slack → bind to that real
+    // window via the point→window fallback instead of dropping the hand signal.
+    const handTrace: HandTraceSample[] = [
+      {
+        x: 1200,
+        y: 200,
+        candidate: { targetId: "display-1", confidence: 0.85, calibrationQuality: "good" },
+        phase: "locked",
+        tsMs: 1100,
+      },
+    ];
+    const bindings = bindTemporalDeixis({ words, headTrace: [], handTrace, windows });
+    expect(bindings[0]?.evidence?.surface?.id).toBe("win-slack");
+    // Confidence is the hand's own (the primary modality), not a head-rank score.
+    expect(bindings[0]?.evidence?.confidence).toBe(0.85);
+  });
+
+  it("leaves a word unbound when the targetId is unknown AND the point is outside every window", () => {
+    const words = [word("this", 1000, 1300)];
+    // Unknown targetId and the point is far from any window (beyond the ranker's
+    // neighborhood) → no window to fall back to → unbound, not mis-bound.
+    const handTrace: HandTraceSample[] = [
+      {
+        x: 5000,
+        y: 5000,
+        candidate: { targetId: "display-1", confidence: 0.85, calibrationQuality: "good" },
+        phase: "locked",
+        tsMs: 1100,
+      },
+    ];
     const bindings = bindTemporalDeixis({ words, headTrace: [], handTrace, windows });
     expect(bindings[0]?.evidence).toBeNull();
   });
@@ -222,5 +251,51 @@ describe("bindTemporalDeixis — modality precedence", () => {
     const headTrace = [headAt(1100, 1200)]; // inside Slack
     const bindings = bindTemporalDeixis({ words, headTrace, handTrace, windows });
     expect(bindings[0]?.evidence?.surface?.id).toBe("win-slack");
+  });
+});
+
+describe("bindTemporalDeixis — point→window picks the frontmost overlapping window", () => {
+  const back: SurfaceSnapshot = {
+    id: "win-back",
+    title: "Back",
+    app: "Back",
+    availability: "available",
+    accessStatus: "accessible",
+  };
+  const front: SurfaceSnapshot = {
+    id: "win-front",
+    title: "Front",
+    app: "Front",
+    availability: "available",
+    accessStatus: "accessible",
+  };
+  // Two windows over the SAME region; `front` is frontmost (higher zIndex).
+  const overlapping: readonly AttentionWindow[] = [
+    { surface: back, bounds: { x: 0, y: 0, width: 500, height: 500 }, zIndex: 1 },
+    { surface: front, bounds: { x: 0, y: 0, width: 500, height: 500 }, zIndex: 9 },
+  ];
+
+  it("binds the hand point to the frontmost window when two windows overlap it (Bug 5/3 z-order)", () => {
+    const words = [word("here", 1000, 1300)];
+    // targetId doesn't match → resolves by point; both windows contain (250,250),
+    // so the frontmost (front) must win.
+    const handTrace: HandTraceSample[] = [
+      {
+        x: 250,
+        y: 250,
+        candidate: { targetId: "display-1", confidence: 0.85, calibrationQuality: "good" },
+        phase: "locked",
+        tsMs: 1100,
+      },
+    ];
+    const bindings = bindTemporalDeixis({ words, headTrace: [], handTrace, windows: overlapping });
+    expect(bindings[0]?.evidence?.surface?.id).toBe("win-front");
+  });
+
+  it("binds the head point to the frontmost overlapping window too", () => {
+    const words = [word("here", 1000, 1300)];
+    const headTrace = [headAt(1100, 250)]; // x=250,y=200 inside both windows
+    const bindings = bindTemporalDeixis({ words, headTrace, handTrace: [], windows: overlapping });
+    expect(bindings[0]?.evidence?.surface?.id).toBe("win-front");
   });
 });
