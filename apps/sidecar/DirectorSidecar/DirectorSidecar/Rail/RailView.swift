@@ -57,40 +57,35 @@ struct RailView: View {
 
 /// Shown only while listening — the minimal echo of the wide Listening HUD's "LISTENING" treatment.
 private struct LivePip: View {
-    @Environment(\.theme) private var theme
     var body: some View {
-        VStack(spacing: theme.stackGap) {
-            Waveform()
-            Text("LIVE")
-                .font(.system(size: 8, weight: .bold))
-                .tracking(0.6)
-                .foregroundStyle(theme.accentOnSurface)
-        }
-        .accessibilityElement()
-        .accessibilityLabel("Listening")
+        Waveform()
+            .accessibilityElement()
+            .accessibilityLabel("Listening")
     }
 }
 
-/// Three gold bars pulsing like an audio equalizer. No native waveform exists → custom (minimal).
+/// Four gold bars pulsing like an audio equalizer. No native waveform exists → custom (minimal).
 private struct Waveform: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var animating = false
 
+    private static let barCount = 4
+
     var body: some View {
         HStack(alignment: .center, spacing: 2.5) {
-            ForEach(0..<3, id: \.self) { i in
+            ForEach(0..<Self.barCount, id: \.self) { i in
                 Capsule()
                     .fill(theme.accent)
                     .frame(width: 3, height: animating && !reduceMotion ? 18 : 8)
                     .animation(
                         reduceMotion ? nil
-                        : .easeInOut(duration: 0.45).repeatForever(autoreverses: true).delay(Double(i) * 0.15),
+                        : .easeInOut(duration: 0.45).repeatForever(autoreverses: true).delay(Double(i) * 0.13),
                         value: animating
                     )
             }
         }
-        .frame(width: 13, height: 18)
+        .frame(width: 20, height: 18)
         .onAppear { animating = true }
         .accessibilityHidden(true)
     }
