@@ -58,6 +58,7 @@ struct ResolvedIntentLite: Decodable, Sendable, Equatable {
         case blocked
     }
 
+    let id: String?       // intent id — used as the ApprovalDecision.actionId on greenlight/reject
     let status: Status
     let intentType: String?
     let riskLevel: RiskLevel?
@@ -66,12 +67,13 @@ struct ResolvedIntentLite: Decodable, Sendable, Equatable {
     let reason: String?   // clarification_required / blocked
 
     private enum Key: String, CodingKey {
-        case status, intent_type, risk_level, requires_approval, reason, action_plan
+        case id, status, intent_type, risk_level, requires_approval, reason, action_plan
     }
     private struct PlanLite: Decodable { let summary: String? }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id)
         status = try c.decode(Status.self, forKey: .status)
         intentType = try c.decodeIfPresent(String.self, forKey: .intent_type)
         riskLevel = try c.decodeIfPresent(RiskLevel.self, forKey: .risk_level)
@@ -81,8 +83,9 @@ struct ResolvedIntentLite: Decodable, Sendable, Equatable {
     }
 
     /// Direct construction (mocks / tests / the HUD reducer).
-    init(status: Status, intentType: String?, riskLevel: RiskLevel?, requiresApproval: Bool,
-         summary: String?, reason: String?) {
+    init(id: String? = nil, status: Status, intentType: String?, riskLevel: RiskLevel?,
+         requiresApproval: Bool, summary: String?, reason: String?) {
+        self.id = id
         self.status = status
         self.intentType = intentType
         self.riskLevel = riskLevel

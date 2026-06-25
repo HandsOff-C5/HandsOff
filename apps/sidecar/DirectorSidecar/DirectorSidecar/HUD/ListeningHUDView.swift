@@ -38,6 +38,12 @@ struct ListeningHUDView: View {
                 Label("Task complete", systemImage: "checkmark.circle.fill")
                     .font(theme.body).foregroundStyle(theme.success)
             }
+
+            // Optional footer — shown ONLY for a ready destructive intent (revised Greenlight
+            // policy). Everything else auto-runs on fn-end commit with no footer.
+            if model.showFooter {
+                FooterRow(onDismiss: { model.reject() }, onGreenlight: { model.greenlight() })
+            }
         }
         .padding(20)
         .frame(width: 300, alignment: .leading)
@@ -179,6 +185,28 @@ private struct ReferentChipRow: View {
             ForEach(surfaces) { surface in
                 ReferentChip(title: surface.title, app: surface.app, selected: surface.id == selectedId)
             }
+        }
+    }
+}
+
+/// Destructive-only approval footer: Dismiss (reject) + Greenlight (approve). Keyboard
+/// equivalents ⌘⌫ / ⌘↩ are specified for the bundled app (the panel is non-key in dev).
+private struct FooterRow: View {
+    let onDismiss: () -> Void
+    let onGreenlight: () -> Void
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Spacer()
+            Button("Dismiss", action: onDismiss)
+                .buttonStyle(DirectorButtonStyle(kind: .secondary))
+                .accessibilityHint("Rejects and dismisses")
+            Button(action: onGreenlight) {
+                Label("Greenlight", systemImage: "checkmark.circle.fill")
+            }
+            .buttonStyle(DirectorButtonStyle(kind: .primary))
+            .accessibilityHint("Approves the proposed plan")
         }
     }
 }

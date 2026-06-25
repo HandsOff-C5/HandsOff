@@ -16,6 +16,12 @@ enum DevMockFleet {
         ProcessInfo.processInfo.environment["DIRECTOR_MOCK_FLEET"] == "1"
     }
 
+    /// When set, the HUD loop resolves a DESTRUCTIVE intent so the optional Greenlight footer
+    /// renders and stays (awaitingGreenlight) — for eyeballing G2b.
+    static var isDestructive: Bool {
+        ProcessInfo.processInfo.environment["DIRECTOR_MOCK_DESTRUCTIVE"] == "1"
+    }
+
     static let allCapsGranted = ReadinessPayload(capabilities: [
         CapabilityProbe(id: "camera", kind: "permission", state: "granted"),
         CapabilityProbe(id: "microphone", kind: "permission", state: "granted"),
@@ -66,7 +72,12 @@ enum DevMockFleet {
             selected: SelectedReferent(id: "win-1", source: "point", confidence: 0.9)
         )))
         try? await Task.sleep(for: .seconds(1))
-        dispatch(.intent(ResolvedIntentLite(status: .ready, intentType: "summarize", riskLevel: .readOnly, requiresApproval: false, summary: "Summarize GitHub issue #42", reason: nil)))
+        if isDestructive {
+            // Destructive → optional Greenlight footer renders + stays (awaitingGreenlight).
+            dispatch(.intent(ResolvedIntentLite(id: "intent-9", status: .ready, intentType: "delete", riskLevel: .destructive, requiresApproval: true, summary: "Delete everything in ~/Documents", reason: nil)))
+            return
+        }
+        dispatch(.intent(ResolvedIntentLite(id: "intent-1", status: .ready, intentType: "summarize", riskLevel: .readOnly, requiresApproval: false, summary: "Summarize GitHub issue 42", reason: nil)))
         try? await Task.sleep(for: .seconds(2))
         dispatch(.runResult(RunResultPayload(status: .succeeded, sessionId: "session-2")))
     }

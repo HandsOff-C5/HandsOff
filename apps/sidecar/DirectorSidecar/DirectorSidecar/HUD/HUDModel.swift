@@ -88,8 +88,48 @@ final class HUDModel {
 
     /// StopControl = cancel/abort: stop the mic, do NOT execute, hide the HUD.
     func cancel() {
-        if let connection { Task { await connection.send(.stopListening) } }
+        send(.stopListening)
         reset()
+    }
+
+    // MARK: Commit / Greenlight (G2b)
+
+    /// Whether a non-destructive ready intent can commit-and-execute directly (fn-end).
+    nonisolated static func canCommit(_ intent: ResolvedIntentLite?) -> Bool {
+        intent?.status == .ready && intent?.riskLevel != .destructive
+    }
+
+    /// fn-end COMMIT: execute the resolved intent. Non-destructive only — a destructive intent
+    /// must go through `greenlight()`. Sends `commit`; engine runs the plan; runResult flips us
+    /// to .complete. (fn-end detection is engine-owned — confirm the hotkey wiring.)
+    func commit() {
+        guard Self.canCommit(intent) else { return }
+        send(.commit)
+        phase = .executing
+    }
+
+    /// Optional destructive approval: send greenlight, then execute.
+    func greenlight(now: Date = Date()) {
+        guard intent?.status == .ready, isDestructive, let actionId = intent?.id else { return }
+        send(.greenlight(actionId: actionId, decidedAt: Self.iso(now)))
+        phase = .executing
+    }
+
+    /// Reject the (destructive) plan and dismiss without executing.
+    func reject(now: Date = Date()) {
+        if let actionId = intent?.id {
+            send(.reject(actionId: actionId, decidedAt: Self.iso(now)))
+        }
+        reset()
+    }
+
+    private func send(_ command: Command) {
+        guard let connection else { return }
+        Task { await connection.send(command) }
+    }
+
+    private nonisolated static func iso(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
     }
 
     // MARK: Frame reducer
