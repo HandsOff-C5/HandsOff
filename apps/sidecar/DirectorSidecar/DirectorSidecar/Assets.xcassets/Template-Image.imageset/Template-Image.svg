@@ -1,0 +1,6 @@
+<svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+  <!-- Placeholder Director menu-bar glyph (a director-cursor pointer). Template-rendered:
+       fill must be solid black on transparent so macOS tints it for light/dark menu bars.
+       Replace with the production brand mark (design drop-in, T-G1.5). -->
+  <path d="M6 3.5 L18 11 L6 18.5 Z" fill="#000000"/>
+</svg>
