@@ -24,7 +24,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		FD9A1D212FEC1F4A007B2925 /* DirectorSidecar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DirectorSidecar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FD9A1D212FEC1F4A007B2925 /* Director.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Director.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD9A1D2E2FEC1F4C007B2925 /* DirectorSidecarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DirectorSidecarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD9A1D382FEC1F4C007B2925 /* DirectorSidecarUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DirectorSidecarUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -85,7 +85,7 @@
 		FD9A1D222FEC1F4A007B2925 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				FD9A1D212FEC1F4A007B2925 /* DirectorSidecar.app */,
+				FD9A1D212FEC1F4A007B2925 /* Director.app */,
 				FD9A1D2E2FEC1F4C007B2925 /* DirectorSidecarTests.xctest */,
 				FD9A1D382FEC1F4C007B2925 /* DirectorSidecarUITests.xctest */,
 			);
@@ -114,7 +114,7 @@
 			packageProductDependencies = (
 			);
 			productName = DirectorSidecar;
-			productReference = FD9A1D212FEC1F4A007B2925 /* DirectorSidecar.app */;
+			productReference = FD9A1D212FEC1F4A007B2925 /* Director.app */;
 			productType = "com.apple.product-type.application";
 		};
 		FD9A1D2D2FEC1F4C007B2925 /* DirectorSidecarTests */ = {
@@ -420,8 +420,10 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				INFOPLIST_KEY_CFBundleDisplayName = Director;
+				INFOPLIST_KEY_CFBundleName = Director;
 				PRODUCT_BUNDLE_IDENTIFIER = com.handsoff.DirectorSidecar;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Director;
+				PRODUCT_MODULE_NAME = DirectorSidecar;
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -473,8 +475,10 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				INFOPLIST_KEY_CFBundleDisplayName = Director;
+				INFOPLIST_KEY_CFBundleName = Director;
 				PRODUCT_BUNDLE_IDENTIFIER = com.handsoff.DirectorSidecar;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Director;
+				PRODUCT_MODULE_NAME = DirectorSidecar;
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -509,7 +513,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DirectorSidecar.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/DirectorSidecar";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Director.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Director";
 				XROS_DEPLOYMENT_TARGET = 26.2;
 			};
 			name = Debug;
@@ -534,7 +538,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DirectorSidecar.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/DirectorSidecar";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Director.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Director";
 				XROS_DEPLOYMENT_TARGET = 26.2;
 			};
 			name = Release;
