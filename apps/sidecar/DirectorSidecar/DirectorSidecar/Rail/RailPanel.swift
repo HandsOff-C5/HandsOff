@@ -112,8 +112,5 @@ final class RailController {
             : visible.minX + inset
         let y = visible.midY - height / 2
         panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
-        #if DEBUG
-        print("[RAIL] anchor — width=\(width) rightEdge=\(x + width) (should equal screenMaxX-inset=\(visible.maxX - inset)); fires on show/screen/content only, NOT hover")
-        #endif
     }
 }
