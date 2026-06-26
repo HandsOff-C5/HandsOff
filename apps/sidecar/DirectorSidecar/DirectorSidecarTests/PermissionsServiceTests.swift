@@ -8,6 +8,7 @@
 //  so the two mappers must stay distinct. Also pins the System Settings deep-link anchors.
 //
 
+import Foundation
 import Testing
 @testable import DirectorSidecar
 
