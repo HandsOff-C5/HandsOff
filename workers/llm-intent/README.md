@@ -1,6 +1,6 @@
 # LLM intent Worker (`@handsoff/llm-intent-worker`)
 
-Resolves HandsOff voice/CUA intent through OpenAI while keeping provider
+Resolves HandsOff voice/CUA intent through server-owned LLM providers while keeping provider
 credentials out of the desktop webview and app bundle.
 
 ## Route
@@ -9,15 +9,20 @@ credentials out of the desktop webview and app bundle.
 
 - Requires `Authorization: Bearer <HANDSOFF_APP_TOKEN>`.
 - Body: `{ "model": "gpt-4o-mini", "messages": [...] }`.
-- On success returns `200 { "choices": [...] }` from the structured OpenAI
-  completion.
+- On success returns `200 { "choices": [...] }` from the structured completion.
+- Provider order is OpenAI first, then Gemini. Auth/billing/quota failures retry the next configured provider.
 
 ## Secrets
 
 | Secret | Purpose |
 | --- | --- |
-| `OPENAI_API_KEY` | OpenAI key used server-side by the Worker. |
+| `OPENAI_API_KEY` | Optional OpenAI key used server-side by the Worker. |
+| `GEMINI_API_KEY` | Optional Gemini key used server-side by the Worker. |
+| `GOOGLE_API_KEY` | Optional alias for `GEMINI_API_KEY`. |
 | `HANDSOFF_APP_TOKEN` | Shared app-cohort credential the desktop app presents as a bearer token. |
+
+At least one provider key (`OPENAI_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY`) must be set.
+Optional model overrides: `OPENAI_MODEL`, `GEMINI_MODEL`.
 
 ## Wire the desktop app
 
