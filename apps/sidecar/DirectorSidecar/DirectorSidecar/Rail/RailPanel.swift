@@ -26,9 +26,11 @@ final class RailController {
     private let inset: CGFloat = 12
     /// Collapsed = an icon column; expanded (hover) = wide enough for the row labels. Fixed widths
     /// (not fittingSize) so the panel footprint is small when idle and never blocks clicks behind it.
-    private let collapsedWidth: CGFloat = 56
-    private let expandedWidth: CGFloat = 200
+    private let collapsedWidth: CGFloat = 60
+    private let expandedWidth: CGFloat = 180
     private var panel: RailPanel?
+    /// Pending shrink-to-collapsed, deferred so the labels animate out before the panel narrows.
+    private var collapseWork: DispatchWorkItem?
 
     init(model: RailModel, edge: Edge = .trailing, onOpenHome: @escaping () -> Void) {
         self.model = model
@@ -65,20 +67,42 @@ final class RailController {
     }
 
     @objc private func screensChanged() {
-        if panel?.isVisible == true { anchor(animated: false) }
+        if panel?.isVisible == true { anchor() }
     }
 
     // MARK: panel
 
     private func show() {
+        if let panel, panel.isVisible {
+            updateSize()                  // already shown — just re-size for hover/content
+            return
+        }
         let panel = panel ?? makePanel()
         self.panel = panel
-        // Animate re-layouts (hover widen/narrow, mark added) so labels glide; first show is instant.
-        anchor(animated: panel.isVisible)
-        panel.orderFrontRegardless() // never makeKey/activate — must not steal focus
+        anchor()                          // first appearance: position + size instantly
+        panel.orderFrontRegardless()      // never makeKey/activate — must not steal focus
     }
 
-    private func hide() { panel?.orderOut(nil) }
+    /// Expand instantly (give the labels room before they animate in); defer the shrink so the
+    /// labels animate out first. No animated NSWindow frame → the SwiftUI hover stays jitter-free.
+    private func updateSize() {
+        collapseWork?.cancel()
+        if model.isHovering {
+            anchor()
+        } else {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, !self.model.isHovering else { return }
+                self.anchor()
+            }
+            collapseWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
+        }
+    }
+
+    private func hide() {
+        collapseWork?.cancel()
+        panel?.orderOut(nil)
+    }
 
     private func makePanel() -> RailPanel {
         let panel = RailPanel(
@@ -100,27 +124,18 @@ final class RailController {
         return panel
     }
 
-    private func anchor(animated: Bool) {
+    private func anchor() {
         guard let panel, let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
         // Width is hover-driven (constant); height follows the content (listening + mark count),
-        // which is independent of hover, so fittingSize.height stays stable as we widen.
+        // which is independent of hover, so fittingSize.height stays stable as we widen. The frame
+        // is set instantly (the visible glide is the SwiftUI capsule inside the larger panel).
         let width = model.isHovering ? expandedWidth : collapsedWidth
         let height = panel.contentView?.fittingSize.height ?? 240
         let x: CGFloat = edge == .trailing
             ? visible.maxX - width - inset
             : visible.minX + inset
         let y = visible.midY - height / 2
-        let frame = NSRect(x: x, y: y, width: width, height: height)
-        if animated {
-            // Glide the panel in step with the capsule's hover animation so labels never clip.
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.2
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                panel.animator().setFrame(frame, display: true)
-            }
-        } else {
-            panel.setFrame(frame, display: true)
-        }
+        panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
     }
 }

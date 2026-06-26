@@ -19,6 +19,9 @@ struct RailView: View {
 
     private var expanded: Bool { model.isHovering }
 
+    /// Continuous rounded-rect (not a full capsule) so the expanded panel reads as a clean card.
+    private static let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+
     var body: some View {
         VStack(alignment: .trailing, spacing: theme.elementGap) {
             if model.isListening {
@@ -42,15 +45,15 @@ struct RailView: View {
             }
         }
         .padding(.vertical, theme.elementGap)
-        .padding(.horizontal, theme.stackGap)
+        .padding(.horizontal, theme.elementGap)
         .background {
             if reduceTransparency {
-                Capsule().fill(theme.opaqueSurface)
+                Self.shape.fill(theme.opaqueSurface)
             } else {
-                VisualEffectBlur(.hudWindow, blending: .behindWindow).clipShape(Capsule())
+                VisualEffectBlur(.hudWindow, blending: .behindWindow).clipShape(Self.shape)
             }
         }
-        .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
+        .overlay(Self.shape.strokeBorder(theme.border, lineWidth: 1))
         .fixedSize()
         .frame(maxWidth: .infinity, alignment: .trailing) // hug the right edge within the resized panel
         .animation(theme.quickMotion, value: model.isHovering)
@@ -74,13 +77,13 @@ private struct RailRow<Icon: View>: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             if expanded {
                 Text(label)
                     .font(theme.body)
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
-                    .fixedSize()
+                    .frame(width: 100, alignment: .leading) // fixed column → labels align, content fits snug
                     .transition(.opacity)
             }
             icon.frame(width: 36, alignment: .center)
