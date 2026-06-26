@@ -49,4 +49,39 @@ enum ReadinessService {
             screenRecording: PermissionsService.screenRecordingState()
         )
     }
+
+    /// Overlay the cua-driver DAEMON's own TCC report onto a base probe — the `accessibility`,
+    /// `screen-recording`, and `cua` tiles. This matters because the daemon (`com.trycua.driver`,
+    /// a separate `/Applications/CuaDriver.app` reparented to launchd) is its OWN responsible process:
+    /// it — not Director — performs the AX actions + screen reads a task needs, so ITS grant is the one
+    /// that gates a CUA task. Reading Director's own `AXIsProcessTrusted`/`CGPreflight…` (the base
+    /// probe) would green-light a task the daemon can't actually run, and the user only discovers the
+    /// missing grant mid-task (with a restart-required prompt). Camera/microphone/speech stay the base
+    /// probe's (Director holds those, for STT + head tracking).
+    nonisolated static func merging(
+        _ base: ReadinessPayload, cuaReport: CuaPermissionReport
+    ) -> ReadinessPayload {
+        let accessibility = (PermissionState(rawValue: cuaReport.accessibility.rawValue) ?? .unknown).rawValue
+        let screenRecording = (PermissionState(rawValue: cuaReport.screenRecording.rawValue) ?? .unknown).rawValue
+        let cua = cuaDaemonState(cuaReport.driver)
+        let updated = base.capabilities.map { capability -> CapabilityProbe in
+            switch capability.id {
+            case "accessibility": return CapabilityProbe(id: capability.id, kind: capability.kind, state: accessibility)
+            case "screen-recording": return CapabilityProbe(id: capability.id, kind: capability.kind, state: screenRecording)
+            case "cua": return CapabilityProbe(id: capability.id, kind: capability.kind, state: cua)
+            default: return capability
+            }
+        }
+        return ReadinessPayload(capabilities: updated)
+    }
+
+    /// Map the daemon liveness to the `cua` capability `state` string the menu/dashboard read
+    /// (`running` is the healthy daemon state, matching `CapabilityProbe(kind: "daemon")`).
+    nonisolated static func cuaDaemonState(_ status: CuaDriverStatus) -> String {
+        switch status {
+        case .running: return "running"
+        case .unavailable: return "stopped"
+        case .unknown: return "unknown"
+        }
+    }
 }

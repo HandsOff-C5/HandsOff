@@ -42,12 +42,25 @@ final class ToolCatalog {
     private let driver: any CuaLoopDriver
     private var cached: [DriverToolDefinition]?
 
+    /// Tools the driver self-describes but which always FAIL on this platform — never offer them to
+    /// the resolver, or the loop wastes ticks dispatching a guaranteed-error call and never concludes
+    /// the goal. `bring_to_front` is Windows-only: on macOS the driver returns a hard error
+    /// ("bring_to_front is Windows-only … input tools do not need explicit foreground activation"),
+    /// which the resolver kept choosing after a successful `launch_app`, looping the "open X" goal to
+    /// dedup/budget instead of letting it finish satisfied. The macOS no-foreground contract means
+    /// activation is never needed, so dropping the tool is behavior-preserving.
+    static let unsupportedTools: Set<String> = ["bring_to_front"]
+
     init(driver: any CuaLoopDriver) { self.driver = driver }
 
     func load() async -> CuaResult<[DriverToolDefinition]> {
         if let cached { return .succeeded(cached) }
         let result = await driver.listTools()
-        if case let .succeeded(value) = result { cached = value }
+        if case let .succeeded(value) = result {
+            let supported = value.filter { !Self.unsupportedTools.contains($0.name) }
+            cached = supported
+            return .succeeded(supported)
+        }
         return result
     }
 

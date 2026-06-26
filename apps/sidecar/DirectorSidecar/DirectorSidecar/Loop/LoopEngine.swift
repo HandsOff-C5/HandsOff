@@ -29,6 +29,11 @@ import OSLog
 final class LoopEngine: CommandSink {
     private let loop: VoiceCuaLoop
     private let readinessProbe: @Sendable () -> ReadinessPayload
+    /// Optional async probe of the cua-driver DAEMON's own TCC report. When present, `refreshReadiness`
+    /// emits a SECOND, merged readiness frame once it returns — so the accessibility/screen-recording/
+    /// cua tiles reflect the daemon (the process a task actually runs through), not Director's own TCC.
+    /// nil in tests (they assert the single synchronous base frame).
+    private let cuaPermissionProbe: (@Sendable () async -> CuaPermissionReport?)?
     private let agentLabel: String
 
     /// Frame fan-out to the view models (set by the app). Called on the main actor.
@@ -52,11 +57,13 @@ final class LoopEngine: CommandSink {
     init(
         loop: VoiceCuaLoop,
         agentLabel: String = "Director",
-        readinessProbe: @escaping @Sendable () -> ReadinessPayload = { ReadinessService.probe() }
+        readinessProbe: @escaping @Sendable () -> ReadinessPayload = { ReadinessService.probe() },
+        cuaPermissionProbe: (@Sendable () async -> CuaPermissionReport?)? = nil
     ) {
         self.loop = loop
         self.agentLabel = agentLabel
         self.readinessProbe = readinessProbe
+        self.cuaPermissionProbe = cuaPermissionProbe
     }
 
     // MARK: Lifecycle
@@ -78,7 +85,18 @@ final class LoopEngine: CommandSink {
     /// permission the user just changed without a relaunch.
     func refreshReadiness() {
         DirectorDiagnostics.loop.info("readiness probe requested")
-        onFrame?(.state(topic: "readiness", readiness: readinessProbe()))
+        let base = readinessProbe()
+        onFrame?(.state(topic: "readiness", readiness: base))
+        // Then overlay the cua-driver daemon's own grants (accessibility/screen-recording/cua) — the
+        // process a task runs through — so a missing CUA grant surfaces UP FRONT as a readiness blocker
+        // instead of a restart-required prompt mid-task. A second frame; latest-wins for the UI.
+        guard let cuaPermissionProbe else { return }
+        Task { @MainActor in
+            guard let report = await cuaPermissionProbe() else { return }
+            let merged = ReadinessService.merging(base, cuaReport: report)
+            DirectorDiagnostics.loop.info("cua readiness accessibility=\(report.accessibility.rawValue, privacy: .public) screen_recording=\(report.screenRecording.rawValue, privacy: .public) driver=\(report.driver.rawValue, privacy: .public)")
+            onFrame?(.state(topic: "readiness", readiness: merged))
+        }
     }
 
     // MARK: Speech intake
