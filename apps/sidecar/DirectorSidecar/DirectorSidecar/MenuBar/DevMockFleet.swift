@@ -75,6 +75,24 @@ enum DevMockFleet {
         )
     }
 
+    /// The Home feed: recently executed intentions, newest first — what was said, when, and the
+    /// apps/services each touched (reference chips). Stands in for the real transcript→intent history.
+    static func intentionFeed(now: Date) -> [IntentionEntry] {
+        func at(_ minutesAgo: Double) -> Date { now.addingTimeInterval(-minutesAgo * 60) }
+        return [
+            IntentionEntry(id: "i1", at: at(2),  transcript: "Summarize this GitHub issue and post the TL;DR in engineering.",
+                           references: ["GitHub", "Slack"], agent: "Claude Code"),
+            IntentionEntry(id: "i2", at: at(9),  transcript: "Copy the auth refactor notes from Cursor into the design doc.",
+                           references: ["Cursor", "Notion"], agent: "Claude Code"),
+            IntentionEntry(id: "i3", at: at(24), transcript: "Fix the flaky CUA test and open a pull request.",
+                           references: ["Cursor", "GitHub"], agent: "Cursor"),
+            IntentionEntry(id: "i4", at: at(51), transcript: "Read my latest email from Naama and draft a reply.",
+                           references: ["Mail"], agent: nil),
+            IntentionEntry(id: "i5", at: at(88), transcript: "Take the architecture diagram from Figma and drop it into the deck.",
+                           references: ["Figma", "Keynote"], agent: "Claude Code"),
+        ]
+    }
+
     /// A distinct plan per agent, so selecting an agent (menu "View Activity" or a dashboard card)
     /// actually changes the inspector — there's no engine here to republish the selected intent.
     static func intent(for sessionId: String) -> ResolvedIntentLite {

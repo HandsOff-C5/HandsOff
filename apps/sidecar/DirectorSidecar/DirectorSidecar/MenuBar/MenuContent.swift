@@ -16,7 +16,7 @@ struct MenuContent: View {
     let store: BridgeStore
 
     var body: some View {
-        Button("Open Dashboard") { store.send(.openHome) }
+        Button("Open Director") { store.send(.openHome) }
 
         Divider()
 

@@ -182,13 +182,14 @@ struct DirectorSidecarApp: App {
         if DevMockFleet.isEnabled {
             // Populate the dashboard + inspector at launch; overlays stay DOWN until you toggle
             // Listening (⌥⌘D, or the menu) — so the menu + dashboard are never obstructed.
-            Task {
+            Task { @MainActor in
                 await DevMockFleet.populate(
                     dispatch: dispatch,
                     setState: { state in store.setConnection(state); micro.setConnection(state); overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state); rail.setConnection(state) },
                     select: { id in home.select(id) },
                     now: Date()
                 )
+                home.seedIntentions(DevMockFleet.intentionFeed(now: Date()))
             }
         } else {
             Self.stream(connection, store, hud, micro, overlay, gaze, home, rail)
