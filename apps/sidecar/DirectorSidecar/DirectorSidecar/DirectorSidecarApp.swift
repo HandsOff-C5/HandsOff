@@ -91,6 +91,10 @@ struct DirectorSidecarApp: App {
     let home: HomeDashboardModel
     private let connection: BridgeConnection
     private let surfaces: SurfaceHost
+    /// Track F: the ported engine services (CUA / speech / head pointer) and the coordinator that
+    /// binds their start/stop/teardown to the app lifecycle. Held for the app's whole run.
+    private let services: DirectorServices
+    private let coordinator: ServiceCoordinator
 
     init() {
         let connection = BridgeConnection()
@@ -110,6 +114,15 @@ struct DirectorSidecarApp: App {
             overlay.apply(frame); gaze.apply(frame); home.apply(frame)
         }
 
+        // Track F: own the ported engine services and bind them to the lifecycle. Head-pointer
+        // `.point` events ride the SAME fan-out as the engine bridge (`cursorPosition` topic), so
+        // the user's head drives the Director `.user` cursor in a non-mock run.
+        let services = DirectorServices()
+        let coordinator = ServiceCoordinator(
+            services: services,
+            onHeadPointer: { pointer in dispatch(.cursor(pointers: [pointer])) }
+        )
+
         // Listening toggle (the "fn" of this build): brings the three active overlays up/down. In
         // mock mode it (re)runs the activation loop on each ON; OFF cancels it and clears them.
         var activation: Task<Void, Never>?
@@ -121,12 +134,18 @@ struct DirectorSidecarApp: App {
             #if DEBUG
             activation?.cancel()
             if DevMockFleet.isEnabled {
+                // Mock owns the cursors; the real camera/mic stay OFF so dev demos never prompt for
+                // permissions or fight the mock fleet's drawn cursors.
                 if on {
                     activation = Task { await DevMockFleet.activationLoop(dispatch: dispatch, now: Date()) }
                 } else {
                     dispatch(.cursor(pointers: [])) // mock: clear the agent cursors the loop drew
                 }
+            } else {
+                coordinator.setSensing(on) // real head pointer + mic drive the Director cursor
             }
+            #else
+            coordinator.setSensing(on) // real head pointer + mic drive the Director cursor
             #endif
         }
 
@@ -137,6 +156,8 @@ struct DirectorSidecarApp: App {
         self.overlay = overlay
         self.gaze = gaze
         self.home = home
+        self.services = services
+        self.coordinator = coordinator
 
         // The overlay/HUD/micro controllers MUST NOT be created during App.init() — building their
         // always-on-top panels + global mouse monitors before AppKit finishes wiring event routing
@@ -151,7 +172,18 @@ struct DirectorSidecarApp: App {
                                onOpenHome: { store.send(.openHome) })
                 // fn press-and-hold drives the mock activation (hold → overlays up, release → down).
                 surfaces.installFnHold { held in store.send(held ? .startListening : .stopListening) }
+                // Track F: begin consuming the head-pointer feed for the app's life (camera stays
+                // off until Listening turns sensing on). Deferred to launch alongside the surfaces.
+                coordinator.start()
             }
+        }
+
+        // Track F: release the camera/mic and finish the head stream on app quit — no leaked
+        // AVCaptureSession / AVAudioEngine outliving the process.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { coordinator.teardown() }
         }
 
         #if DEBUG
