@@ -34,8 +34,9 @@ final class HUDModel {
     private(set) var runResult: ExecutionStatus?
     private(set) var errorReason: String?
 
-    /// The shared bridge connection (set by the app) — for the StopControl abort path.
-    @ObservationIgnored var connection: BridgeConnection?
+    /// The command sink (set by the app) — for the StopControl abort path. In-process `LoopEngine`
+    /// after ADR 0005 Track D (stopListening → loop.interrupt, greenlight → loop.approve).
+    @ObservationIgnored var connection: (any CommandSink)?
 
     var isVisible: Bool { phase != .hidden }
     /// The full HUD panel shows only once there is real loop content — ambient `.listening` is

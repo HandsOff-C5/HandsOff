@@ -64,8 +64,9 @@ final class HomeDashboardModel {
     var filter: Filter = .all
     var selectedSessionId: String?
 
-    /// The shared bridge connection (set by the app) — for selectSession / greenlight / reject.
-    @ObservationIgnored var bridge: BridgeConnection?
+    /// The command sink (set by the app) — for selectSession / greenlight / reject. In-process
+    /// `LoopEngine` after ADR 0005 Track D (greenlight → loop.approve, reject → loop.reject).
+    @ObservationIgnored var bridge: (any CommandSink)?
     @ObservationIgnored private var connected = false
 
     var filteredSessions: [SessionVM] { Self.filtered(sessions, filter) }

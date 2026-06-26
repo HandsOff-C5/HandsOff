@@ -2,10 +2,11 @@
 //  DirectorSidecarApp.swift
 //  DirectorSidecar
 //
-//  App scenes + composition root. ONE shared BridgeConnection (locked decision) fans out frames
-//  to every model — the menu BridgeStore and the HUD HUDModel — over a single socket; commands
-//  route back through it. The HUD lives in a non-activating NSPanel driven by HUDPanelController.
-//  Theme is resolved per scene from the live color scheme.
+//  App scenes + composition root. ADR 0005 Track D ("bridge or no-bridge" → no-bridge): the ported
+//  `VoiceCuaLoop` runs IN-PROCESS behind a `LoopEngine`, which fans every loop-derived frame out to
+//  every model (menu BridgeStore, HUD, dashboard) and is the command sink the models send back
+//  through — no loopback socket, no bridge topic expansion. The HUD lives in a non-activating
+//  NSPanel driven by HUDPanelController. Theme is resolved per scene from the live color scheme.
 //
 
 import SwiftUI
@@ -89,7 +90,9 @@ struct DirectorSidecarApp: App {
     let overlay: OverlayModel
     let gaze: GazeBracketModel
     let home: HomeDashboardModel
-    private let connection: BridgeConnection
+    /// ADR 0005 Track D: the in-process engine (the ported `VoiceCuaLoop`) that replaces the
+    /// loopback socket as the app's engine of record. Held for the app's whole run.
+    private let engine: LoopEngine
     private let surfaces: SurfaceHost
     /// Track F: the ported engine services (CUA / speech / head pointer) and the coordinator that
     /// binds their start/stop/teardown to the app lifecycle. Held for the app's whole run.
@@ -97,30 +100,48 @@ struct DirectorSidecarApp: App {
     private let coordinator: ServiceCoordinator
 
     init() {
-        let connection = BridgeConnection()
         let store = BridgeStore()
         let hud = HUDModel()
         let micro = MicroHUDModel()
         let overlay = OverlayModel()
         let gaze = GazeBracketModel()
         let home = HomeDashboardModel()
-        store.bridge = connection
-        home.bridge = connection
-        hud.connection = connection
 
-        // One fan-out of every decoded frame to every model.
+        // One fan-out of every frame to every model.
         let dispatch: (BridgeFrame) -> Void = { frame in
             store.apply(frame); hud.apply(frame); micro.apply(frame)
             overlay.apply(frame); gaze.apply(frame); home.apply(frame)
         }
 
         // Track F: own the ported engine services and bind them to the lifecycle. Head-pointer
-        // `.point` events ride the SAME fan-out as the engine bridge (`cursorPosition` topic), so
-        // the user's head drives the Director `.user` cursor in a non-mock run.
+        // `.point` events ride the SAME fan-out the loop uses (`cursorPosition` topic), so the
+        // user's head drives the Director `.user` cursor in a non-mock run.
         let services = DirectorServices()
+
+        // ADR 0005 Track D — no bridge: run the ported supervision loop IN-PROCESS and make it the
+        // app's engine. The loop drives the SAME frames the socket used to deliver (engine.onFrame →
+        // dispatch) and the UI's commands route to the loop (the models' command sink IS the engine).
+        let loop = VoiceCuaLoop(
+            driver: services.cua,
+            resolve: IntentWorkerConfig.resolver(),
+            intake: SpeechOnlyIntake()
+        )
+        let engine = LoopEngine(loop: loop)
+        engine.onFrame = { frame in dispatch(frame) }
+        engine.onState = { state in
+            store.setConnection(state); hud.setConnection(state); micro.setConnection(state)
+            overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state)
+        }
+        store.bridge = engine
+        home.bridge = engine
+        hud.connection = engine
+
+        // The loop's transcript trigger: live STT `.final` events start a goal; partial/final also
+        // surface as HUD transcript frames. (Track F bound the mic lifecycle; this is its consumer.)
         let coordinator = ServiceCoordinator(
             services: services,
-            onHeadPointer: { pointer in dispatch(.cursor(pointers: [pointer])) }
+            onHeadPointer: { pointer in dispatch(.cursor(pointers: [pointer])) },
+            onSpeech: { event in engine.ingestSpeech(event) }
         )
 
         // Listening toggle (the "fn" of this build): brings the three active overlays up/down. In
@@ -142,14 +163,16 @@ struct DirectorSidecarApp: App {
                     dispatch(.cursor(pointers: [])) // mock: clear the agent cursors the loop drew
                 }
             } else {
+                if on { engine.refreshReadiness() } // re-probe TCC the moment mic/speech matter
                 coordinator.setSensing(on) // real head pointer + mic drive the Director cursor
             }
             #else
+            if on { engine.refreshReadiness() } // re-probe TCC the moment mic/speech matter
             coordinator.setSensing(on) // real head pointer + mic drive the Director cursor
             #endif
         }
 
-        self.connection = connection
+        self.engine = engine
         self.store = store
         self.hud = hud
         self.micro = micro
@@ -189,7 +212,9 @@ struct DirectorSidecarApp: App {
         #if DEBUG
         if DevMockFleet.isEnabled {
             // Populate the dashboard + inspector at launch; overlays stay DOWN until you toggle
-            // Listening (⌥⌘D, or the menu) — so the menu + dashboard are never obstructed.
+            // Listening (⌥⌘D, or the menu) — so the menu + dashboard are never obstructed. The
+            // engine stays idle in mock mode (the mock fleet owns the frames); commands still
+            // resolve to the engine's loop (a no-op while no goal is running).
             Task {
                 await DevMockFleet.populate(
                     dispatch: dispatch,
@@ -199,40 +224,16 @@ struct DirectorSidecarApp: App {
                 )
             }
         } else {
-            Self.stream(connection, store, hud, micro, overlay, gaze, home)
+            engine.start()
         }
         #else
-        Self.stream(connection, store, hud, micro, overlay, gaze, home)
+        engine.start()
         #endif
     }
 
     /// Toggle the listening overlays from anywhere in the app (⌥⌘D or the Director menu).
     private func toggleListening() {
         store.send(store.isListening ? .stopListening : .startListening)
-    }
-
-    /// Start the single socket and fan every frame/state out to all models (one shared connection).
-    private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel, _ micro: MicroHUDModel, _ overlay: OverlayModel, _ gaze: GazeBracketModel, _ home: HomeDashboardModel) {
-        Task {
-            await connection.start(
-                onFrame: { frame in
-                    await store.apply(frame)
-                    await hud.apply(frame)
-                    await micro.apply(frame)
-                    await overlay.apply(frame)
-                    await gaze.apply(frame)
-                    await home.apply(frame)
-                },
-                onState: { state in
-                    await store.setConnection(state)
-                    await hud.setConnection(state)
-                    await micro.setConnection(state)
-                    await overlay.setConnection(state)
-                    await gaze.setConnection(state)
-                    await home.setConnection(state)
-                }
-            )
-        }
     }
 
     var body: some Scene {
