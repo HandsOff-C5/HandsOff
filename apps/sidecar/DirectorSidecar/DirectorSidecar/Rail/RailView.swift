@@ -23,7 +23,7 @@ struct RailView: View {
     private static let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: theme.elementGap) {
+        VStack(alignment: .leading, spacing: theme.elementGap) {
             if model.isListening {
                 RailRow(label: "Listening", expanded: expanded) {
                     ListeningWaveform()
@@ -78,6 +78,7 @@ private struct RailRow<Icon: View>: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            icon.frame(width: 36, alignment: .center)
             if expanded {
                 Text(label)
                     .font(theme.body)
@@ -86,7 +87,6 @@ private struct RailRow<Icon: View>: View {
                     .frame(width: 100, alignment: .leading) // fixed column → labels align, content fits snug
                     .transition(.opacity)
             }
-            icon.frame(width: 36, alignment: .center)
         }
     }
 }
