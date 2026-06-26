@@ -25,6 +25,11 @@ final class RailModel {
     /// Defaults to `true` because the dashboard opens on launch (avoids a one-frame rail flash).
     private(set) var homeIsOpen = true
 
+    /// True while the pointer is over the rail — drives the hover-reveal of each row's text label
+    /// (and the panel widening that makes room for them).
+    private(set) var isHovering = false
+    func setHovering(_ on: Bool) { isHovering = on }
+
     @ObservationIgnored private var connected = false
 
     /// The rail appears only while Director is actively listening (fn held) and the Home Dashboard

@@ -2,9 +2,10 @@
 //  AgentCard.swift
 //  DirectorSidecar
 //
-//  G4a: one supervised agent as a card — identity chip + status pill + (running) progress track +
-//  live elapsed timer. Tonal card fill + 1px border + ambient shadow (no Material lift); selected
-//  → accent border + focus ring. Honors Reduce Transparency.
+//  G4a: one supervised agent as a card — a large DirectorMark (the same status-tinted brand mark as
+//  the rail, scaled up) beside its identity + title + status, with the listening waveform as the
+//  "working" pulse. Tonal card fill + 1px border + ambient shadow; selected → accent border. Honors
+//  Reduce Transparency. The mark + waveform are the shared Theme/DirectorMark components.
 //
 
 import SwiftUI
@@ -15,24 +16,30 @@ struct AgentCard: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                agentChip
-                Spacer()
-                StatusPill(status: session.status)
-            }
-            Text(session.title)
-                .font(theme.sectionTitle)
-                .foregroundStyle(theme.textPrimary)
-                .lineLimit(2)
-            HStack {
-                if session.isRunning {
-                    ProgressTrack()
+        HStack(alignment: .top, spacing: 14) {
+            DirectorMark(status: session.status, size: 50)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    agentChip
+                    Spacer()
+                    StatusPill(status: session.status)
                 }
-                Spacer()
-                if session.isRunning {
-                    MonoTimer(since: session.startedAt)
+                Text(session.title)
+                    .font(theme.sectionTitle)
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(2)
+                HStack(spacing: 10) {
+                    if session.isRunning {
+                        ListeningWaveform(maxHeight: 14, minHeight: 5)
+                    }
+                    Spacer()
+                    if session.isRunning {
+                        MonoTimer(since: session.startedAt)
+                    }
                 }
+                .frame(minHeight: 14)
             }
         }
         .padding(14)
@@ -50,33 +57,9 @@ struct AgentCard: View {
     }
 
     private var agentChip: some View {
-        HStack(spacing: 5) {
-            Circle().fill(theme.color(for: session.status)).frame(width: 7, height: 7)
-            Text(session.agent).font(theme.mono).foregroundStyle(theme.textSecondary)
-        }
-        .padding(.horizontal, 7).padding(.vertical, 3)
-        .background(Capsule().fill(theme.controlBg))
-    }
-}
-
-/// A 3px indeterminate accent progress track (engine-side progress is deferred; this signals "running").
-private struct ProgressTrack: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var shift = false
-
-    var body: some View {
-        GeometryReader { geo in
-            Capsule().fill(theme.accent.opacity(0.25))
-                .overlay(alignment: .leading) {
-                    Capsule().fill(theme.accent)
-                        .frame(width: geo.size.width * 0.4)
-                        .offset(x: reduceMotion ? 0 : (shift ? geo.size.width * 0.6 : 0))
-                        .animation(reduceMotion ? nil : .easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: shift)
-                }
-        }
-        .frame(width: 120, height: 3)
-        .onAppear { shift = true }
-        .accessibilityHidden(true)
+        Text(session.agent)
+            .font(theme.mono).foregroundStyle(theme.textSecondary)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Capsule().fill(theme.controlBg))
     }
 }
