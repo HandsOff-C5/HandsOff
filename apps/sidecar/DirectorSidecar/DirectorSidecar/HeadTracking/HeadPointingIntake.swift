@@ -21,6 +21,7 @@
 //
 
 import Foundation
+import OSLog
 
 /// The latest head point, shared between the head-pointer event consumer (writer — ServiceCoordinator
 /// on the main actor) and the intent intake (reader — the loop at goal start). Lock-protected so it

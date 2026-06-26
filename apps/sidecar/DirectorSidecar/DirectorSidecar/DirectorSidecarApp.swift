@@ -11,6 +11,7 @@
 
 import SwiftUI
 import AppKit
+import OSLog
 
 /// The overlay/HUD panels order-front *without* activating (by design), so nothing brings the app
 /// forward at launch and the Dashboard window never becomes key — leaving its content unclickable
