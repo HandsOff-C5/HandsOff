@@ -151,6 +151,9 @@ struct DirectorSidecarApp: App {
             #endif
         }
 
+        // Menu "Settings…" → open the dashboard on its Settings tab.
+        store.onOpenSettings = { home.tab = .settings; store.onOpenHome?() }
+
         // `store.onOpenHome` (rail ⤢ + menu "Open Home") is wired to SwiftUI's openWindow in the
         // dashboard scene (HomeOpenWiring) so it re-creates the window even after the red-X close.
         self.connection = connection
@@ -229,7 +232,7 @@ struct DirectorSidecarApp: App {
         // G4 Home Dashboard — the product window. Single-instance `Window` (not `WindowGroup`) so the
         // red-X close + "Open Home" re-open cleanly via openWindow(id:) and never duplicate.
         Window("Director", id: "home") {
-            ThemedRoot { HomeDashboardView(model: home) }
+            ThemedRoot { HomeDashboardView(model: home, store: store) }
                 .modifier(HomeOpenWiring(store: store, rail: rail))
         }
 

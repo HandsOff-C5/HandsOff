@@ -69,6 +69,10 @@ final class BridgeStore {
     /// rather than waiting on an engine round-trip that never comes in mock mode.
     @ObservationIgnored var onSelectSession: ((String) -> Void)?
 
+    /// Opens the dashboard on its Settings tab (the menu "Settings…"). Local UI action.
+    @ObservationIgnored var onOpenSettings: (() -> Void)?
+    func openSettings() { onOpenSettings?() }
+
     /// Send a command; some are local UI actions (listening flag, open Home, select) applied
     /// optimistically and NOT re-forwarded here (the owning model forwards its own).
     func send(_ command: Command) {

@@ -12,14 +12,21 @@ import SwiftUI
 struct ReticleOverlayView: View {
     let model: OverlayModel
     let primaryHeight: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// A friendly, critically-damped follow (heyClicky-style ease in/out): the rendered cursor
+    /// trails the 60 Hz target instead of snapping, so movement glides and settles.
+    private static let followEase = Animation.smooth(duration: 0.32)
 
     var body: some View {
         ZStack {
             ForEach(model.cursors) { cursor in
+                let point = OverlayModel.resolvedViewPoint(
+                    for: cursor, systemCursorCocoa: model.systemCursor, primaryHeight: primaryHeight
+                )
                 ReticleFollower(cursor: cursor)
-                    .position(OverlayModel.resolvedViewPoint(
-                        for: cursor, systemCursorCocoa: model.systemCursor, primaryHeight: primaryHeight
-                    ))
+                    .position(point)
+                    .animation(reduceMotion ? nil : Self.followEase, value: point)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

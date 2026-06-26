@@ -55,7 +55,7 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("Preferences…") { NSApp.activate(ignoringOtherApps: true) }
+        Button("Settings…") { store.openSettings() }
         Button("Quit Director") { NSApp.terminate(nil) }
             .keyboardShortcut("q", modifiers: .command)
 

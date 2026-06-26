@@ -57,6 +57,21 @@ final class HomeDashboardModel {
     enum LoadState: Equatable, Sendable { case connecting, loaded, empty, error, denied }
     enum Filter: String, CaseIterable, Sendable { case all, running, needsYou, done }
 
+    /// The dashboard's selected tab — on the model so external callers (the menu "Settings…") can
+    /// route to it, not just the sidebar.
+    enum Tab: String, CaseIterable, Identifiable, Sendable {
+        case home = "Home", briefs = "Briefs", settings = "Settings"
+        var id: String { rawValue }
+        var icon: String {
+            switch self {
+            case .home: return "house"
+            case .briefs: return "command"
+            case .settings: return "gearshape"
+            }
+        }
+    }
+    var tab: Tab = .home
+
     /// Inspector body state (the trust anchor), bound to the selected session's intent.
     enum InspectorState: Equatable, Sendable {
         case empty
