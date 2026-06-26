@@ -102,6 +102,14 @@ struct DirectorSidecarApp: App {
         // user's head drives the Director `.user` cursor in a non-mock run.
         let services = DirectorServices()
 
+        // Track E→F wiring: load the persisted local config and APPLY it to the live services, so saved
+        // settings take effect at launch. The head pointer runs at the SAVED speed (contract default 5,
+        // not the head-track runtime default 8 it was constructed with) and the STT provider choice is
+        // honored/surfaced. Recovers to the contract default if the file is missing or drifted — never
+        // throws into launch. This is the documented follow-up to PORTING.md note 12 (LocalConfigService
+        // was ported but, until now, read by nothing outside its tests).
+        LaunchConfig.applyAtLaunch(head: services.headPointer)
+
         // Head/face tracking → intent. The latest head point lands in this shared snapshot (written
         // by the coordinator's head consumer below) and the loop's `HeadPointingIntake` reads it at
         // goal start — folding the head cursor + the windows it points at into the resolver input so a
