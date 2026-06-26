@@ -27,6 +27,7 @@
 
 import Foundation
 import Observation
+import OSLog
 
 @MainActor
 @Observable
@@ -105,6 +106,7 @@ final class VoiceCuaLoop {
 
     private func createIntent(_ finalTranscript: Contracts.FinalTranscript) async {
         interrupted = false
+        DirectorDiagnostics.loop.info("goal intake final_transcript_chars=\(finalTranscript.text.count, privacy: .public)")
         await wait(targetResolveDelayMs)
         let createdAt = timestamp()
         let started = sessions.start(createdAt)
@@ -144,6 +146,7 @@ final class VoiceCuaLoop {
                 state = value.asContractState
             }
         }
+        DirectorDiagnostics.loop.info("observed tick=\(tick, privacy: .public) windows=\(windows.count, privacy: .public) focused=\(focused?.app ?? "none", privacy: .public) state_elements=\(state?.elementCount ?? 0, privacy: .public)")
         return Contracts.GoalLoopObservation(
             tick: tick,
             capturedAt: capturedAt,
@@ -261,6 +264,7 @@ final class VoiceCuaLoop {
         let tools = await catalog.loadedTools()
         let resolved = await resolve(input, createdAt, tools)
         if stopIfInterrupted(run, input, at: timestamp()) { return }
+        DirectorDiagnostics.loop.info("resolver returned \(Self.intentSummary(resolved), privacy: .public)")
 
         // The gate (U2/KD3) re-derives risk per call from the actual tool each step reaches —
         // escalating a commit click, never trusting a model downgrade. Reflect that effective risk
@@ -277,10 +281,12 @@ final class VoiceCuaLoop {
         recordIntent(run.sessionId, createdAt, next)
 
         if next.isSatisfied {
+            DirectorDiagnostics.loop.info("goal satisfied session=\(run.sessionId, privacy: .public)")
             finishGoal(run, .succeeded, createdAt)
             return
         }
         guard case let .ready(readyNext) = next else {
+            DirectorDiagnostics.loop.warning("goal blocked session=\(run.sessionId, privacy: .public) \(Self.intentSummary(next), privacy: .public)")
             finishGoal(run, .blocked, createdAt)
             return
         }
@@ -300,7 +306,10 @@ final class VoiceCuaLoop {
 
         // Read-only / reversible auto-run; mutating / destructive pause for approval. The pause is
         // held by returning here with the ready intent set — `approve()` resumes, `reject()` ends.
-        if readyNext.riskLevel.requiresApproval { return }
+        if readyNext.riskLevel.requiresApproval {
+            DirectorDiagnostics.loop.notice("approval required session=\(run.sessionId, privacy: .public) risk=\(readyNext.riskLevel.rawValue, privacy: .public)")
+            return
+        }
         await runGoalAction(nextRun, readyNext, observation)
     }
 
@@ -319,6 +328,7 @@ final class VoiceCuaLoop {
         // the budget. Only verbatim-failed signatures are blocked, so a genuine alternative runs.
         if let repeated = run.failedSignatures.firstRepeated(in: readyIntent.actionPlan.actionPlan) {
             let result = ActionDedup.repeatedCallBlock(repeated)
+            DirectorDiagnostics.loop.warning("dedup blocked repeated action session=\(run.sessionId, privacy: .public)")
             session = sessions.run(run.sessionId, runningAt)
             recordToolCalls(run, readyIntent, observation, approvalState, result, runningAt)
             runResult = PlanRunResult(status: .blocked, result: result)
@@ -330,6 +340,7 @@ final class VoiceCuaLoop {
         // the real tool + target, never the model's claim. A commit step with no matching approval
         // blocks the whole tick here — the typed dispatch never runs.
         if let blocked = StepDispatch.firstBlockedStep(readyIntent.actionPlan.actionPlan, observation, approved: approved) {
+            DirectorDiagnostics.loop.notice("gate blocked action session=\(run.sessionId, privacy: .public) approved=\(approved, privacy: .public)")
             session = sessions.run(run.sessionId, runningAt)
             recordToolCalls(run, readyIntent, observation, approvalState, blocked, runningAt)
             runResult = PlanRunResult(status: .blocked, result: blocked)
@@ -377,11 +388,14 @@ final class VoiceCuaLoop {
         var last = Contracts.CuaActionResult.succeeded(summary: "No action", state: nil)
         for step in steps {
             let (tool, args) = StepDispatch.driverCallForStep(step)
+            DirectorDiagnostics.loop.info("dispatch tool=\(tool, privacy: .public) arg_keys=\(args.keys.sorted().joined(separator: ","), privacy: .public)")
             let callResult = await driver.call(tool: tool, input: .object(args.mapValues(\.asDriverValue)))
             last = cuaResultToActionResult(callResult, summary: "Called \(tool)")
             guard case .succeeded = last else {
+                DirectorDiagnostics.loop.error("dispatch failed tool=\(tool, privacy: .public) result=\(Self.actionResultSummary(last), privacy: .public)")
                 return (last, ActionDedup.callSignature(step))
             }
+            DirectorDiagnostics.loop.info("dispatch succeeded tool=\(tool, privacy: .public)")
         }
         return (last, nil)
     }
@@ -390,6 +404,7 @@ final class VoiceCuaLoop {
 
     func approve() async {
         guard case let .ready(ready) = intent, session != nil, let run = goalRun else { return }
+        DirectorDiagnostics.loop.notice("approval accepted session=\(run.sessionId, privacy: .public)")
         await runGoalAction(run, ready, run.observations.last, approved: true)
     }
 
@@ -400,6 +415,7 @@ final class VoiceCuaLoop {
         // audit trail and end the session rejected.
         let rejected = Contracts.CuaActionResult.blocked(reason: "Rejected before execution", state: nil)
         if let run = goalRun {
+            DirectorDiagnostics.loop.notice("approval rejected session=\(run.sessionId, privacy: .public)")
             recordToolCalls(run, ready, run.observations.last, .rejected, rejected, decidedAt)
         }
         audit.record(.executionFinished(
@@ -418,6 +434,7 @@ final class VoiceCuaLoop {
     func interrupt() {
         interrupted = true
         guard let run = goalRun else { return }
+        DirectorDiagnostics.loop.notice("goal interrupted session=\(run.sessionId, privacy: .public)")
         if let currentSession = session, currentSession.status != .succeeded, currentSession.status != .blocked {
             let at = timestamp()
             let input = inputForTick(run, run.nextTick, run.observations)
@@ -450,5 +467,27 @@ final class VoiceCuaLoop {
     private func wait(_ ms: Int) async {
         guard ms > 0 else { return }
         try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
+    }
+
+    private static func intentSummary(_ intent: Contracts.ResolvedIntent) -> String {
+        switch intent {
+        case let .ready(ready):
+            let tools = ready.actionPlan.actionPlan.map(StepDispatch.toolNameForStep).joined(separator: ",")
+            return "ready risk=\(ready.riskLevel.rawValue) approval=\(ready.requiresApproval) tools=\(tools)"
+        case let .needsClarification(pending):
+            return "clarification reason=\(DirectorDiagnostics.clipped(pending.reason, max: 160))"
+        case let .blocked(pending):
+            return "blocked reason=\(DirectorDiagnostics.clipped(pending.reason, max: 160))"
+        case let .satisfied(satisfied):
+            return "satisfied summary=\(DirectorDiagnostics.clipped(satisfied.summary, max: 160))"
+        }
+    }
+
+    private static func actionResultSummary(_ result: Contracts.CuaActionResult) -> String {
+        switch result {
+        case let .succeeded(summary, _): return "succeeded \(DirectorDiagnostics.clipped(summary, max: 160))"
+        case let .failed(error, _): return "failed \(DirectorDiagnostics.clipped(error, max: 160))"
+        case let .blocked(reason, _): return "blocked \(DirectorDiagnostics.clipped(reason, max: 160))"
+        }
     }
 }

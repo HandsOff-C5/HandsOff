@@ -23,6 +23,7 @@
 
 import Foundation
 import Observation
+import OSLog
 
 @MainActor
 final class LoopEngine: CommandSink {
@@ -65,6 +66,7 @@ final class LoopEngine: CommandSink {
     func start() {
         guard !started else { return }
         started = true
+        DirectorDiagnostics.loop.info("engine started")
         onState?(.connected)
         refreshReadiness()
         observeLoop()
@@ -75,6 +77,7 @@ final class LoopEngine: CommandSink {
     /// turns on (the moment a stale mic/speech grant would matter), so the menu/dashboard reflect a
     /// permission the user just changed without a relaunch.
     func refreshReadiness() {
+        DirectorDiagnostics.loop.info("readiness probe requested")
         onFrame?(.state(topic: "readiness", readiness: readinessProbe()))
     }
 
@@ -87,14 +90,17 @@ final class LoopEngine: CommandSink {
         case .ready:
             break
         case let .partial(text, confidence, latencyMs, receivedAt):
+            DirectorDiagnostics.loop.debug("speech partial chars=\(text.count, privacy: .public) confidence=\(confidence, privacy: .public)")
             onFrame?(.transcript(LoopFrameMapping.transcript(
                 partial: true, text: text, confidence: confidence, latencyMs: latencyMs, receivedAt: receivedAt)))
         case let .final(text, confidence, latencyMs, receivedAt):
+            DirectorDiagnostics.loop.info("speech final chars=\(text.count, privacy: .public) confidence=\(confidence, privacy: .public)")
             onFrame?(.transcript(LoopFrameMapping.transcript(
                 partial: false, text: text, confidence: confidence, latencyMs: latencyMs, receivedAt: receivedAt)))
             startGoal(Contracts.FinalTranscript(
                 text: text, confidence: confidence, latencyMs: latencyMs, receivedAt: receivedAt))
         case let .error(error, _):
+            DirectorDiagnostics.loop.error("speech error \(error.message, privacy: .public)")
             onFrame?(.error(reason: error.message))
         }
     }
@@ -103,6 +109,7 @@ final class LoopEngine: CommandSink {
     /// path); the goal text titles the session the loop is about to create.
     private func startGoal(_ finalTranscript: Contracts.FinalTranscript) {
         pendingGoalText = finalTranscript.text
+        DirectorDiagnostics.loop.info("goal task started chars=\(finalTranscript.text.count, privacy: .public)")
         goalTask = Task { [loop] in await loop.handleFinalTranscript(finalTranscript) }
     }
 

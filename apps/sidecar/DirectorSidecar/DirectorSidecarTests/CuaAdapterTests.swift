@@ -37,6 +37,12 @@ private let sampleSurface = CuaWindow(
     #expect(report.driver == .unavailable)
 }
 
+@Test func diagnosticCommandSummaryRedactsDriverJSONArgs() {
+    let summary = DirectorDiagnostics.commandSummary(["call", "type_text", #"{"text":"lorem ipsum"}"#])
+    #expect(summary == "call type_text <json 22 chars>")
+    #expect(!summary.contains("lorem ipsum"))
+}
+
 // MARK: - Apps
 
 @Test func mapsDriverAppsToContractApps() throws {

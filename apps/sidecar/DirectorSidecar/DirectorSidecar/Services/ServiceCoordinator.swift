@@ -24,6 +24,7 @@
 //
 
 import Foundation
+import OSLog
 
 // MARK: - Injection seams (so the lifecycle is testable without a camera/mic)
 
@@ -130,6 +131,7 @@ final class ServiceCoordinator {
     /// starts) flow to `onHeadPointer`. Idempotent.
     func start() {
         guard headConsumer == nil, !isTornDown else { return }
+        DirectorDiagnostics.services.info("service coordinator started")
         let events = head.events  // captured on the main actor; AsyncStream<HeadPointerEvent> is Sendable
         headConsumer = Task { [weak self] in
             for await event in events {
@@ -144,9 +146,11 @@ final class ServiceCoordinator {
         guard on != isSensing, !isTornDown else { return }
         isSensing = on
         if on {
+            DirectorDiagnostics.services.info("sensing on")
             head.start()
             startSpeech()
         } else {
+            DirectorDiagnostics.services.info("sensing off")
             head.stop()
             stopSpeech()
         }
@@ -156,6 +160,7 @@ final class ServiceCoordinator {
     /// Idempotent — safe to call from both a `willTerminate` notification and an explicit shutdown.
     func teardown() {
         guard !isTornDown else { return }
+        DirectorDiagnostics.services.info("service coordinator teardown")
         isTornDown = true
         if isSensing {
             head.stop()
@@ -172,8 +177,14 @@ final class ServiceCoordinator {
     private func handle(_ event: HeadPointerEvent) {
         switch event {
         case let .point(point):
+            DirectorDiagnostics.services.debug("head point x=\(point.x, privacy: .public) y=\(point.y, privacy: .public) confidence=\(point.confidence, privacy: .public)")
             onHeadPointer(HeadPointerBridge.pointer(from: point))
-        case .started, .stopped, .error:
+        case .started:
+            DirectorDiagnostics.services.info("head pointer started")
+        case .stopped:
+            DirectorDiagnostics.services.info("head pointer stopped")
+        case let .error(message, _):
+            DirectorDiagnostics.services.error("head pointer error \(message, privacy: .public)")
             // Lifecycle/error events are the head service's own concern; the cursor path only needs
             // points. (A future surface could reflect `.error` as a degraded-readiness signal.)
             break
@@ -181,6 +192,7 @@ final class ServiceCoordinator {
     }
 
     private func startSpeech() {
+        DirectorDiagnostics.services.info("speech stream start")
         speechConsumer?.cancel()
         let stream = speech.start()
         speechConsumer = Task { [weak self] in
@@ -191,6 +203,7 @@ final class ServiceCoordinator {
     }
 
     private func stopSpeech() {
+        DirectorDiagnostics.services.info("speech stream stop")
         speech.stop()
         speechConsumer?.cancel()
         speechConsumer = nil

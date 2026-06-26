@@ -18,6 +18,27 @@
 //
 
 import Foundation
+import OSLog
+
+enum DirectorDiagnostics {
+    static let subsystem = "com.handsoff.DirectorSidecar"
+    static let cua = Logger(subsystem: subsystem, category: "cua")
+    static let loop = Logger(subsystem: subsystem, category: "loop")
+    static let services = Logger(subsystem: subsystem, category: "services")
+
+    static func commandSummary(_ args: [String]) -> String {
+        guard !args.isEmpty else { return "" }
+        if args.count >= 3, args[0] == "call" {
+            return "call \(args[1]) <json \(args[2].count) chars>"
+        }
+        return args.map { clipped($0, max: 120) }.joined(separator: " ")
+    }
+
+    static func clipped(_ value: String, max: Int = 500) -> String {
+        guard value.count > max else { return value }
+        return "\(value.prefix(max))..."
+    }
+}
 
 /// Resolves the `cua-driver` executable. Matches the Rust adapter, which relied on PATH lookup
 /// (`Command::new("cua-driver")`); an absolute override exists for a bundled/pinned binary.
@@ -45,6 +66,7 @@ actor CuaDriverService {
         do {
             return .succeeded(try CuaWire.decodePermissions(try await runRaw(["permissions", "status", "--json"])))
         } catch {
+            DirectorDiagnostics.cua.error("permissions unavailable: \(DirectorDiagnostics.clipped(String(describing: error)), privacy: .public)")
             return .succeeded(CuaWire.permissionsUnavailable)
         }
     }
@@ -93,7 +115,8 @@ actor CuaDriverService {
     /// Valid JSON passes through; a prose confirmation line returns as a `.string(...)` value.
     func call(tool: String, input: JSONValue) async -> CuaResult<JSONValue> {
         await read {
-            CuaWire.decodeCallValue(try await self.runRaw(["call", tool, try input.encodedString()]))
+            DirectorDiagnostics.cua.info("driver call requested tool=\(tool, privacy: .public)")
+            return CuaWire.decodeCallValue(try await self.runRaw(["call", tool, try input.encodedString()]))
         }
     }
 
@@ -163,6 +186,8 @@ actor CuaDriverService {
     /// becomes `.failedToStart`. Faithful to the Rust `run_cua_raw`/`ensure_success` pair.
     private func runRaw(_ args: [String]) async throws -> Data {
         let (launchPath, arguments) = resolvedCommand(args)
+        let summary = DirectorDiagnostics.commandSummary(args)
+        DirectorDiagnostics.cua.debug("cua-driver start \(summary, privacy: .public)")
         return try await withCheckedThrowingContinuation { continuation in
             Self.processQueue.async {
                 let process = Process()
@@ -176,6 +201,7 @@ actor CuaDriverService {
                 do {
                     try process.run()
                 } catch {
+                    DirectorDiagnostics.cua.error("cua-driver failed to start \(summary, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     continuation.resume(throwing: CuaDriverError.failedToStart(error.localizedDescription))
                     return
                 }
@@ -193,9 +219,12 @@ actor CuaDriverService {
                 process.waitUntilExit()
 
                 guard process.terminationStatus == 0 else {
-                    continuation.resume(throwing: CuaDriverError.nonZeroExit(String(decoding: errData, as: UTF8.self)))
+                    let stderr = String(decoding: errData, as: UTF8.self)
+                    DirectorDiagnostics.cua.error("cua-driver exit=\(process.terminationStatus, privacy: .public) \(summary, privacy: .public): \(DirectorDiagnostics.clipped(stderr), privacy: .public)")
+                    continuation.resume(throwing: CuaDriverError.nonZeroExit(stderr))
                     return
                 }
+                DirectorDiagnostics.cua.info("cua-driver ok \(summary, privacy: .public) stdout_bytes=\(outData.count, privacy: .public)")
                 continuation.resume(returning: outData)
             }
         }
