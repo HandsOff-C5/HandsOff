@@ -66,10 +66,19 @@ struct DriverWindowList: Decodable {
     let windows: [DriverWindow]
 }
 
-/// The fields the adapter reads out of a `get_window_state` response (ax mode → `element_count`;
+struct DriverElement: Decodable {
+    let elementIndex: Int?
+    let elementToken: String?
+    let role: String?
+    let label: String?
+    let value: JSONValue?
+}
+
+/// The fields the adapter reads out of a `get_window_state` response (ax mode → `elements`;
 /// vision mode → the `screenshot_*` block). All optional; the mappers decide what's required.
 struct DriverWindowStateRaw: Decodable {
     let elementCount: Int?
+    let elements: [DriverElement]?
     let screenshotMimeType: String?
     let screenshotWidth: Int?
     let screenshotHeight: Int?
@@ -155,19 +164,35 @@ enum CuaWire {
 
     // MARK: Window state & screenshot
 
-    /// Driver `element_count`, defaulting to 0 (Rust `unwrap_or(0)`). Elements are intentionally
-    /// NOT populated — the driver state mapper reports the count only (ADR 0005 blocker).
+    /// Driver AX elements, plus `element_count` when present. Older driver responses may only include
+    /// the count, so elements still default to [].
     static func decodeWindowState(
         raw data: Data,
         surface: CuaWindow,
         capturedAt: String
     ) throws -> CuaWindowState {
         let raw = try driverDecoder().decode(DriverWindowStateRaw.self, from: data)
+        let elements = (raw.elements ?? []).enumerated().map { offset, element in
+            map(element: element, fallbackIndex: offset)
+        }
         return CuaWindowState(
             surface: surface,
             capturedAt: capturedAt,
-            elementCount: raw.elementCount ?? 0,
-            elements: []
+            elementCount: raw.elementCount ?? elements.count,
+            elements: elements
+        )
+    }
+
+    private static func map(element: DriverElement, fallbackIndex: Int) -> CuaElement {
+        let id = element.elementToken?.nilIfEmpty
+            ?? element.elementIndex.map { "element-\($0)" }
+            ?? "element-\(fallbackIndex)"
+        return CuaElement(
+            id: id,
+            index: element.elementIndex,
+            role: element.role,
+            label: element.label,
+            value: element.value?.stringForElementValue
         )
     }
 
@@ -228,5 +253,27 @@ enum CuaWire {
             return value
         }
         return .string(text)
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
+private extension JSONValue {
+    var stringForElementValue: String? {
+        switch self {
+        case .null: return nil
+        case .string(let value): return value
+        case .bool(let value): return value ? "true" : "false"
+        case .number(let value):
+            if value.isFinite, value >= Double(Int.min), value <= Double(Int.max), value.rounded() == value {
+                return String(Int(value))
+            }
+            return String(value)
+        case .array, .object: return nil
+        }
     }
 }

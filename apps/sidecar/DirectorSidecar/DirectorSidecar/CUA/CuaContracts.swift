@@ -108,11 +108,8 @@ struct CuaWindow: Codable, Sendable, Equatable, Identifiable {
 
 // MARK: - Window state & screenshot
 
-/// One accessibility element — @handsoff/contracts `cuaElementSchema` (cua.ts). NOTE: the Rust
-/// adapter reports `elementCount` but never populates `elements` (`vec![]`); the Swift adapter
-/// preserves that (ADR 0005 "element metadata" blocker). Defined so the shape is complete once the
-/// driver state exposes element metadata. (Identical to `Contracts.CuaElement`; the adapter keeps a
-/// top-level copy so `CuaWindowState` stays in the adapter's own surface family.)
+/// One accessibility element — @handsoff/contracts `cuaElementSchema` (cua.ts). The adapter keeps a
+/// top-level copy so `CuaWindowState` stays in the adapter's own surface family.
 struct CuaElement: Codable, Sendable, Equatable {
     let id: String
     let index: Int?

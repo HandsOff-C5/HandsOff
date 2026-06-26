@@ -104,14 +104,33 @@ private let sampleSurface = CuaWindow(
 
 // MARK: - Window state & screenshot
 
-@Test func preservesElementCountWithoutFabricatingElements() throws {
-    let state = try CuaWire.decodeWindowState(raw: Data(#"{"element_count":3}"#.utf8), surface: sampleSurface, capturedAt: "2026-06-25T00:00:00.000Z")
+@Test func mapsDriverWindowStateElements() throws {
+    let json = #"""
+    {"element_count":3,"elements":[
+      {"element_index":0,"element_token":"s0001:0","role":"AXWindow","label":"Notes"},
+      {"element_index":5,"role":"AXButton","label":"Send","value":true},
+      {"role":"AXStaticText","value":{"ignored":"object"}}
+    ]}
+    """#
+    let state = try CuaWire.decodeWindowState(raw: Data(json.utf8), surface: sampleSurface, capturedAt: "2026-06-25T00:00:00.000Z")
     #expect(state.elementCount == 3)
-    #expect(state.elements.isEmpty)          // adapter never invents element metadata (ADR 0005 blocker)
+    #expect(state.elements.map(\.id) == ["s0001:0", "element-5", "element-2"])
+    #expect(state.elements[0].index == 0)
+    #expect(state.elements[1].role == "AXButton")
+    #expect(state.elements[1].label == "Send")
+    #expect(state.elements[1].value == "true")
+    #expect(state.elements[2].value == nil)
     #expect(state.surface.id == sampleSurface.id)
     #expect(state.capturedAt == "2026-06-25T00:00:00.000Z")
 
-    // Missing element_count defaults to 0 (Rust unwrap_or(0)), still no elements.
+    // Missing element_count falls back to the mapped element count.
+    let countFromElements = try CuaWire.decodeWindowState(
+        raw: Data(#"{"elements":[{"element_index":9,"role":"AXTextField"}]}"#.utf8),
+        surface: sampleSurface,
+        capturedAt: "t")
+    #expect(countFromElements.elementCount == 1)
+    #expect(countFromElements.elements[0].id == "element-9")
+
     let empty = try CuaWire.decodeWindowState(raw: Data("{}".utf8), surface: sampleSurface, capturedAt: "t")
     #expect(empty.elementCount == 0)
     #expect(empty.elements.isEmpty)
