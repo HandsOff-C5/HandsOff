@@ -149,9 +149,12 @@ struct IntentWorkerClient: NextToolCallClient {
             throw IntentWorkerError.invalidConfiguration(
                 "invalid-configuration: intent Worker URL must not include query or fragment")
         }
-        // Append the resolve path to the base path (tolerating a trailing slash).
+        // The Worker only serves `/v1/resolve-intent`. `.env.local` (and the prior Rust client)
+        // carry the FULL endpoint URL, used as-is; a bare origin is also accepted. Append the route
+        // only when it is not already present, so a full URL is never doubled into
+        // `/v1/resolve-intent/v1/resolve-intent` (the cause of the Worker's HTTP 404).
         let basePath = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
-        components.path = basePath + resolvePath
+        components.path = basePath.hasSuffix(resolvePath) ? basePath : basePath + resolvePath
         guard let url = components.url else {
             throw IntentWorkerError.invalidConfiguration(
                 "invalid-configuration: intent Worker URL must be a valid URL")
