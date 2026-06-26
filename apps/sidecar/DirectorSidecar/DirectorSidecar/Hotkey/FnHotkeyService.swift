@@ -232,7 +232,7 @@ final class FnHotkeyService: @unchecked Sendable {
 
 /// The `@convention(c)` tap callback — cannot capture context, so it reconstructs the service
 /// from `userInfo`. Runs on the worker run loop (single-threaded with the timer above).
-private func fnTapCallback(
+private nonisolated func fnTapCallback(
     proxy: CGEventTapProxy,
     type: CGEventType,
     event: CGEvent,
