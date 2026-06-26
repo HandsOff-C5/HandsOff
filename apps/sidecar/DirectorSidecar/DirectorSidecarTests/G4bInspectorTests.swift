@@ -3,7 +3,7 @@
 //  DirectorSidecarTests
 //
 //  G4b Inspector: plan-step decode + READ/WRITE/EXEC tag mapping, InspectorState derivation, and
-//  the optional destructive-only Greenlight footer gate (+ greenlight/reject behavior).
+//  the Greenlight footer gate for approval-required risks (+ greenlight/reject behavior).
 //
 
 import Testing
@@ -15,8 +15,8 @@ import Foundation
 @Test func decodesIntentWithPlanSteps() throws {
     let json = #"""
     {"v":1,"type":"state","topic":"intent","payload":{
-      "status":"ready","id":"i1","intent_type":"summarize","risk_level":"mutating","requires_approval":false,
-      "action_plan":{"id":"p1","summary":"Summarize and note","risk_level":"mutating","requires_approval":false,"target_agent":"cua-driver",
+      "status":"ready","id":"i1","intent_type":"summarize","risk_level":"mutating","requires_approval":true,
+      "action_plan":{"id":"p1","summary":"Summarize and note","risk_level":"mutating","requires_approval":true,"target_agent":"cua-driver",
         "action_plan":[
           {"id":"s1","label":"Read the issue","kind":"inspect_window_state","target":{"surface":{"title":"GitHub"}}},
           {"id":"s2","label":"Type the summary","kind":"type_text","target":{"surface":{"title":"Notes"}},"text":"TL;DR fix the race"}
@@ -44,7 +44,7 @@ import Foundation
 
 private func intent(_ risk: RiskLevel, _ status: ResolvedIntentLite.Status = .ready) -> ResolvedIntentLite {
     ResolvedIntentLite(id: "i1", status: status, intentType: "x", riskLevel: risk,
-                       requiresApproval: risk == .destructive, summary: "s", reason: "needs info",
+                       requiresApproval: risk.requiresApproval, summary: "s", reason: "needs info",
                        steps: [ActionStepLite(id: "s1", label: "do", kind: "type_text", targetTitle: nil, proposed: "v")])
 }
 
@@ -57,21 +57,21 @@ private func intent(_ risk: RiskLevel, _ status: ResolvedIntentLite.Status = .re
 }
 
 @MainActor
-@Test func inspectorReadyShowsPlanNoFooterForMutating() {
+@Test func inspectorReadyShowsPlanNoFooterForReversible() {
     let model = HomeDashboardModel()
     model.select("session-1")                         // sends selectSession (no-op without socket)
-    model.apply(.intent(intent(.mutating)))
+    model.apply(.intent(intent(.reversible)))
     guard case let .ready(shown) = model.inspectorState else { Issue.record("expected ready"); return }
     #expect(shown.steps.count == 1)
-    #expect(!model.showInspectorFooter)               // mutating auto-runs → no footer
+    #expect(!model.showInspectorFooter)
 }
 
 @MainActor
-@Test func inspectorFooterShownOnlyForDestructive() {
+@Test func inspectorFooterShownForApprovalRequiredRisk() {
     let model = HomeDashboardModel()
     model.select("session-1")
-    model.apply(.intent(intent(.destructive)))
-    #expect(model.showInspectorFooter)                // destructive → footer
+    model.apply(.intent(intent(.mutating)))
+    #expect(model.showInspectorFooter)
     // After execution, the footer disappears.
     model.apply(.runResult(RunResultPayload(status: .succeeded, sessionId: "session-1")))
     #expect(!model.showInspectorFooter)
@@ -91,7 +91,7 @@ private func intent(_ risk: RiskLevel, _ status: ResolvedIntentLite.Status = .re
 @Test func rejectMarksRunResultAndDropsFooter() {
     let model = HomeDashboardModel()
     model.select("session-1")
-    model.apply(.intent(intent(.destructive)))
+    model.apply(.intent(intent(.destructiveExternal)))
     #expect(model.showInspectorFooter)
     model.reject()
     #expect(!model.showInspectorFooter)               // rejected → no longer awaiting

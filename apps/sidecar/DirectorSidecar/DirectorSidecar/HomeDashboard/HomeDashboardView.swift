@@ -18,12 +18,14 @@ struct HomeDashboardView: View {
 
     enum NavItem: String, CaseIterable, Identifiable {
         case home = "Home"
+        case logs = "Agent Logs"
         case briefs = "Briefs"
         case settings = "Settings"
         var id: String { rawValue }
         var icon: String {
             switch self {
             case .home: return "house"
+            case .logs: return "list.bullet.rectangle"
             case .briefs: return "command"
             case .settings: return "gearshape"
             }
@@ -31,7 +33,7 @@ struct HomeDashboardView: View {
     }
 
     /// Primary nav (Settings + Help live pinned in the sidebar footer, not this list).
-    private static let primaryNav: [NavItem] = [.home, .briefs]
+    private static let primaryNav: [NavItem] = [.home, .logs, .briefs]
 
     @State private var nav: NavItem = .home
 
@@ -63,6 +65,9 @@ struct HomeDashboardView: View {
                     InspectorView(model: model)
                         .inspectorColumnWidth(min: 280, ideal: 300, max: 360)
                 }
+        case .logs:
+            IntentionLogView(entries: model.auditLog)
+                .navigationTitle("Agent Logs")
         case .briefs:
             ComingSoonView(
                 title: "Briefs", icon: "command",

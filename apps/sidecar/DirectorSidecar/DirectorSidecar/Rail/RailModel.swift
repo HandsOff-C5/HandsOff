@@ -38,7 +38,7 @@ final class RailModel {
             marks = payload.sessions.map(SessionVM.init)
         case let .runResult(result):
             applyRunResult(result)
-        case .state, .intent, .cursor, .transcript, .referents, .gaze, .error, .unknown:
+        case .state, .intent, .audit, .cursor, .transcript, .referents, .gaze, .error, .unknown:
             break
         }
     }

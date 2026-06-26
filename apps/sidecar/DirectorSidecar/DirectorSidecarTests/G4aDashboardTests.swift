@@ -19,7 +19,8 @@ private func session(_ id: String, _ status: ExecutionStatus, title: String? = n
     let vm = SessionVM(SupervisionSession(id: "s1", status: .blocked, startedAt: "2026-06-24T18:00:00.000Z", updatedAt: "t", finishedAt: nil, title: "Delete tmp", agentLabel: "Claude Code"))
     #expect(vm.title == "Delete tmp")
     #expect(vm.agent == "Claude Code")
-    #expect(vm.needsGreenlight) // blocked
+    #expect(!vm.needsGreenlight) // blocked is a terminal failure, not a pending approval
+    #expect(vm.isDone)           // blocked folds into the terminal/Done bucket
     #expect(!vm.isRunning)
 }
 
@@ -31,14 +32,15 @@ private func session(_ id: String, _ status: ExecutionStatus, title: String? = n
     ]
     #expect(HomeDashboardModel.filtered(fleet, .all).count == 3)
     #expect(HomeDashboardModel.filtered(fleet, .running).map(\.id) == ["a"])
-    #expect(HomeDashboardModel.filtered(fleet, .needsYou).map(\.id) == ["b"])
-    #expect(HomeDashboardModel.filtered(fleet, .done).map(\.id) == ["c"])
+    #expect(HomeDashboardModel.filtered(fleet, .needsYou).isEmpty) // approval is intent-state, not status
+    #expect(HomeDashboardModel.filtered(fleet, .done).map(\.id) == ["b", "c"]) // blocked + succeeded
 }
 
 @Test func loadStateReflectsConnectionAndCount() {
-    #expect(HomeDashboardModel.loadState(sessionCount: 0, connected: false) == .error)
-    #expect(HomeDashboardModel.loadState(sessionCount: 0, connected: true) == .empty)
-    #expect(HomeDashboardModel.loadState(sessionCount: 2, connected: true) == .loaded)
+    #expect(HomeDashboardModel.loadState(sessionCount: 0, connected: false, readiness: .ready) == .error)
+    #expect(HomeDashboardModel.loadState(sessionCount: 0, connected: true, readiness: .ready) == .empty)
+    #expect(HomeDashboardModel.loadState(sessionCount: 2, connected: true, readiness: .ready) == .loaded)
+    #expect(HomeDashboardModel.loadState(sessionCount: 2, connected: true, readiness: .blocked) == .denied)
 }
 
 @MainActor
@@ -66,4 +68,40 @@ private func session(_ id: String, _ status: ExecutionStatus, title: String? = n
     model.setConnection(.connected)
     model.apply(.sessions(SessionsPayload(sessions: [], counts: nil)))
     #expect(model.loadState == .empty)
+}
+
+@MainActor
+@Test func auditFramePopulatesIntentionLog() {
+    // H4: the `audit` frame must reach the dashboard's Intention Log state (Agent Logs view).
+    let model = HomeDashboardModel()
+    #expect(model.auditLog.isEmpty)
+    model.apply(.audit(AuditLogPayload(entries: [
+        AuditLogEntry(id: "s#0", sessionId: "s", actionId: "a", kind: .intentCreated, recordedAt: "t",
+                      summary: "Plan ready: Summarize issue 42",
+                      tool: nil, risk: nil, approval: nil, result: nil),
+        AuditLogEntry(id: "s#1", sessionId: "s", actionId: "a", kind: .toolCall, recordedAt: "t",
+                      summary: "Tool type_text [approved]: Typed summary",
+                      tool: "type_text", risk: .mutating, approval: .approved, result: .succeeded),
+    ])))
+    #expect(model.auditLog.count == 2)
+    #expect(model.auditLog.last?.tool == "type_text")
+    #expect(model.auditLog.last?.risk == .mutating)
+    #expect(model.auditLog.last?.approval == .approved)
+    #expect(model.auditLog.last?.result == .succeeded)
+}
+
+@MainActor
+@Test func blockedReadinessShowsDeniedStateInHomeShell() {
+    let model = HomeDashboardModel()
+    model.setConnection(.connected)
+    model.apply(.state(topic: "readiness", readiness: ReadinessPayload(capabilities: [
+        CapabilityProbe(id: "microphone", kind: "permission", state: "denied"),
+        CapabilityProbe(id: "speech-recognition", kind: "permission", state: "granted"),
+    ])))
+    model.apply(.sessions(SessionsPayload(sessions: [
+        session("a", .running, title: "Refactor auth"),
+    ], counts: nil)))
+
+    #expect(model.readiness == .blocked)
+    #expect(model.loadState == .denied)
 }

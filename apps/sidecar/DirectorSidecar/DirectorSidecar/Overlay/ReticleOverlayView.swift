@@ -12,18 +12,36 @@ import SwiftUI
 struct ReticleOverlayView: View {
     let model: OverlayModel
     let primaryHeight: CGFloat
+    /// The active display layout in contract space + which display THIS window covers. Empty/`nil`
+    /// is the single primary-only overlay (every cursor drawn at its raw contract point — the
+    /// original G5 behavior). In the multi-display fold-in each window passes its own `displayID`
+    /// so a cursor renders on exactly the display that owns it, in that display's LOCAL coords.
+    var displays: [DisplayRect] = []
+    var displayID: Int? = nil
 
     var body: some View {
         ZStack {
             ForEach(model.cursors) { cursor in
-                ReticleFollower(cursor: cursor)
-                    .position(OverlayModel.resolvedViewPoint(
-                        for: cursor, systemCursorCocoa: model.systemCursor, primaryHeight: primaryHeight
-                    ))
+                let cp = OverlayModel.resolvedViewPoint(
+                    for: cursor, systemCursorCocoa: model.systemCursor, primaryHeight: primaryHeight
+                )
+                if let pt = localPoint(cp) {
+                    ReticleFollower(cursor: cursor).position(pt)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(false)
+    }
+
+    /// Resolve a contract-space point to THIS window's local coords, or `nil` when the point belongs
+    /// to a different display (so each cursor draws once). A point in the gap between monitors is
+    /// clamped to the nearest display by `DisplayGeometry.locate` and draws there. Empty `displays`
+    /// (or `nil` id) → primary-only fallback: pass the contract point straight through.
+    private func localPoint(_ cp: CGPoint) -> CGPoint? {
+        guard let displayID, !displays.isEmpty else { return cp }
+        guard let loc = DisplayGeometry.locate(cp.x, cp.y, in: displays), loc.displayID == displayID else { return nil }
+        return CGPoint(x: loc.localX, y: loc.localY)
     }
 }
 

@@ -5,11 +5,17 @@ import { zodResponseFormat } from "openai/helpers/zod";
 // completion with the next-tool-call schema (was the 6-kind action-plan schema).
 import { nextToolCallSchema } from "@handsoff/intent/src/llm/next-tool-call";
 
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const encoder = new TextEncoder();
 
 export interface Env {
-  readonly OPENAI_API_KEY: string;
+  readonly OPENAI_API_KEY?: string;
+  readonly GEMINI_API_KEY?: string;
+  readonly GOOGLE_API_KEY?: string;
+  readonly OPENAI_MODEL?: string;
+  readonly GEMINI_MODEL?: string;
   readonly HANDSOFF_APP_TOKEN: string;
 }
 
@@ -32,6 +38,10 @@ function readSecret(value: string | undefined, name: string): string | Response 
   return value.trim();
 }
 
+function optionalSecret(value: string | undefined): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
 function bearerToken(request: Request): string | null {
   const header = request.headers.get("authorization");
   if (!header?.startsWith("Bearer ")) return null;
@@ -52,13 +62,73 @@ function tokenEquals(left: string, right: string): boolean {
 
 function parseIntentRequest(
   body: IntentRequestBody,
-): { model: string; messages: unknown[] } | Response {
-  const model =
-    typeof body.model === "string" && body.model.trim() ? body.model.trim() : DEFAULT_MODEL;
+): { requestedModel: string | null; messages: unknown[] } | Response {
+  const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : null;
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     return json({ error: "invalid_intent_request" }, 400);
   }
-  return { model, messages: body.messages };
+  return { requestedModel: model, messages: body.messages };
+}
+
+interface IntentProvider {
+  readonly name: "openai" | "gemini";
+  readonly apiKey: string;
+  readonly baseURL?: string;
+  readonly model: string;
+}
+
+function configuredProviders(env: Env, requestedModel: string | null): IntentProvider[] {
+  const providers: IntentProvider[] = [];
+  const openAiApiKey = optionalSecret(env.OPENAI_API_KEY);
+  if (openAiApiKey !== null) {
+    providers.push({
+      name: "openai",
+      apiKey: openAiApiKey,
+      model: optionalSecret(env.OPENAI_MODEL) ?? requestedModel ?? DEFAULT_OPENAI_MODEL,
+    });
+  }
+
+  const geminiApiKey = optionalSecret(env.GEMINI_API_KEY) ?? optionalSecret(env.GOOGLE_API_KEY);
+  if (geminiApiKey !== null) {
+    providers.push({
+      name: "gemini",
+      apiKey: geminiApiKey,
+      baseURL: GEMINI_BASE_URL,
+      model:
+        optionalSecret(env.GEMINI_MODEL) ??
+        (requestedModel?.startsWith("gemini-") ? requestedModel : DEFAULT_GEMINI_MODEL),
+    });
+  }
+  return providers;
+}
+
+function isRetryableProviderCredentialFailure(caught: unknown): boolean {
+  const status =
+    typeof caught === "object" && caught !== null && "status" in caught
+      ? Number((caught as { status?: unknown }).status)
+      : NaN;
+  if ([401, 402, 403, 429].includes(status)) return true;
+  const code =
+    typeof caught === "object" && caught !== null && "code" in caught
+      ? String((caught as { code?: unknown }).code)
+      : "";
+  return /invalid|auth|quota|billing|funds|payment/i.test(code);
+}
+
+async function resolveWithProvider(
+  provider: IntentProvider,
+  messages: unknown[],
+): Promise<{ choices: unknown[] }> {
+  const client = new OpenAI({
+    apiKey: provider.apiKey,
+    baseURL: provider.baseURL,
+    maxRetries: 0,
+  });
+  return client.chat.completions.parse({
+    model: provider.model,
+    messages: messages as OpenAI.Chat.ChatCompletionMessageParam[],
+    response_format: zodResponseFormat(nextToolCallSchema, "next_tool_call"),
+  });
 }
 
 async function handleIntentRequest(request: Request, env: Env): Promise<Response> {
@@ -76,9 +146,6 @@ async function handleIntentRequest(request: Request, env: Env): Promise<Response
   if (incomingToken === null) return json({ error: "missing_app_credential" }, 401);
   if (!tokenEquals(incomingToken, appToken)) return json({ error: "invalid_app_credential" }, 403);
 
-  const openAiApiKey = readSecret(env.OPENAI_API_KEY, "OPENAI_API_KEY");
-  if (openAiApiKey instanceof Response) return openAiApiKey;
-
   let rawBody: IntentRequestBody;
   try {
     rawBody = (await request.json()) as IntentRequestBody;
@@ -89,17 +156,22 @@ async function handleIntentRequest(request: Request, env: Env): Promise<Response
   const parsed = parseIntentRequest(rawBody);
   if (parsed instanceof Response) return parsed;
 
-  try {
-    const client = new OpenAI({ apiKey: openAiApiKey });
-    const completion = await client.chat.completions.parse({
-      model: parsed.model,
-      messages: parsed.messages as OpenAI.Chat.ChatCompletionMessageParam[],
-      response_format: zodResponseFormat(nextToolCallSchema, "next_tool_call"),
-    });
-    return json({ choices: completion.choices });
-  } catch {
-    return json({ error: "openai_intent_request_failed" }, 502);
+  const providers = configuredProviders(env, parsed.requestedModel);
+  if (providers.length === 0) return json({ error: "intent_provider_missing" }, 500);
+
+  for (const [index, provider] of providers.entries()) {
+    try {
+      const completion = await resolveWithProvider(provider, parsed.messages);
+      return json({ choices: completion.choices });
+    } catch (caught) {
+      const hasFallback = index < providers.length - 1;
+      if (!hasFallback || !isRetryableProviderCredentialFailure(caught)) {
+        return json({ error: "intent_request_failed" }, 502);
+      }
+    }
   }
+
+  return json({ error: "intent_request_failed" }, 502);
 }
 
 export default {

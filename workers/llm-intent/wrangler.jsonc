@@ -5,6 +5,6 @@
   "compatibility_date": "2026-06-22",
   "workers_dev": true,
   "secrets": {
-    "required": ["OPENAI_API_KEY", "HANDSOFF_APP_TOKEN"],
+    "required": ["HANDSOFF_APP_TOKEN"],
   },
 }

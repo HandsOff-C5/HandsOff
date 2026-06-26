@@ -1,0 +1,77 @@
+[
+  {
+    "name": "first failure is a normal observation, not the end",
+    "note": "KD2: a failed CuaActionResult is fed forward for recovery; the goal keeps going. The loop only ends on a resolver-emitted done|blocked, an exhausted budget, or an interrupt. (useVoiceCuaController dispatchPlan + continueGoal.)",
+    "ticks": [
+      {
+        "status": "failed",
+        "error": "launch_app: application \"Nonexistent\" was not found"
+      }
+    ],
+    "expected": {
+      "lastStatus": "failed"
+    }
+  },
+  {
+    "name": "recovery via an alternative call succeeds",
+    "note": "KD2 recovery: the failing (tool,args) is remembered, but a genuinely different call the resolver tries next still runs. Only a verbatim-repeated failed signature is refused.",
+    "ticks": [
+      {
+        "status": "failed",
+        "error": "click: no actionable element at index 0"
+      },
+      {
+        "status": "succeeded",
+        "summary": "Called type_text"
+      }
+    ],
+    "expected": {
+      "lastStatus": "succeeded"
+    }
+  },
+  {
+    "name": "repeated failed signature stops the loop with blocked",
+    "note": "KD2 recovery floor: when the resolver re-issues a (tool,args) that already FAILED this goal, the loop refuses to dispatch it and stops with a blocked result instead of looping the dead action to the budget. blockedReasonContains is the exact contract phrase from useVoiceCuaController.",
+    "ticks": [
+      {
+        "status": "failed",
+        "error": "launch_app: application \"Nonexistent\" was not found"
+      },
+      {
+        "status": "blocked",
+        "reason": "Stopped: the resolver kept retrying a call that already failed (launch_app)."
+      }
+    ],
+    "expected": {
+      "lastStatus": "blocked",
+      "blockedReasonContains": "kept retrying a call that already failed"
+    }
+  },
+  {
+    "name": "blocked failure carries the post-action window state",
+    "note": "cuaActionResultSchema: every variant may carry an optional post-action `state` (CuaWindowState). The Rust mapper reports element_count but leaves elements empty (ADR 0005 blocker) — the fixture exercises that exact shape so the Swift decode preserves the count without fabricating elements.",
+    "ticks": [
+      {
+        "status": "failed",
+        "error": "set_value: target field is read-only",
+        "state": {
+          "surface": {
+            "id": "42:7",
+            "title": "Notes",
+            "app": "Notes",
+            "pid": 42,
+            "windowId": 7,
+            "availability": "available",
+            "accessStatus": "accessible"
+          },
+          "capturedAt": "2026-06-25T00:00:00.000Z",
+          "elementCount": 3,
+          "elements": []
+        }
+      }
+    ],
+    "expected": {
+      "lastStatus": "failed"
+    }
+  }
+]
