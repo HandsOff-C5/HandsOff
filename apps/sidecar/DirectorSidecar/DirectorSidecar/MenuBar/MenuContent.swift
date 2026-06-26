@@ -23,6 +23,7 @@ struct MenuContent: View {
         Button(store.isListening ? "Deactivate Director" : "Activate Director") {
             store.send(store.isListening ? .stopListening : .startListening)
         }
+        .keyboardShortcut("d", modifiers: [.option, .command])
         .disabled(!store.canListen)
 
         if !store.canListen, store.menuReadiness == .blocked {
@@ -33,10 +34,14 @@ struct MenuContent: View {
             if store.sessions.isEmpty {
                 Text("No agents running")
             } else {
+                // Each running agent is a submenu (the › chevron) → its per-agent actions.
                 ForEach(store.sessions) { session in
-                    Button(session.title) {
-                        store.send(.selectSession(session.id))
-                        store.send(.openHome)
+                    Menu(session.title) {
+                        Button("View Activity") {
+                            store.send(.selectSession(session.id))
+                            store.send(.openHome)
+                        }
+                        Button("Pause Agent") { store.send(.pauseSession(session.id)) }
                     }
                 }
             }
@@ -51,6 +56,7 @@ struct MenuContent: View {
 
         Button("Preferences…") { NSApp.activate(ignoringOtherApps: true) }
         Button("Quit Director") { NSApp.terminate(nil) }
+            .keyboardShortcut("q", modifiers: .command)
 
         if store.connection != .connected {
             Divider()

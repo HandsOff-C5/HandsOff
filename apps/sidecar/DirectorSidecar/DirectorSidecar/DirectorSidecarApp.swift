@@ -188,11 +188,6 @@ struct DirectorSidecarApp: App {
         #endif
     }
 
-    /// Toggle the listening overlays from anywhere in the app (⌥⌘D or the Director menu).
-    private func toggleListening() {
-        store.send(store.isListening ? .stopListening : .startListening)
-    }
-
     /// Start the single socket and fan every frame/state out to all models (one shared connection).
     private static func stream(_ connection: BridgeConnection, _ store: BridgeStore, _ hud: HUDModel, _ micro: MicroHUDModel, _ overlay: OverlayModel, _ gaze: GazeBracketModel, _ home: HomeDashboardModel, _ rail: RailModel) {
         Task {
@@ -225,12 +220,6 @@ struct DirectorSidecarApp: App {
         Window("Director", id: "home") {
             ThemedRoot { HomeDashboardView(model: home) }
                 .modifier(HomeOpenWiring(store: store, rail: rail))
-        }
-        .commands {
-            CommandMenu("Director") {
-                Button("Activate Director") { toggleListening() }
-                    .keyboardShortcut("d", modifiers: [.command, .option])
-            }
         }
 
         // G0 readiness — kept as a debug/fallback window.
