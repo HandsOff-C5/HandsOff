@@ -8,11 +8,13 @@
 //  the loop's initial `IntentInput` as `head` PointingEvidence + candidate surfaces, so the
 //  next-tool-call resolver can target the window the user is LOOKING at.
 //
-//  This replaces `SpeechOnlyIntake` (the no-pointing stub) as the app's intake. Two sibling pointing
-//  modalities remain their own tracks and are intentionally NOT folded in here: hand gesture
-//  (MediaPipe, unported to Swift) and the temporal multi-deictic binder (U6/U7 — needs a head/word
+//  This replaces `SpeechOnlyIntake` (the no-pointing stub) as the app's intake. The head signal is
+//  wired in full, and the HAND-gesture lane folds in alongside it (the ported `ReferentLoop` output,
+//  via `GestureSnapshot`/`GestureReferentFusion`) — combinatively, not as a priority hierarchy,
+//  exactly as buildPointingEvidence combined both. One sibling modality remains its own track and is
+//  intentionally NOT folded in here: the temporal multi-deictic binder (U6/U7 — needs a head/word
 //  capture-trace recorder that Swift does not record yet; HeadPointerService emits instantaneous
-//  points, not a trace). The head signal itself is wired in full.
+//  points, not a trace).
 //
 
 import Foundation
@@ -56,22 +58,44 @@ enum HeadPointingFusion {
         let surfaceCandidates: [Contracts.SurfaceSnapshot]
     }
 
-    /// Build the initial pointing evidence from the head point + the live windows. Mirrors the head
-    /// branches of buildPointingEvidence, in array order so the dedup below keeps the strongest
-    /// surface first:
+    /// Build the initial pointing evidence from the gesture referent + the head point + the live
+    /// windows. Combinative (every available signal, not a priority hierarchy) and in array order so
+    /// the dedup below keeps the strongest surface first:
+    ///   • The gesture branch LEADS — a locked gesture referent is the strongest target signal, so
+    ///     its surface wins the dedup. Mirrors buildPointingEvidence's `gesture` push + the
+    ///     `wrist-ray-position` cursor entry (added when no locked referent already carries a cursor).
     ///   • `face-tracker-position` — the head cursor as a fixed-0.5-confidence positional cue.
     ///   • `head-neighborhood` (one per ranked candidate) — the window the point fell in/near, its
     ///     closeness `score` carried as the pointing confidence so `candidateSurfaces` ranks it.
     ///   • `head-neighborhood-empty` — a 0-confidence marker when a head point exists but no window
     ///     is in its neighborhood, so the resolver still sees that a face was tracked.
-    /// With no head point at all, fall back to the active window as a cursor cue so tick 0 still
-    /// carries a candidate surface (the loop also grounds on the active window every later tick).
+    /// With NO gesture and NO head signal at all, fall back to the active window as a cursor cue so
+    /// tick 0 still carries a candidate surface (the loop also grounds on the active window every
+    /// later tick).
     static func build(
         head: HeadPoint?,
         windows: [CuaWindow],
+        gesture: GestureReferent? = nil,
         radius: Double = AttentionRanking.defaultRadius
     ) -> Built {
         var evidence: [Contracts.PointingEvidence] = []
+
+        // Gesture branch (buildPointingEvidence lines 83-96): the locked referent leads, then the
+        // wrist-ray cursor position (even without a lock). The cursor entry is skipped when a locked
+        // referent already carries a cursor — faithful to the desktop's `!gesture || !gesture.cursor`.
+        if let gesture {
+            if let locked = gesture.evidence {
+                evidence.append(locked)
+            }
+            if let cursor = gesture.cursor, gesture.evidence == nil || gesture.evidence?.cursor == nil {
+                evidence.append(Contracts.PointingEvidence(
+                    source: .gesture,
+                    confidence: gesture.evidence?.confidence ?? 0.3,
+                    strategy: "wrist-ray-position",
+                    surface: nil,
+                    cursor: cursor))
+            }
+        }
 
         if let head {
             let cursor = Contracts.PointingEvidence.Cursor(x: head.x, y: head.y)
@@ -92,9 +116,10 @@ enum HeadPointingFusion {
             }
         }
 
-        // No head signal → fall back to the active window as a cursor cue (buildPointingEvidence's
-        // active-window fallback). Empty only when the driver reported no windows, in which case the
-        // loop still grounds on its own per-tick observation, exactly as the speech-only path did.
+        // No gesture AND no head signal → fall back to the active window as a cursor cue
+        // (buildPointingEvidence's active-window fallback, reached only when the combined evidence is
+        // still empty). Empty only when the driver reported no windows, in which case the loop still
+        // grounds on its own per-tick observation, exactly as the speech-only path did.
         if evidence.isEmpty, let active = windows.first(where: \.focused) ?? windows.first {
             evidence.append(Contracts.PointingEvidence(
                 source: .cursor, confidence: 1, strategy: "active-window-current-cursor",
@@ -125,6 +150,10 @@ enum HeadPointingFusion {
 struct HeadPointingIntake: IntentIntake {
     let snapshot: HeadPointSnapshot
     let driver: any CuaLoopDriver
+    /// The hand-gesture lane's latest referent/cursor (the ported `ReferentLoop` output, recorded by
+    /// the live gesture consumer). Optional so the head-only path and tests stay unchanged; when nil
+    /// no gesture branch is folded in.
+    var gesture: GestureSnapshot? = nil
     var radius: Double = AttentionRanking.defaultRadius
 
     func makeInput(
@@ -137,9 +166,11 @@ struct HeadPointingIntake: IntentIntake {
         } else {
             windows = []
         }
-        let built = HeadPointingFusion.build(head: snapshot.current, windows: windows, radius: radius)
+        let gestureReferent = gesture?.current
+        let built = HeadPointingFusion.build(
+            head: snapshot.current, windows: windows, gesture: gestureReferent, radius: radius)
         DirectorDiagnostics.loop.info(
-            "head intake head=\(snapshot.current != nil, privacy: .public) windows=\(windows.count, privacy: .public) evidence=\(built.pointingEvidence.count, privacy: .public) candidates=\(built.surfaceCandidates.count, privacy: .public)")
+            "intake head=\(snapshot.current != nil, privacy: .public) gesture=\(gestureReferent?.isEmpty == false, privacy: .public) windows=\(windows.count, privacy: .public) evidence=\(built.pointingEvidence.count, privacy: .public) candidates=\(built.surfaceCandidates.count, privacy: .public)")
         return Contracts.IntentInput(
             sessionId: sessionId,
             finalTranscript: finalTranscript,

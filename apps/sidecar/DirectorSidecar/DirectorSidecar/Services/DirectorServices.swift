@@ -8,10 +8,12 @@
 //  builds them so their lifecycle can be bound to the app (see `ServiceCoordinator`).
 //
 //  Divergence from PORTING.md's aspirational `cua/readiness/speech/hotkey/overlay/headPointer`
-//  shape is deliberate: this codebase does not (yet) have standalone `readiness`/`hotkey`/`overlay`
-//  service objects — readiness is derived from `cua.checkPermissions()` + the engine bridge, the
-//  hotkey lives in `SurfaceHost.installFnHold`, and the overlay is the already-wired
-//  `OverlayController`/`OverlayModel`. Only the three REAL ported services live here; fabricating
+//  shape is deliberate: this codebase does not (yet) have standalone `readiness`/`overlay`
+//  service objects — readiness is derived from `cua.checkPermissions()` + the engine bridge, and
+//  the overlay is the already-wired `OverlayController`/`OverlayModel`. The hotkey IS a real ported
+//  service (`FnHotkeyService`, the global fn CGEventTap) but the app owns it directly (instantiated
+//  in `DirectorSidecarApp`) rather than through this container. Only the three engine-lifecycle
+//  services (cua / speech / head pointer) the coordinator binds live here; fabricating
 //  empty service slots would be a dead surface (the same "no unfed surface" rule the overlay/
 //  head-track folds followed).
 //
@@ -38,14 +40,23 @@ struct DirectorServices {
     /// events are the real source of the Director (`.user`) cursor in a non-mock run.
     let headPointer: HeadPointerService
 
+    /// In-process front-camera hand landmarker (Vision `VNDetectHumanHandPoseRequest`) — the live
+    /// SOURCE of the ported gesture pipeline. Its `DetectionResult` frames drive the
+    /// `ReferentLoop` so a pointed hand moves the Director cursor and grounds the intent (the seam
+    /// `GestureReferentFusion`/`GestureSnapshot` were waiting on). Runs its own session alongside
+    /// `headPointer`; the coordinator arbitrates hand-over-head for the cursor.
+    let handPointer: HandLandmarkerService
+
     init(
         cua: CuaDriverService,
         speech: SpeechService.OnDeviceStream,
-        headPointer: HeadPointerService
+        headPointer: HeadPointerService,
+        handPointer: HandLandmarkerService
     ) {
         self.cua = cua
         self.speech = speech
         self.headPointer = headPointer
+        self.handPointer = handPointer
     }
 
     /// Build the real services. Kept as a no-argument init (not default arguments) because
@@ -56,7 +67,8 @@ struct DirectorServices {
         self.init(
             cua: CuaDriverService(),
             speech: SpeechService.OnDeviceStream(),
-            headPointer: HeadPointerService()
+            headPointer: HeadPointerService(),
+            handPointer: HandLandmarkerService()
         )
     }
 }

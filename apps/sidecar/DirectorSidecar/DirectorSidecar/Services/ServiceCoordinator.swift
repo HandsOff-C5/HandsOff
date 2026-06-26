@@ -53,8 +53,24 @@ protocol SpeechStreaming: AnyObject {
     func stop()
 }
 
+/// The hand-landmarker facade the coordinator drives (the live gesture SOURCE — Vision hand pose
+/// → the ported pipeline). `HandLandmarkerService` already has this exact surface; the protocol
+/// exists only to inject a fake under test (a camera can't run under headless `xcodebuild`).
+@MainActor
+protocol HandSensing: AnyObject {
+    /// Typed feed of parsed hand frames + FPS (the `LandmarkProcessor` output).
+    nonisolated var events: AsyncStream<DetectionResult> { get }
+    /// Turn the camera capture session on. Idempotent.
+    func start()
+    /// Turn the camera capture session off. The `events` stream stays open for a later `start()`.
+    func stop()
+    /// Permanently stop and finish the `events` stream (host teardown).
+    func finish()
+}
+
 extension HeadPointerService: HeadSensing {}
 extension SpeechService.OnDeviceStream: SpeechStreaming {}
+extension HandLandmarkerService: HandSensing {}
 
 // MARK: - Head point → cursor projection (pure, unit-tested)
 
@@ -86,6 +102,29 @@ enum HeadPointerBridge {
     }
 }
 
+// MARK: - Gesture referent → cursor projection (pure, unit-tested)
+
+/// Projects a gesture `ReferentLoopResult` onto the bridge `cursorPosition` wire `Pointer` — the SAME
+/// single `.user` Director cursor the head feeds (last writer wins; the coordinator arbitrates so the
+/// hand takes precedence while a hand is present). The loop's `point` is already in contract space
+/// (virtual-desktop px, top-left/y-down) because the app builds the loop with a normalized→screen
+/// transform, so x/y pass straight through with no re-flip.
+enum GestureReferentBridge {
+    static func pointer(from result: ReferentLoopResult, ts: Double) -> Pointer {
+        Pointer(
+            x: result.point.x,
+            y: result.point.y,
+            space: HeadPointerBridge.space,
+            kind: HeadPointerBridge.userKind,
+            agentId: nil,
+            agentLabel: nil,
+            state: "moving",
+            confidence: result.reliability,
+            ts: ts
+        )
+    }
+}
+
 // MARK: - Coordinator
 
 @MainActor
@@ -96,8 +135,23 @@ final class ServiceCoordinator {
     private let onHeadPoint: (HeadPoint) -> Void
     private let onSpeech: (SpeechService.Event) -> Void
 
+    // Hand-gesture lane (optional — absent in the existing lifecycle tests, which omit it). When a
+    // `hand` sensor AND a `loop` are supplied, the coordinator drives the ported `ReferentLoop` off
+    // the hand frames: a pointed hand moves the `.user` cursor and records a `GestureReferent` for
+    // the intent intake. The hand takes precedence over the head cursor while a hand is present.
+    private let hand: (any HandSensing)?
+    private let loop: ReferentLoop?
+    private let gestureSurfaces: [Contracts.Surface]
+    private let onGesturePointer: (Pointer) -> Void
+    private let onGestureReferent: (GestureReferent) -> Void
+
     private var headConsumer: Task<Void, Never>?
     private var speechConsumer: Task<Void, Never>?
+    private var handConsumer: Task<Void, Never>?
+    /// Timestamp of the last processed hand frame, for the loop's per-frame `dt`.
+    private var lastHandTs: Double?
+    /// True while a hand is visible this run — suppresses the head cursor so the two don't fight.
+    private var handCursorActive = false
 
     /// True between `setSensing(true)` and `setSensing(false)` — the camera/mic are up.
     private(set) var isSensing = false
@@ -108,26 +162,43 @@ final class ServiceCoordinator {
     init(
         head: any HeadSensing,
         speech: any SpeechStreaming,
+        hand: (any HandSensing)? = nil,
+        loop: ReferentLoop? = nil,
+        gestureSurfaces: [Contracts.Surface] = [],
         onHeadPointer: @escaping (Pointer) -> Void,
         onHeadPoint: @escaping (HeadPoint) -> Void = { _ in },
-        onSpeech: @escaping (SpeechService.Event) -> Void = { _ in }
+        onSpeech: @escaping (SpeechService.Event) -> Void = { _ in },
+        onGesturePointer: @escaping (Pointer) -> Void = { _ in },
+        onGestureReferent: @escaping (GestureReferent) -> Void = { _ in }
     ) {
         self.head = head
         self.speech = speech
+        self.hand = hand
+        self.loop = loop
+        self.gestureSurfaces = gestureSurfaces
         self.onHeadPointer = onHeadPointer
         self.onHeadPoint = onHeadPoint
         self.onSpeech = onSpeech
+        self.onGesturePointer = onGesturePointer
+        self.onGestureReferent = onGestureReferent
     }
 
-    /// Convenience: build from the concrete service container.
+    /// Convenience: build from the concrete service container. Supplying a `loop` (built by the app
+    /// with a screen-spanning calibration) activates the live hand-gesture lane off `services.handPointer`.
     convenience init(
         services: DirectorServices,
+        loop: ReferentLoop? = nil,
+        gestureSurfaces: [Contracts.Surface] = [],
         onHeadPointer: @escaping (Pointer) -> Void,
         onHeadPoint: @escaping (HeadPoint) -> Void = { _ in },
-        onSpeech: @escaping (SpeechService.Event) -> Void = { _ in }
+        onSpeech: @escaping (SpeechService.Event) -> Void = { _ in },
+        onGesturePointer: @escaping (Pointer) -> Void = { _ in },
+        onGestureReferent: @escaping (GestureReferent) -> Void = { _ in }
     ) {
         self.init(head: services.headPointer, speech: services.speech,
-                  onHeadPointer: onHeadPointer, onHeadPoint: onHeadPoint, onSpeech: onSpeech)
+                  hand: services.handPointer, loop: loop, gestureSurfaces: gestureSurfaces,
+                  onHeadPointer: onHeadPointer, onHeadPoint: onHeadPoint, onSpeech: onSpeech,
+                  onGesturePointer: onGesturePointer, onGestureReferent: onGestureReferent)
     }
 
     // MARK: Lifecycle
@@ -144,6 +215,16 @@ final class ServiceCoordinator {
                 await self?.handle(event)
             }
         }
+
+        // The hand-gesture feed (when wired): drive the ported `ReferentLoop` off each parsed frame.
+        if let hand, loop != nil {
+            let handEvents = hand.events  // AsyncStream<DetectionResult> is Sendable
+            handConsumer = Task { [weak self] in
+                for await result in handEvents {
+                    await self?.handleHand(result)
+                }
+            }
+        }
     }
 
     /// Bring the front-camera head pointer and on-device mic up (`on == true`) or down. No-op if the
@@ -154,10 +235,14 @@ final class ServiceCoordinator {
         if on {
             DirectorDiagnostics.services.info("sensing on")
             head.start()
+            hand?.start()
             startSpeech()
         } else {
             DirectorDiagnostics.services.info("sensing off")
             head.stop()
+            hand?.stop()
+            handCursorActive = false
+            lastHandTs = nil
             stopSpeech()
         }
     }
@@ -170,12 +255,16 @@ final class ServiceCoordinator {
         isTornDown = true
         if isSensing {
             head.stop()
+            hand?.stop()
             stopSpeech()
             isSensing = false
         }
         head.finish()
+        hand?.finish()
         headConsumer?.cancel()
         headConsumer = nil
+        handConsumer?.cancel()
+        handConsumer = nil
     }
 
     // MARK: Internals
@@ -187,7 +276,10 @@ final class ServiceCoordinator {
             // Two consumers off the one feed: the overlay cursor (projected to a `Pointer`) and the
             // intent — the raw head point lands in the shared snapshot the loop's HeadPointingIntake
             // reads at goal start, so a look reaches the resolver, not just the on-screen reticle.
-            onHeadPointer(HeadPointerBridge.pointer(from: point))
+            // Arbitration: while a hand is pointing, the HAND owns the cursor — suppress the head
+            // cursor so the two feeds don't fight over the single `.user` reticle. The head still
+            // grounds the intent (the snapshot) regardless.
+            if !handCursorActive { onHeadPointer(HeadPointerBridge.pointer(from: point)) }
             onHeadPoint(point)
         case .started:
             DirectorDiagnostics.services.info("head pointer started")
@@ -199,6 +291,27 @@ final class ServiceCoordinator {
             // points. (A future surface could reflect `.error` as a degraded-readiness signal.)
             break
         }
+    }
+
+    /// Drive the ported gesture pipeline off one live hand frame: run it through the `ReferentLoop`,
+    /// move the `.user` cursor to the wrist-ray point (taking precedence over the head while a hand
+    /// is present), and record the `GestureReferent` for the intent intake. Errors are swallowed —
+    /// a malformed frame must not break the feed (the loop already validated the 21-landmark shape).
+    private func handleHand(_ result: DetectionResult) {
+        guard let loop else { return }
+        let frame = result.frame
+        // Per-frame dt from the frame clock (ms); first frame falls back to a 30fps step.
+        let dt = lastHandTs.map { frame.timestampMs - $0 } ?? (1000.0 / 30.0)
+        lastHandTs = frame.timestampMs
+        guard let loopResult = try? loop.process(frame, dt) else { return }
+
+        // A hand present this frame (the loop sets a positive fusion weight only with a hand) owns
+        // the cursor; no hand → release it so the head can drive again.
+        handCursorActive = loopResult.reliability > 0
+        if handCursorActive {
+            onGesturePointer(GestureReferentBridge.pointer(from: loopResult, ts: frame.timestampMs))
+        }
+        onGestureReferent(GestureReferentFusion.referent(from: loopResult, surfaces: gestureSurfaces))
     }
 
     private func startSpeech() {
@@ -214,8 +327,12 @@ final class ServiceCoordinator {
 
     private func stopSpeech() {
         DirectorDiagnostics.services.info("speech stream stop")
+        // `speech.stop()` emits the final transcript (synthesized from the last partial on fn
+        // release) and THEN finishes the stream. Do NOT cancel the consumer here — cancelling
+        // mid-stop drops the buffered `.final` before it reaches the loop. Releasing our handle is
+        // enough: the consumer drains the final and ends naturally when the finished stream closes
+        // its `for await`.
         speech.stop()
-        speechConsumer?.cancel()
         speechConsumer = nil
     }
 
