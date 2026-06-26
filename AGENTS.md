@@ -85,6 +85,43 @@ open -n apps/desktop/src-tauri/target/debug/bundle/macos/HandsOff.app
 
 Worker deploy + a curl smoke test live in `workers/assemblyai-token/README.md`; the LLM intent Worker in `workers/llm-intent/README.md`. Head tracking follows the same TCC rule and must not require Input Monitoring.
 
+## Building & running the Director sidecar (native Swift app)
+
+`apps/sidecar/DirectorSidecar` is a **separate** native SwiftUI app (Xcode project, product `Director.app`) — not the Tauri bundle above. Its hands-off triggers need macOS privacy grants that ad-hoc signing keeps wiping on every rebuild, so the preferred loop is **build → re-sign with a stable identity → launch non-mock**:
+
+```bash
+PROJ=apps/sidecar/DirectorSidecar
+
+# 1. Build (ad-hoc, the Xcode default).
+xcodebuild -project "$PROJ/DirectorSidecar.xcodeproj" -scheme DirectorSidecar \
+  -configuration Debug -destination 'platform=macOS' build
+APP=$(ls -td ~/Library/Developer/Xcode/DerivedData/DirectorSidecar-*/Build/Products/Debug/Director.app | head -1)
+
+# 2. Re-sign with your Apple Development cert so TCC grants survive rebuilds.
+#    Find yours with: security find-identity -v -p codesigning
+IDENTITY="Apple Development: junnaama@gmail.com (29PCUA5G33)"
+codesign --force --deep --sign "$IDENTITY" \
+  --entitlements "$PROJ/DirectorSidecar/DirectorSidecar.entitlements" "$APP"
+
+# 3. Launch non-mock. Director reads its secrets from the environment at RUNTIME
+#    (no option_env! baking like the Tauri app), so pass them via --env.
+set -a; . apps/desktop/.env.local; set +a
+open -n "$APP" \
+  --env "HANDSOFF_INTENT_WORKER_URL=$HANDSOFF_INTENT_WORKER_URL" \
+  --env "HANDSOFF_INTENT_APP_AUTH_TOKEN=$HANDSOFF_INTENT_APP_AUTH_TOKEN" \
+  --env "HANDSOFF_STT_TOKEN_WORKER_URL=$HANDSOFF_STT_TOKEN_WORKER_URL" \
+  --env "HANDSOFF_STT_APP_AUTH_TOKEN=$HANDSOFF_STT_APP_AUTH_TOKEN" \
+  --env "DIRECTOR_MOCK_FLEET=0" \
+  --env "PATH=$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+```
+
+- **Why re-sign (step 2 is the important one).** An ad-hoc signature's designated requirement is the binary's cdhash, which changes on every build — so macOS TCC revokes Accessibility / Input Monitoring / Screen Recording each rebuild and the fn hotkey + CUA silently stop working. Signing with the Apple Development cert gives a **cert-based** designated requirement (`certificate leaf[subject.CN] = "Apple Development: …"`) that is identical across rebuilds: grant the permissions **once** and they persist. Verify with `codesign -d -r- "$APP"`.
+- **Why not Xcode automatic signing.** No Apple ID is logged into Xcode for this team, so automatic provisioning fails (`No signing certificate "Mac Development" found`). The manual `codesign` re-sign sidesteps Xcode's provisioning entirely and uses the cert already in the keychain. (If you log your Apple ID into Xcode, automatic signing with `DEVELOPMENT_TEAM` set would also work and could replace step 2.)
+- **Grants needed** (System Settings ▸ Privacy & Security, grant once after step 2): the global fn (Globe) hotkey needs **Accessibility** + **Input Monitoring**; CUA window perception needs **Screen Recording**. Also set Keyboard ▸ "Press fn (Globe) key to" → **Do Nothing** so macOS doesn't swallow the bare fn.
+- **App Sandbox is off** (`ENABLE_APP_SANDBOX=NO` + the entitlement) on purpose: a sandboxed app cannot be a trusted Accessibility client, which the session-wide CGEventTap requires.
+- **`DIRECTOR_MOCK_FLEET=0`** runs the real CUA fleet (omit or `=1` for the mock fleet); `~/.local/bin` must be on `PATH` so `cua-driver` resolves.
+- **Always launch with `open -n`**, never `Contents/MacOS/Director` directly — direct exec bypasses LaunchServices, breaking the bundle/Info.plist + TCC identity association and crashing on signing/dylib checks. `--env` does put the token values in the process list (`ps`); that is inherent to Director's runtime-env model — never type the literal secrets, always expand them from the sourced `.env.local`.
+
 ## Performance
 
 **Context management:** Avoid last 20% of context window for large refactoring and multi-file features. Lower-sensitivity tasks (single edits, docs, simple fixes) tolerate higher utilization.
