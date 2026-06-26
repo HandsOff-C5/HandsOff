@@ -154,12 +154,25 @@ enum CuaWire {
         )
     }
 
-    /// Decode the window list and mark the single frontmost (max `zIndex`) window focused — the
-    /// binder resolves a head/hand point to the frontmost window under it.
+    /// App names whose windows the supervision loop must never observe or act on — the automation
+    /// infrastructure itself. The cua-driver DAEMON paints a full-screen "Cua Driver" window (its own
+    /// capture surface) that otherwise wins the max-`zIndex` "frontmost" inference below, so every
+    /// observe tick would read the DRIVER's own window (0 AX elements) instead of the user's target
+    /// app — the loop then spins relaunching apps and never finds anything to act on. "Director" is our
+    /// own app; the agent must never drive itself either.
+    static let nonActionableApps: Set<String> = ["Cua Driver", "Director"]
+
+    /// Decode the window list, DROP the automation-infrastructure windows, and mark the single
+    /// frontmost (max `zIndex`) of the REMAINING real windows focused — the binder resolves a head/hand
+    /// point to the frontmost window under it, and the observe loop reads that window's state. (Falls
+    /// back to the unfiltered list in the degenerate case where only infrastructure windows exist, so
+    /// the loop never observes an empty desktop.)
     static func decodeWindows(_ data: Data) throws -> [CuaWindow] {
         let list = try driverDecoder().decode(DriverWindowList.self, from: data)
-        let frontmost = list.windows.map(\.zIndex).max()
-        return list.windows.map { map(window: $0, focused: $0.zIndex == frontmost) }
+        let actionable = list.windows.filter { !nonActionableApps.contains($0.appName) }
+        let windows = actionable.isEmpty ? list.windows : actionable
+        let frontmost = windows.map(\.zIndex).max()
+        return windows.map { map(window: $0, focused: $0.zIndex == frontmost) }
     }
 
     // MARK: Window state & screenshot

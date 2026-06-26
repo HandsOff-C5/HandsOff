@@ -96,6 +96,25 @@ private let sampleSurface = CuaWindow(
     #expect(safari.bounds == nil)            // unmeasured window degrades to no geometry
 }
 
+@Test func dropsAutomationInfrastructureWindowsAndRefocusesRealFrontmost() throws {
+    // The cua-driver daemon paints a full-screen "Cua Driver" window with the HIGHEST z-index; it
+    // must be dropped so the observe loop reads the real frontmost app (Notes), not the driver's own
+    // 0-element surface. "Director" (our own app) is dropped too.
+    let json = #"""
+    {"windows":[
+      {"app_name":"Cua Driver","title":"","pid":999,"window_id":1,"is_on_screen":true,"z_index":99},
+      {"app_name":"Director","title":"Director","pid":998,"window_id":2,"is_on_screen":true,"z_index":50},
+      {"app_name":"Notes","title":"Note","pid":42,"window_id":7,"is_on_screen":true,"z_index":10},
+      {"app_name":"Safari","title":"Start","pid":50,"window_id":3,"is_on_screen":true,"z_index":20}
+    ]}
+    """#
+    let windows = try CuaWire.decodeWindows(Data(json.utf8))
+    #expect(windows.count == 2)                              // Cua Driver + Director dropped
+    #expect(windows.allSatisfy { $0.app != "Cua Driver" && $0.app != "Director" })
+    let focused = windows.first { $0.focused }
+    #expect(focused?.app == "Safari")                        // frontmost among the REAL windows
+}
+
 @Test func offscreenWindowReportsUnknownAvailability() throws {
     let json = #"{"windows":[{"app_name":"Mail","title":"Inbox","pid":9,"window_id":1,"is_on_screen":false,"z_index":5}]}"#
     let windows = try CuaWire.decodeWindows(Data(json.utf8))
