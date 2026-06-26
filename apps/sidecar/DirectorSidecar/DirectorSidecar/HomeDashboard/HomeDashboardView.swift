@@ -40,11 +40,17 @@ struct HomeDashboardView: View {
     // MARK: detail
 
     @ViewBuilder private var detail: some View {
+        tabContent
+            .navigationTitle(model.tab.rawValue) // the active tab's name on the left
+            // Persistent across tabs, on the right: the Activate/Deactivate control (system-level),
+            // with the listening waveform appearing to its left while active.
+            .toolbar { ToolbarItem(placement: .primaryAction) { ActivateControl(store: store) } }
+    }
+
+    @ViewBuilder private var tabContent: some View {
         switch model.tab {
         case .home:
             homeColumn
-                .navigationTitle("Home")
-                .toolbar { ToolbarItem(placement: .navigation) { ActivateButton(store: store) } }
                 .inspector(isPresented: .constant(model.selectedSessionId != nil)) {
                     InspectorView(model: model)
                         .inspectorColumnWidth(min: 280, ideal: 300, max: 360)
@@ -54,7 +60,6 @@ struct HomeDashboardView: View {
                 title: "Briefs", icon: "command",
                 blurb: "Save an intention once, then say a word to run it.\n“Ship the PR.”  “Summarize this to #eng.”  “Draft my standup.”"
             )
-            .navigationTitle("Briefs")
         case .settings:
             DashboardSettingsView()
         }
@@ -104,7 +109,8 @@ struct HomeDashboardView: View {
 
     private func card(_ session: SessionVM) -> some View {
         AgentCard(session: session, selected: session.id == model.selectedSessionId,
-                  paused: store.isPaused(session.id))
+                  paused: store.isPaused(session.id),
+                  onTogglePause: { store.togglePaused(session.id) })
             .onTapGesture { model.select(session.id) }
     }
 
@@ -132,6 +138,21 @@ struct HomeDashboardView: View {
 }
 
 // MARK: - Components
+
+/// The persistent right-side toolbar control: the system listening waveform (only while active)
+/// to the LEFT of the Activate/Deactivate button — listening is system-level, not per-agent.
+private struct ActivateControl: View {
+    let store: BridgeStore
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if store.isListening {
+                ListeningWaveform(maxHeight: 13, minHeight: 4)
+            }
+            ActivateButton(store: store)
+        }
+    }
+}
 
 /// The toolbar's primary control — toggles listening with the same copy + action as the menu's
 /// "Activate/Deactivate Director". On-brand gold (dark ink on gold, never white-on-gold).
