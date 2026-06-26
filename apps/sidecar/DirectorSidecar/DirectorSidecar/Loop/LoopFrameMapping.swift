@@ -123,6 +123,124 @@ enum LoopFrameMapping {
             latencyMs: latencyMs,
             receivedAt: receivedAt)
     }
+
+    // MARK: - Audit projection (H4 — the Intention Log made visible)
+
+    /// The loop's `[Contracts.SupervisionAuditEvent]` → the `audit` topic `AuditLogPayload` the log
+    /// views render. Oldest-first (the recording order). Each row is flattened to a one-line summary
+    /// plus — for the per-call `tool_call` record — the tool / derived risk / approval / result the
+    /// Intention Log replays. The array ordinal is folded into the row id so the SAME-`recordedAt`
+    /// steps of one tick stay distinct (the TS log keyed `${kind}-${recordedAt}-${index}` for this).
+    static func auditLog(_ events: [Contracts.SupervisionAuditEvent]) -> AuditLogPayload {
+        AuditLogPayload(entries: events.enumerated().map { ordinal, event in
+            auditEntry(event, ordinal: ordinal)
+        })
+    }
+
+    /// One `SupervisionAuditEvent` → one `AuditLogEntry`. The structured tool/risk/approval/result
+    /// fields are populated ONLY for `.toolCall`; every other kind carries just its summary line.
+    static func auditEntry(_ event: Contracts.SupervisionAuditEvent, ordinal: Int) -> AuditLogEntry {
+        let base = event.base
+        let id = "\(base.sessionId)#\(ordinal)"
+        switch event {
+        case let .toolCall(_, call):
+            return AuditLogEntry(
+                id: id, sessionId: base.sessionId, actionId: base.actionId,
+                kind: .toolCall, recordedAt: base.recordedAt, summary: auditSummary(event),
+                tool: call.tool.rawValue, risk: call.risk,
+                approval: auditApproval(call.approval), result: resultStatus(call.result))
+        case .intentCreated:
+            return auditEntry(id, base, .intentCreated, event)
+        case .approvalDecided:
+            return auditEntry(id, base, .approvalDecided, event)
+        case .cuaStateCaptured:
+            return auditEntry(id, base, .cuaStateCaptured, event)
+        case .cuaCall:
+            return auditEntry(id, base, .cuaCall, event)
+        case .executionFinished:
+            return auditEntry(id, base, .executionFinished, event)
+        }
+    }
+
+    /// A non-`tool_call` entry: summary only, no per-call provenance.
+    private static func auditEntry(
+        _ id: String, _ base: Contracts.SupervisionAuditEvent.Base,
+        _ kind: AuditLogEntry.Kind, _ event: Contracts.SupervisionAuditEvent
+    ) -> AuditLogEntry {
+        AuditLogEntry(
+            id: id, sessionId: base.sessionId, actionId: base.actionId,
+            kind: kind, recordedAt: base.recordedAt, summary: auditSummary(event),
+            tool: nil, risk: nil, approval: nil, result: nil)
+    }
+
+    /// The human-readable Intention Log line — a faithful port of the TS SessionsPanel `eventSummary`
+    /// (every one of the six audit kinds). `summarizeCuaFailure` (a friendlier-message enrichment) is
+    /// not ported; the TS already falls back to `reason`/`error`, which is what `actionResultSummary`
+    /// returns here.
+    static func auditSummary(_ event: Contracts.SupervisionAuditEvent) -> String {
+        switch event {
+        case let .intentCreated(_, intent):
+            switch intent {
+            case let .ready(ready): return "Plan ready: \(ready.actionPlan.summary)"
+            case let .satisfied(satisfied): return "Satisfied: \(satisfied.summary)"
+            case let .blocked(pending): return "Blocked: \(pending.reason)"
+            case let .needsClarification(pending): return "Blocked: \(pending.reason)"
+            }
+        case let .approvalDecided(_, approval):
+            return "Approval \(approval.decision.rawValue)"
+        case let .cuaCall(_, _, request, result):
+            return "CUA \(cuaRequestKind(request)): \(actionResultSummary(result))"
+        case let .toolCall(_, call):
+            // Per-call Intention Log line (U3): tool · approval state · result.
+            return "Tool \(call.tool.rawValue) [\(call.approval.rawValue)]: \(actionResultSummary(call.result))"
+        case let .executionFinished(_, status, result):
+            let detail = result.map { ": \(actionResultSummary($0))" } ?? ""
+            return "Finished: \(status.rawValue)\(detail)"
+        case let .cuaStateCaptured(_, phase, _, _):
+            return "\(phase == .pre ? "Before" : "After") state captured"
+        }
+    }
+
+    /// `actionResultSummary`: the succeeded summary, else the blocked reason / failed error.
+    static func actionResultSummary(_ result: Contracts.CuaActionResult) -> String {
+        switch result {
+        case let .succeeded(summary, _): return summary
+        case let .blocked(reason, _): return reason
+        case let .failed(error, _): return error
+        }
+    }
+
+    private static func resultStatus(_ result: Contracts.CuaActionResult) -> AuditLogEntry.ResultStatus {
+        switch result {
+        case .succeeded: return .succeeded
+        case .failed: return .failed
+        case .blocked: return .blocked
+        }
+    }
+
+    private static func auditApproval(
+        _ approval: Contracts.SupervisionAuditEvent.ToolCallApproval
+    ) -> AuditLogEntry.Approval {
+        switch approval {
+        case .auto: return .auto
+        case .approved: return .approved
+        case .rejected: return .rejected
+        }
+    }
+
+    /// The `cua_call` request's wire kind — mirrors the TS `event.request.kind`. (The autonomous loop
+    /// records only `tool_call`/`intent_created`/`execution_finished`; this keeps the legacy
+    /// six-kind request faithful for any `cua_call` that arrives over the wire.)
+    private static func cuaRequestKind(_ request: Contracts.CuaActionRequest) -> String {
+        switch request {
+        case .launchApp: return "launch_app"
+        case .getWindowState: return "get_window_state"
+        case .click: return "click"
+        case .typeText: return "type_text"
+        case .setValue: return "set_value"
+        case .screenshot: return "screenshot"
+        }
+    }
 }
 
 // MARK: - FinalTranscript construction seam

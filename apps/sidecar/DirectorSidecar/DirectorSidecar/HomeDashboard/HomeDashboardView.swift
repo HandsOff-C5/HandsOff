@@ -52,6 +52,8 @@ struct HomeDashboardView: View {
         switch nav {
         case .agents:
             agentsColumn
+        case .logs:
+            IntentionLogView(entries: model.auditLog)
         default:
             ContentUnavailableView("Coming soon", systemImage: nav.icon,
                                    description: Text("\(nav.rawValue) lands after the demo."))

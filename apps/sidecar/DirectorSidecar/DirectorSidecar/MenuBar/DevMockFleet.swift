@@ -51,6 +51,32 @@ enum DevMockFleet {
         ], counts: nil)
     }
 
+    /// A canned Intention Log for the selected agent so the "Agent Logs" view (H4) demos with real
+    /// rows — an intent, two gated tool calls (read auto-run + a mutating one approved), and the
+    /// finish — exercising the risk / approval / result chips.
+    static func auditLog(now: Date) -> AuditLogPayload {
+        let iso = ISO8601DateFormatter()
+        func at(_ offset: TimeInterval) -> String { iso.string(from: now.addingTimeInterval(offset)) }
+        return AuditLogPayload(entries: [
+            AuditLogEntry(
+                id: "session-1#0", sessionId: "session-1", actionId: "intent-1", kind: .intentCreated,
+                recordedAt: at(-90), summary: "Plan ready: Summarize GitHub issue 42",
+                tool: nil, risk: nil, approval: nil, result: nil),
+            AuditLogEntry(
+                id: "session-1#1", sessionId: "session-1", actionId: "intent-1", kind: .toolCall,
+                recordedAt: at(-86), summary: "Tool get_window_state [auto]: Captured GitHub — Issue 42",
+                tool: "get_window_state", risk: .readOnly, approval: .auto, result: .succeeded),
+            AuditLogEntry(
+                id: "session-1#2", sessionId: "session-1", actionId: "intent-1", kind: .toolCall,
+                recordedAt: at(-70), summary: "Tool type_text [approved]: Typed the summary into Notes",
+                tool: "type_text", risk: .mutating, approval: .approved, result: .succeeded),
+            AuditLogEntry(
+                id: "session-1#3", sessionId: "session-1", actionId: "intent-1", kind: .executionFinished,
+                recordedAt: at(-68), summary: "Finished: succeeded: Typed the summary into Notes",
+                tool: nil, risk: nil, approval: nil, result: nil),
+        ])
+    }
+
     static func mockIntent(destructive: Bool) -> ResolvedIntentLite {
         if destructive {
             return ResolvedIntentLite(
@@ -84,6 +110,7 @@ enum DevMockFleet {
         dispatch(.sessions(fleet(now: now)))
         select("session-1") // bind the Inspector to the running agent (G4b)
         dispatch(.intent(mockIntent(destructive: isDestructive)))
+        dispatch(.audit(auditLog(now: now))) // H4: populate the Agent Logs view
     }
 
     /// Activation loop (fired when the user toggles Listening on): the eye-gaze brackets morph,

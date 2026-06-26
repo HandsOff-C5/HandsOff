@@ -153,6 +153,9 @@ private func runResultFrames(_ frames: [BridgeFrame]) -> [RunResultPayload] {
 private func readinessFrames(_ frames: [BridgeFrame]) -> [ReadinessPayload] {
     frames.compactMap { if case let .state(topic, readiness) = $0, topic == "readiness" { return readiness } else { return nil } }
 }
+private func auditFrames(_ frames: [BridgeFrame]) -> [AuditLogPayload] {
+    frames.compactMap { if case let .audit(payload) = $0 { return payload } else { return nil } }
+}
 
 // MARK: - Mapping tests
 
@@ -214,6 +217,57 @@ struct LoopFrameMappingTests {
         #expect(partial.text == "he")
         #expect(final.kind == "final")
         #expect(final.confidence == 0.9)
+    }
+
+    // MARK: audit projection (H4)
+
+    @Test func auditLogProjectsToolCallProvenance() {
+        let event = Contracts.SupervisionAuditEvent.toolCall(
+            .init(sessionId: "session-1", actionId: "act-1", recordedAt: "t0"),
+            .init(transcript: "send it", referent: nil, tool: .click, target: nil,
+                  risk: .mutating, approval: .approved,
+                  result: .succeeded(summary: "Clicked Send", state: nil)))
+        let payload = LoopFrameMapping.auditLog([event])
+        #expect(payload.entries.count == 1)
+        let entry = payload.entries[0]
+        #expect(entry.kind == .toolCall)
+        #expect(entry.sessionId == "session-1")
+        #expect(entry.actionId == "act-1")
+        #expect(entry.tool == "click")
+        #expect(entry.risk == .mutating)           // derived risk surfaced as a first-class field
+        #expect(entry.approval == .approved)       // approval state surfaced
+        #expect(entry.result == .succeeded)        // result surfaced
+        #expect(entry.summary == "Tool click [approved]: Clicked Send")
+        #expect(entry.id == "session-1#0")
+    }
+
+    @Test func auditLogSummarizesNonToolCallKinds() {
+        let ready = NextToolCallResolver.nextToolCallToIntent(
+            act("scroll"), input: makeInput("scroll"), id: "i1", createdAt: "t")
+        let intentEvent = Contracts.SupervisionAuditEvent.intentCreated(
+            .init(sessionId: "s", actionId: "a", recordedAt: "t0"), intent: ready)
+        let finishEvent = Contracts.SupervisionAuditEvent.executionFinished(
+            .init(sessionId: "s", actionId: "a", recordedAt: "t1"), status: .succeeded,
+            result: .succeeded(summary: "done", state: nil))
+        let entries = LoopFrameMapping.auditLog([intentEvent, finishEvent]).entries
+        #expect(entries[0].kind == .intentCreated)
+        #expect(entries[0].summary == "Plan ready: do scroll") // ready → action_plan.summary
+        #expect(entries[0].risk == nil)                        // non-tool_call rows carry no chips
+        #expect(entries[0].id == "s#0")
+        #expect(entries[1].kind == .executionFinished)
+        #expect(entries[1].summary == "Finished: succeeded: done")
+        #expect(entries[1].id == "s#1")                        // ordinal disambiguates same recordedAt
+    }
+
+    @Test func auditResultSummaryPrefersFailureMessage() {
+        let blocked = Contracts.SupervisionAuditEvent.toolCall(
+            .init(sessionId: "s", actionId: "a", recordedAt: "t"),
+            .init(transcript: "x", referent: nil, tool: .killApp, target: nil,
+                  risk: .destructiveExternal, approval: .rejected,
+                  result: .blocked(reason: "needs approval", state: nil)))
+        let entry = LoopFrameMapping.auditLog([blocked]).entries[0]
+        #expect(entry.result == .blocked)
+        #expect(entry.summary == "Tool kill_app [rejected]: needs approval")
     }
 }
 
@@ -411,5 +465,26 @@ struct LoopEngineProjectionTests {
         await waitUntil { runResultFrames(captured.frames).contains { $0.status == .succeeded } }
         #expect(runResultFrames(captured.frames).contains { $0.status == .succeeded })
         #expect(loop.session?.status == .succeeded)
+    }
+
+    @Test func goalProjectsAuditFrameWithToolCallProvenance() async {
+        // H4: the regression. A run's per-call Intention Log must reach the UI as an `audit` frame —
+        // before this fix `emitCurrentState` never read `loop.auditEvents`, so the log was invisible.
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState())
+        let resolver = ScriptedResolver([act("scroll"), done()]) // read-only → auto-runs to success
+        let loop = makeLoop(driver: driver, resolver: resolver)
+        let (engine, captured) = makeEngine(loop: loop)
+        engine.start()
+
+        engine.ingestSpeech(.final(text: "scroll the page", confidence: 0.9, latencyMs: 1, receivedAt: 1))
+        await waitUntil { loop.session?.status == .succeeded }
+        await waitUntil { auditFrames(captured.frames).contains { p in p.entries.contains { $0.kind == .toolCall } } }
+
+        let toolCalls = auditFrames(captured.frames).flatMap(\.entries).filter { $0.kind == .toolCall }
+        #expect(!toolCalls.isEmpty)
+        #expect(toolCalls.contains { $0.tool == "scroll" })
+        #expect(toolCalls.allSatisfy { $0.risk != nil })       // every tool_call row carries derived risk
+        #expect(toolCalls.allSatisfy { $0.approval == .auto })  // read-only auto-ran, no human gate
+        #expect(toolCalls.contains { $0.result == .succeeded })
     }
 }

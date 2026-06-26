@@ -166,7 +166,7 @@ final class HUDModel {
         case let .error(reason):
             errorReason = reason
             phase = .error
-        case .state, .sessions, .cursor, .gaze, .unknown:
+        case .state, .sessions, .audit, .cursor, .gaze, .unknown:
             break // not consumed by the HUD
         }
     }

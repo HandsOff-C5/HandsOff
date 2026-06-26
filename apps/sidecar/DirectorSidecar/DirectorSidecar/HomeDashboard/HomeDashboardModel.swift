@@ -61,6 +61,9 @@ final class HomeDashboardModel {
     private(set) var loadState: LoadState = .connecting
     private(set) var selectedIntent: ResolvedIntentLite?
     private(set) var selectedRunResult: ExecutionStatus?
+    /// H4: the live Intention Log (every tool call, derived risk, approval state, result) the
+    /// "Agent Logs" view renders — fed by the `audit` topic, scoped to the current goal's session.
+    private(set) var auditLog: [AuditLogEntry] = []
     var filter: Filter = .all
     var selectedSessionId: String?
 
@@ -100,6 +103,8 @@ final class HomeDashboardModel {
         case let .intent(intent):
             selectedIntent = intent
             selectedRunResult = nil
+        case let .audit(payload):
+            auditLog = payload.entries
         case let .state(topic, readiness):
             if topic == "readiness", let readiness {
                 self.readiness = BridgeStore.readinessLevel(for: readiness.capabilities)

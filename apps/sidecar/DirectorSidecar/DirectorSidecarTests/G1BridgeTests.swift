@@ -51,6 +51,42 @@ import Foundation
     }
 }
 
+// MARK: audit topic decode (H4 — the Intention Log frame to assert against)
+
+@Test func decodesAuditFrameWithToolCallProvenance() throws {
+    let json = #"{"v":1,"type":"state","topic":"audit","payload":{"entries":[{"id":"session-1#0","sessionId":"session-1","actionId":"act-1","kind":"tool_call","recordedAt":"2026-06-24T18:00:00.000Z","summary":"Tool click [approved]: Clicked Send","tool":"click","risk":"mutating","approval":"approved","result":"succeeded"}]}}"#
+    guard case let .audit(payload) = try JSONDecoder().decode(BridgeFrame.self, from: Data(json.utf8))
+    else { Issue.record("expected an audit frame"); return }
+    #expect(payload.entries.count == 1)
+    let entry = payload.entries.first
+    #expect(entry?.kind == .toolCall)
+    #expect(entry?.sessionId == "session-1")
+    #expect(entry?.tool == "click")
+    #expect(entry?.risk == .mutating)
+    #expect(entry?.approval == .approved)
+    #expect(entry?.result == .succeeded)
+}
+
+@Test func decodesAuditFrameNonToolCallEntryOmitsChips() throws {
+    let json = #"{"v":1,"type":"state","topic":"audit","payload":{"entries":[{"id":"s#0","sessionId":"s","actionId":"a","kind":"intent_created","recordedAt":"t","summary":"Plan ready: do scroll"}]}}"#
+    guard case let .audit(payload) = try JSONDecoder().decode(BridgeFrame.self, from: Data(json.utf8))
+    else { Issue.record("expected an audit frame"); return }
+    let entry = payload.entries.first
+    #expect(entry?.kind == .intentCreated)
+    #expect(entry?.summary == "Plan ready: do scroll")
+    #expect(entry?.tool == nil)
+    #expect(entry?.risk == nil)
+    #expect(entry?.approval == nil)
+}
+
+@Test func unknownAuditApprovalFailsLoudly() {
+    // A drifted approval value must fail the frame, not silently drop the gate state.
+    let json = #"{"v":1,"type":"state","topic":"audit","payload":{"entries":[{"id":"x","sessionId":"s","actionId":"a","kind":"tool_call","recordedAt":"t","summary":"x","approval":"maybe"}]}}"#
+    #expect(throws: (any Error).self) {
+        try JSONDecoder().decode(BridgeFrame.self, from: Data(json.utf8))
+    }
+}
+
 // MARK: command encoding (§4.2)
 
 private func encodedObject(_ command: Command) throws -> [String: Any] {

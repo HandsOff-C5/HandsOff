@@ -52,7 +52,7 @@ final class GazeBracketModel {
             applyGaze(focus)
         case let .referents(payload):
             if payload.selected != nil, region != nil { phase = .confirmed }
-        case .state, .sessions, .transcript, .intent, .runResult, .cursor, .error, .unknown:
+        case .state, .sessions, .transcript, .intent, .runResult, .audit, .cursor, .error, .unknown:
             break
         }
     }

@@ -172,5 +172,11 @@ final class LoopEngine: CommandSink {
         if let runResult = loop.runResult, let sessionId = loop.session?.id {
             onFrame?(.runResult(RunResultPayload(status: runResult.status, sessionId: sessionId)))
         }
+        // H4: project the per-call Intention Log onto the `audit` topic the log views render. The
+        // loop keeps `auditEvents` scoped to the current session, so this is the live goal's log;
+        // each tick re-projects the whole (append-only) list — latest-wins, like the other frames.
+        if !loop.auditEvents.isEmpty {
+            onFrame?(.audit(LoopFrameMapping.auditLog(loop.auditEvents)))
+        }
     }
 }

@@ -84,7 +84,7 @@ final class BridgeStore {
             counts = payload.resolvedCounts
         case let .runResult(result):
             applyRunResult(result)
-        case .cursor, .transcript, .referents, .intent, .gaze, .error, .unknown:
+        case .cursor, .transcript, .referents, .intent, .audit, .gaze, .error, .unknown:
             break // the menu surface does not consume these (HUD/overlays do)
         }
     }
