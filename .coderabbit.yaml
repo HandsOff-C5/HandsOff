@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit config for the HandsOff monorepo: a native Swift macOS sidecar (DirectorSidecar),
+# a Tauri/TypeScript desktop app, shared TS packages, and Cloudflare workers.
+language: "en-US"
+tone_instructions: "Be concise and concrete. Prioritize correctness, race conditions, Swift concurrency / SwiftUI state and NSWindow lifecycle issues, and security / data-safety risks. Skip style nitpicks that eslint/prettier already enforce."
+early_access: false
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+  # Skip generated / vendored / binary noise so reviews focus on real source.
+  path_filters:
+    - "!**/*.wasm"
+    - "!**/*.pbxproj"
+    - "!**/*.xcuserstate"
+    - "!apps/desktop/public/models/**"
+    - "!apps/desktop/public/wasm/**"
+    - "!apps/desktop/src-tauri/binaries/**"
+    - "!**/pnpm-lock.yaml"
+    - "!**/Cargo.lock"
+    - "!**/*.golden.json"
+  path_instructions:
+    - path: "apps/sidecar/DirectorSidecar/**/*.swift"
+      instructions: "SwiftUI/AppKit macOS app. Watch @MainActor isolation, retain cycles in closures/controllers/observation, NSWindow/NSPanel lifecycle and event routing, and SwiftUI state/animation correctness. Prefer native macOS components over custom reimplementations."
+    - path: "apps/desktop/src/**/*.{ts,tsx}"
+      instructions: "React + Tauri renderer. Flag effect/cleanup races, missing awaits, and unhandled IPC/permission failures."
+
+chat:
+  auto_reply: true
