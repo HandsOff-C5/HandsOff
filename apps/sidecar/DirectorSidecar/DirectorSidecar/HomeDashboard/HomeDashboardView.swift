@@ -2,9 +2,11 @@
 //  HomeDashboardView.swift
 //  DirectorSidecar
 //
-//  Home Dashboard shell — NavigationSplitView (220pt sidebar). Home = the Intention Log feed;
-//  Agents = the live AgentCard fleet + Inspector; Settings (pinned bottom). Help (pinned bottom)
-//  drafts a support email. The toolbar + Inspector are scoped to the Agents tab only.
+//  Director's one window. Home is the unified supervision surface (the merged fleet + Intention
+//  Log): live agent cards grouped Needs-you → Active, then the timestamped "Earlier today" log of
+//  past intentions, with the Inspector trailing the selection. Briefs is a coming-soon tease (saved
+//  reusable commands — the validated power-user/accessibility feature). Settings + Help pin to the
+//  sidebar footer. Native SwiftUI throughout: NavigationSplitView, themed pill, no orphaned chrome.
 //
 
 import SwiftUI
@@ -16,22 +18,25 @@ struct HomeDashboardView: View {
 
     enum NavItem: String, CaseIterable, Identifiable {
         case home = "Home"
-        case agents = "Agents"
+        case briefs = "Briefs"
         case settings = "Settings"
         var id: String { rawValue }
         var icon: String {
             switch self {
             case .home: return "house"
-            case .agents: return "square.grid.2x2"
+            case .briefs: return "command"
             case .settings: return "gearshape"
             }
         }
     }
 
-    /// The primary nav (the pinned Settings + Help live in the sidebar footer, not this list).
-    private static let primaryNav: [NavItem] = [.home, .agents]
+    /// Primary nav (Settings + Help live pinned in the sidebar footer, not this list).
+    private static let primaryNav: [NavItem] = [.home, .briefs]
 
     @State private var nav: NavItem = .home
+
+    private var needsYou: [SessionVM] { model.sessions.filter(\.needsGreenlight) }
+    private var active: [SessionVM] { model.sessions.filter(\.isRunning) }
 
     var body: some View {
         NavigationSplitView {
@@ -51,17 +56,69 @@ struct HomeDashboardView: View {
     @ViewBuilder private var detail: some View {
         switch nav {
         case .home:
-            HomeFeedView(entries: model.intentions)
-        case .agents:
-            agentsColumn
-                .toolbar { agentsToolbar }
+            homeColumn
+                .navigationTitle("Home")
+                .toolbar { ToolbarItem(placement: .navigation) { ListeningPill(level: model.readiness) } }
                 .inspector(isPresented: .constant(model.selectedSessionId != nil)) {
                     InspectorView(model: model)
                         .inspectorColumnWidth(min: 280, ideal: 300, max: 360)
                 }
+        case .briefs:
+            ComingSoonView(
+                title: "Briefs", icon: "command",
+                blurb: "Save an intention once, then say a word to run it.\n“Ship the PR.”  “Summarize this to #eng.”  “Draft my standup.”"
+            )
+            .navigationTitle("Briefs")
         case .settings:
             DashboardSettingsView()
         }
+    }
+
+    // MARK: Home — the unified supervision surface
+
+    @ViewBuilder private var homeColumn: some View {
+        switch model.loadState {
+        case .error:
+            ContentUnavailableView("Engine offline", systemImage: "bolt.horizontal.circle",
+                                   description: Text("Reconnecting to the Director engine…"))
+        case .denied:
+            ContentUnavailableView("Connection blocked", systemImage: "lock.shield",
+                                   description: Text("Open System Settings to allow the bridge."))
+        default:
+            if model.sessions.isEmpty, model.intentions.isEmpty {
+                ContentUnavailableView("Nothing running", systemImage: "waveform",
+                                       description: Text("Activate Director and speak to start an agent."))
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: theme.elementGap) {
+                        if !needsYou.isEmpty {
+                            SectionHeader(title: "Needs you", count: needsYou.count)
+                            ForEach(needsYou) { card($0) }
+                        }
+                        if !active.isEmpty {
+                            SectionHeader(title: "Active", count: active.count)
+                            ForEach(active) { card($0) }
+                        }
+                        if !model.intentions.isEmpty {
+                            SectionHeader(title: "Earlier today", count: nil)
+                                .padding(.top, needsYou.isEmpty && active.isEmpty ? 0 : 6)
+                            VStack(spacing: 0) {
+                                ForEach(Array(model.intentions.enumerated()), id: \.element.id) { index, entry in
+                                    IntentionLogRow(entry: entry)
+                                    if index < model.intentions.count - 1 { Divider() }
+                                }
+                            }
+                        }
+                    }
+                    .padding(theme.windowPadding)
+                }
+            }
+        }
+    }
+
+    private func card(_ session: SessionVM) -> some View {
+        AgentCard(session: session, selected: session.id == model.selectedSessionId)
+            .onTapGesture { model.select(session.id) }
     }
 
     // MARK: sidebar footer (pinned Settings + Help)
@@ -80,48 +137,68 @@ struct HomeDashboardView: View {
     }
 
     private func openSupportEmail() {
-        let subject = "Director Support"
-        let url = "mailto:jasondijols@gmail.com?subject=\(subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject)"
-        if let mailto = URL(string: url) { NSWorkspace.shared.open(mailto) }
-    }
-
-    @ViewBuilder private var agentsColumn: some View {
-        switch model.loadState {
-        case .error:
-            ContentUnavailableView("Engine offline", systemImage: "bolt.horizontal.circle",
-                                   description: Text("Reconnecting to the Director engine…"))
-        case .denied:
-            ContentUnavailableView("Connection blocked", systemImage: "lock.shield",
-                                   description: Text("Open System Settings to allow the bridge."))
-        case .empty:
-            ContentUnavailableView("No active sessions", systemImage: "waveform",
-                                   description: Text("Point and speak to start an agent."))
-        case .connecting, .loaded:
-            if model.filteredSessions.isEmpty, model.loadState == .loaded {
-                ContentUnavailableView("No \(model.filter.rawValue) agents", systemImage: "line.3.horizontal.decrease.circle")
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: theme.elementGap) {
-                        ForEach(model.filteredSessions) { session in
-                            AgentCard(session: session, selected: session.id == model.selectedSessionId)
-                                .onTapGesture { model.select(session.id) }
-                        }
-                    }
-                    .padding(theme.windowPadding)
-                }
-            }
+        let subject = "Director Support".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "Director%20Support"
+        if let mailto = URL(string: "mailto:jasondijols@gmail.com?subject=\(subject)") {
+            NSWorkspace.shared.open(mailto)
         }
     }
+}
 
-    @ToolbarContentBuilder private var agentsToolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            HStack(spacing: 5) {
-                ReadinessDot(level: model.readiness)
-                Text(BridgeStore.readinessLabel(for: model.readiness)).font(theme.kbd).foregroundStyle(theme.textSecondary)
-            }
+// MARK: - Components
+
+/// The readiness/listening status as a themed pill (was an orphaned dot+label in the toolbar).
+private struct ListeningPill: View {
+    let level: ReadinessLevel
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ReadinessDot(level: level)
+            Text(BridgeStore.readinessLabel(for: level))
+                .font(theme.kbd).foregroundStyle(theme.textSecondary)
         }
-        ToolbarItem(placement: .primaryAction) {
-            DirectorFilterControl(filter: $model.filter, counts: model.counts)
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(Capsule(style: .continuous).fill(theme.cardInset))
+        .overlay(Capsule(style: .continuous).strokeBorder(theme.border, lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Status")
+        .accessibilityValue(level.spoken)
+    }
+}
+
+/// An uppercase section header for the Home stacks, with an optional mono count.
+private struct SectionHeader: View {
+    let title: String
+    var count: Int?
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title).font(theme.sectionLabel).textCase(.uppercase).tracking(0.6)
+            if let count { Text("\(count)").font(theme.mono) }
+        }
+        .foregroundStyle(theme.textTertiary)
+        .padding(.bottom, 2)
+    }
+}
+
+/// A coming-soon tab tease — native empty-state framing for a feature we want to signal.
+private struct ComingSoonView: View {
+    let title: String
+    let icon: String
+    let blurb: String
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(title, systemImage: icon)
+        } description: {
+            Text(blurb)
+        } actions: {
+            Text("Coming soon")
+                .font(theme.kbd).foregroundStyle(theme.accentOnSurface)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(Capsule().fill(theme.accentWash))
         }
     }
 }
@@ -151,51 +228,5 @@ private struct SidebarFooterRow: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-    }
-}
-
-/// Custom segmented filter with SF Mono per-segment counts (a Picker(.segmented) can't).
-private struct DirectorFilterControl: View {
-    @Binding var filter: HomeDashboardModel.Filter
-    let counts: SessionCounts
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(HomeDashboardModel.Filter.allCases, id: \.self) { option in
-                Button { filter = option } label: {
-                    HStack(spacing: 4) {
-                        Text(label(option)).font(theme.body)
-                        if let n = count(option) {
-                            Text("\(n)").font(theme.mono).foregroundStyle(theme.textTertiary)
-                        }
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: theme.radiusControl, style: .continuous)
-                        .fill(filter == option ? theme.controlBg : .clear))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: theme.radiusControl + 2, style: .continuous).fill(theme.cardInset))
-    }
-
-    private func label(_ option: HomeDashboardModel.Filter) -> String {
-        switch option {
-        case .all: return "All"
-        case .running: return "Running"
-        case .needsYou: return "Needs you"
-        case .done: return "Done"
-        }
-    }
-
-    private func count(_ option: HomeDashboardModel.Filter) -> Int? {
-        switch option {
-        case .all: return nil
-        case .running: return counts.running
-        case .needsYou: return counts.needsGreenlight
-        case .done: return counts.done
-        }
     }
 }
