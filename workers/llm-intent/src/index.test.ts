@@ -8,8 +8,8 @@ const env: Env = {
 };
 
 const messages = [
-  { role: "system", content: "Resolve the user's transcript into a HandsOff action plan." },
-  { role: "user", content: JSON.stringify({ transcript: { text: "click there" } }) },
+  { role: "system", content: "You are HandsOff's autonomous computer-use agent." },
+  { role: "user", content: JSON.stringify({ goal: "click there" }) },
 ];
 
 function request(init: { headers?: HeadersInit; body?: unknown; method?: string } = {}) {
@@ -37,14 +37,10 @@ function openAiResponse() {
           role: "assistant",
           content: JSON.stringify({
             status: "blocked",
-            id: "intent-llm",
-            intent_type: null,
-            referent: null,
-            constraints: [],
-            risk_level: null,
-            requires_approval: false,
-            target_agent: "none",
-            action_plan: null,
+            tool: null,
+            args: null,
+            rationale: "No clear target",
+            summary: null,
             reason: "Need a clearer target",
           }),
           refusal: null,

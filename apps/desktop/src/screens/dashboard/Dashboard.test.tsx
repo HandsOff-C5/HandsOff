@@ -152,15 +152,21 @@ describe("Dashboard", () => {
       fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
       await waitFor(() => expect(screen.getAllByText("succeeded").length).toBeGreaterThan(0));
+      // U3b: the loop dispatches the click through the generic passthrough
+      // (driver.call → recorded as a `call`), and perceives once per tick — no
+      // per-step pre/post window captures from the old typed executor.
       expect(driver.calls().map((call) => call.kind)).toEqual([
         "list_windows",
         "get_window_state",
-        "get_window_state",
-        "click",
-        "get_window_state",
+        "list_tools",
+        "call",
         "list_windows",
         "get_window_state",
       ]);
+      expect(driver.calls().find((call) => call.kind === "call")).toMatchObject({
+        kind: "call",
+        tool: "click",
+      });
     } finally {
       clock.mockRestore();
     }
@@ -169,14 +175,30 @@ describe("Dashboard", () => {
   it("shows CUA recovery guidance while preserving the exact fake-CUA failure", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
     const state = fakeCuaWindowState();
+    // U3b: the loop dispatches the click through driver.call, so the permission
+    // failure surfaces from the generic call path. A realistic resolver that
+    // can't recover from a denied OS permission ends the goal blocked after
+    // seeing the failure (tick 1), keeping the guidance on screen.
     const driver = createFakeCuaDriver({
       state,
-      permissions: {
-        accessibility: "denied",
-        screenRecording: "granted",
-        driver: "running",
-      },
+      nextCallResult: { status: "blocked", reason: "Accessibility permission denied" },
     });
+    const denyThenStop = async (
+      input: IntentInput,
+      options: ResolveIntentOptions,
+    ): Promise<ResolvedIntent> => {
+      if ((input.goalSession?.tick ?? 0) === 0) return ruleResolver(input, options);
+      return {
+        status: "blocked",
+        id: "intent-cannot-recover",
+        input,
+        constraints: [],
+        requires_approval: false,
+        target_agent: "none",
+        reason: "Cannot recover from a denied permission",
+        createdAt: options.createdAt ?? "2026-06-22T12:00:00.000Z",
+      };
+    };
     try {
       render(
         <Dashboard
@@ -184,7 +206,7 @@ describe("Dashboard", () => {
           cuaDriver={driver}
           headPointing={headPointing(state.surface)}
           now={() => "2026-06-22T12:00:00.000Z"}
-          resolveIntent={ruleResolver}
+          resolveIntent={denyThenStop}
           targetResolveDelayMs={0}
         />,
       );
@@ -210,6 +232,15 @@ describe("Dashboard", () => {
 
   it("waits before resolving the CUA target after speech release", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    // The controller's pre-resolution delay is a real `setTimeout` (createIntent →
+    // `await wait(targetResolveDelayMs)`). The first assertion below must observe
+    // the loop BEFORE that delay elapses, so under full-suite load the real timer
+    // could fire during the microtask flush and start the loop early (flake). Fake
+    // ONLY setTimeout — not Date.now, which the spy above still owns — so the delay
+    // is driven by `advanceTimersByTimeAsync` instead of wall-clock: the flush
+    // can't move fake time, making the "not yet started" assertion deterministic,
+    // and the explicit advance releases the timer and pumps the loop.
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
     const state = fakeCuaWindowState();
     const driver = createFakeCuaDriver({ state });
     try {
@@ -231,17 +262,25 @@ describe("Dashboard", () => {
       fireEvent.pointerUp(talkButton());
       await flush();
 
+      // Fake time has not advanced, so the 10ms delay timer is still pending and
+      // the loop has not begun — no driver calls yet.
       expect(driver.calls()).toHaveLength(0);
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await vi.advanceTimersByTimeAsync(20);
       });
 
       // "Click selected target" appears in both PlanPreviewPanel and ReferentsPanel action plan
       expect(screen.getAllByText("Click selected target").length).toBeGreaterThan(0);
-      // The goal loop observes the active window (list_windows + get_window_state) before
-      // stopping at the approval gate, so no plan action executes.
-      expect(driver.calls().map((call) => call.kind)).toEqual(["list_windows", "get_window_state"]);
+      // The goal loop observes the active window (list_windows + get_window_state)
+      // and loads the driver tool catalog (list_tools, U3b) before stopping at
+      // the approval gate, so no plan action executes.
+      expect(driver.calls().map((call) => call.kind)).toEqual([
+        "list_windows",
+        "get_window_state",
+        "list_tools",
+      ]);
     } finally {
+      vi.useRealTimers();
       clock.mockRestore();
     }
   });
@@ -254,6 +293,10 @@ describe("Dashboard", () => {
           createStream={makeFactory()}
           headPointing={{ point: { x: 10, y: 20 }, candidates: [] }}
           now={() => "2026-06-22T12:00:00.000Z"}
+          // The default resolver is now the full-surface LLM path (no client in
+          // tests); inject the rule resolver so the no-candidate clarification is
+          // produced deterministically.
+          resolveIntent={ruleResolver}
           targetResolveDelayMs={0}
         />,
       );
@@ -265,8 +308,8 @@ describe("Dashboard", () => {
       fireEvent.pointerUp(talkButton());
       await flush();
 
-      // "No attention-region candidates were available" appears in both ReferentsPanel (reason)
-      // and PlanPreviewPanel (blocked reason) — use getAllByText to accept multiple matches.
+      // The no-candidate clarification reason appears in the Referents/Plan
+      // panels; no Approve button (the loop never produced an actionable plan).
       expect(
         (await screen.findAllByText("No attention-region candidates were available")).length,
       ).toBeGreaterThan(0);

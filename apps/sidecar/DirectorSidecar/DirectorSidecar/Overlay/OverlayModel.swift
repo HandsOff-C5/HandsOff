@@ -42,9 +42,10 @@ final class OverlayModel {
     var isVisible: Bool { !cursors.isEmpty }
 
     static let userId = "user"
-    /// The Director cursor trails just below-right of the OS pointer (so it reads as *following*,
-    /// not leading). View space is y-down, so a positive height pushes it downward.
-    static let hugOffset = CGSize(width: 14, height: 14)
+    /// The Director cursor trails below-right of the OS pointer with a clear gap (it reads as a
+    /// friendly *companion following*, not the pointer itself). View space is y-down, so a positive
+    /// height pushes it downward. The smooth ease toward this target lives in ReticleOverlayView.
+    static let hugOffset = CGSize(width: 30, height: 30)
 
     // MARK: inputs
 

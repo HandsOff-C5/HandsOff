@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { driverToolSchema } from "./driver-tools";
 import { surfaceSnapshotSchema } from "./surface";
 
 export const RISK_LEVELS = ["read_only", "reversible", "mutating", "destructive_external"] as const;
@@ -53,6 +54,23 @@ export const actionStepSchema = z.discriminatedUnion("kind", [
     kind: z.literal("launch_app"),
     appName: z.string().min(1),
     bundleId: z.string().min(1).optional(),
+  }),
+  // The generic full-surface step (U3b): a direct call to any cua-driver tool by
+  // name with its raw flat args (the driver's own snake_case shape, e.g.
+  // { pid, window_id, element_index, direction }). This is how the autonomous
+  // loop reaches all 36 driver tools through the U1 passthrough instead of the
+  // closed 6-kind vocabulary above. `tool` is the `DriverTool` enum (sourced from
+  // the dependency-free `./driver-tools` module, so this carries no `tool-risk`
+  // import cycle): an off-surface tool name fails to parse at the schema boundary
+  // rather than reaching dispatch. The loop's `safeParseDriverTool` /
+  // `riskForToolName` boundary check stays as defense-in-depth (and gates an
+  // unknown tool as mutating), now also a compile-time guarantee. The legacy
+  // kinds remain for the rule resolver. `args` stays a free record — the driver
+  // owns each tool's per-arg schema; this is a self-describing passthrough.
+  actionStepBaseSchema.extend({
+    kind: z.literal("tool_call"),
+    tool: driverToolSchema,
+    args: z.record(z.unknown()).default({}),
   }),
 ]);
 export type ActionStep = z.infer<typeof actionStepSchema>;

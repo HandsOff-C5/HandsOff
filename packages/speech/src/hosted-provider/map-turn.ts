@@ -1,4 +1,9 @@
-import type { PartialTranscript, FinalTranscript, TranscriptEvent } from "@handsoff/contracts";
+import type {
+  PartialTranscript,
+  FinalTranscript,
+  TranscriptEvent,
+  TranscriptWord,
+} from "@handsoff/contracts";
 
 import type { AssemblyAiTurnMessage, AssemblyAiWord } from "./assemblyai-messages";
 
@@ -33,6 +38,24 @@ function lastWordEndMs(words: readonly AssemblyAiWord[]): number {
   return last ? last.end : 0;
 }
 
+// Place each word's `start`/`end` (ms from session start) on the wall clock by
+// adding `sessionStartMs`, yielding the epoch-ms timeline a downstream binder
+// can align with head/hand pointing samples. Returns `undefined` when there are
+// no words or the session start is unknown (a Turn before `Begin`), so the
+// transcript simply omits `words` rather than carrying epoch-scale garbage.
+function epochWords(
+  words: readonly AssemblyAiWord[],
+  sessionStartMs: number,
+): ReadonlyArray<TranscriptWord> | undefined {
+  if (words.length === 0 || sessionStartMs <= 0) return undefined;
+  return words.map((word) => ({
+    text: word.text,
+    startMs: sessionStartMs + word.start,
+    endMs: sessionStartMs + word.end,
+    confidence: Math.min(1, Math.max(0, word.confidence)),
+  }));
+}
+
 // Map one v3 `Turn` to a contract `TranscriptEvent`. `end_of_turn === false`
 // yields a `PartialTranscript`; `true` yields a `FinalTranscript`.
 export function mapTurn(turn: AssemblyAiTurnMessage, timing: MapTurnTiming): TranscriptEvent {
@@ -44,11 +67,15 @@ export function mapTurn(turn: AssemblyAiTurnMessage, timing: MapTurnTiming): Tra
       ? 0
       : Math.max(0, timing.now - (timing.sessionStartMs + lastWordEndMs(turn.words)));
 
+  const words = epochWords(turn.words, timing.sessionStartMs);
   const base = {
     text: turn.transcript,
     confidence,
     latencyMs,
     receivedAt: timing.now,
+    // Only attach `words` when we actually have an epoch timeline, so the
+    // no-words / pre-Begin path leaves the field absent.
+    ...(words ? { words } : {}),
   };
 
   if (turn.end_of_turn) {

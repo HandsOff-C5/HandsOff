@@ -7,10 +7,11 @@ import type {
   CuaScreenshot,
   CuaWindow,
   CuaWindowState,
+  DriverToolDefinition,
 } from "@handsoff/contracts";
 
 import type { CuaDriver } from "./driver";
-import { cuaBlocked, cuaSucceeded } from "./driver";
+import { cuaBlocked, cuaFailed, cuaSucceeded } from "./driver";
 
 export type FakeCuaCall =
   | { kind: "list_windows" }
@@ -19,7 +20,27 @@ export type FakeCuaCall =
   | { kind: "click"; target: ActionTarget }
   | { kind: "type_text"; target: ActionTarget; text: string }
   | { kind: "set_value"; target: ActionTarget; value: string }
-  | { kind: "screenshot"; target: ActionTarget };
+  | { kind: "screenshot"; target: ActionTarget }
+  | { kind: "call"; tool: string; input: unknown }
+  | { kind: "list_tools" };
+
+// A minimal catalog so tests can exercise the catalog path without the binary.
+const DEFAULT_TOOL_CATALOG: readonly DriverToolDefinition[] = [
+  {
+    name: "get_screen_size",
+    description: "Return the logical size of the main display in points.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "scroll",
+    description: "Scroll the target pid's focused region.",
+    inputSchema: {
+      type: "object",
+      required: ["pid", "direction"],
+      properties: { pid: { type: "integer" }, direction: { type: "string" } },
+    },
+  },
+];
 
 export type FakeCuaDriver = CuaDriver & {
   calls(): readonly FakeCuaCall[];
@@ -31,6 +52,8 @@ export function createFakeCuaDriver(options: {
   windows?: readonly CuaWindow[];
   state: CuaWindowState;
   nextActionResult?: CuaActionResult;
+  nextCallResult?: CuaResult<unknown>;
+  tools?: readonly DriverToolDefinition[];
 }): FakeCuaDriver {
   const permissions = options.permissions ?? {
     accessibility: "granted",
@@ -120,6 +143,27 @@ export function createFakeCuaDriver(options: {
     async screenshot(target) {
       record({ kind: "screenshot", target });
       return screenshotResult(target);
+    },
+    async call(tool, input) {
+      record({ kind: "call", tool, input });
+      if (permissions.driver !== "running") return cuaBlocked("CUA driver is unavailable");
+      // An explicit nextCallResult wins (generic-call tests assert it verbatim).
+      if (options.nextCallResult) return options.nextCallResult;
+      // Otherwise the autonomous loop dispatches its ACTIONS through here, so
+      // honor the same failure simulation the typed methods do — a denied
+      // Accessibility permission or a configured nextActionResult must surface as
+      // a CuaResult so the loop's recovery + permission paths see it (the driver's
+      // success value is just a confirmation, so a successful action maps to a
+      // simple { ok } result).
+      const action = result();
+      if (action.status === "failed") return cuaFailed(action.error);
+      if (action.status === "blocked") return cuaBlocked(action.reason);
+      return cuaSucceeded({ ok: true, tool });
+    },
+    async listTools() {
+      record({ kind: "list_tools" });
+      if (permissions.driver !== "running") return cuaBlocked("CUA driver is unavailable");
+      return cuaSucceeded(options.tools ?? DEFAULT_TOOL_CATALOG);
     },
     calls() {
       return [...calls];

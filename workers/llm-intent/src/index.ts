@@ -1,7 +1,9 @@
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 
-import { openAiResolvedIntentSchema } from "@handsoff/intent/src/llm/action-plan-schema";
+// U3b: the loop emits the NEXT driver tool call, so the Worker structures the
+// completion with the next-tool-call schema (was the 6-kind action-plan schema).
+import { nextToolCallSchema } from "@handsoff/intent/src/llm/next-tool-call";
 
 const DEFAULT_MODEL = "gpt-4o-mini";
 const encoder = new TextEncoder();
@@ -92,7 +94,7 @@ async function handleIntentRequest(request: Request, env: Env): Promise<Response
     const completion = await client.chat.completions.parse({
       model: parsed.model,
       messages: parsed.messages as OpenAI.Chat.ChatCompletionMessageParam[],
-      response_format: zodResponseFormat(openAiResolvedIntentSchema, "resolved_intent"),
+      response_format: zodResponseFormat(nextToolCallSchema, "next_tool_call"),
     });
     return json({ choices: completion.choices });
   } catch {

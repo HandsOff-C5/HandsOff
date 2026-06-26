@@ -21,8 +21,26 @@ export const cuaAppSchema = z.object({
 });
 export type CuaApp = z.infer<typeof cuaAppSchema>;
 
+// Window geometry in the global virtual-desktop px space (multi-monitor; a
+// secondary display's origin may be negative, so x/y are unconstrained). Carried
+// so the pointing binder can intersect a head/hand point with the real window
+// under it instead of resolving to a whole display. Optional: a window source
+// without geometry (a minimized window, the fake driver) simply omits it.
+export const cuaWindowBoundsSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  width: z.number().nonnegative(),
+  height: z.number().nonnegative(),
+});
+export type CuaWindowBounds = z.infer<typeof cuaWindowBoundsSchema>;
+
 export const cuaWindowSchema = surfaceSnapshotSchema.extend({
   focused: z.boolean().optional(),
+  bounds: cuaWindowBoundsSchema.optional(),
+  // Window-server stacking order; HIGHER = frontmost (matches the driver's
+  // z_index and cua_list_windows' frontmost = max). Lets the binder's ranker
+  // pick the frontmost window when several contain the point.
+  zIndex: z.number().optional(),
 });
 export type CuaWindow = z.infer<typeof cuaWindowSchema>;
 
@@ -57,6 +75,22 @@ export type CuaResult<T> =
   | { status: "succeeded"; value: T }
   | { status: "failed"; error: string }
   | { status: "blocked"; reason: string };
+
+// One tool as the driver self-describes it (`cua-driver list-tools` +
+// `describe`). `inputSchema` is the driver's JSON Schema verbatim — we do not
+// re-model per-tool shapes HandsOff-side; this is the agent's function set.
+export const driverToolDefinitionSchema = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  inputSchema: z.unknown().nullable(),
+});
+export type DriverToolDefinition = z.infer<typeof driverToolDefinitionSchema>;
+
+export function safeParseDriverToolDefinitions(
+  input: unknown,
+): z.SafeParseReturnType<unknown, DriverToolDefinition[]> {
+  return driverToolDefinitionSchema.array().safeParse(input);
+}
 
 export const cuaActionRequestSchema = z.discriminatedUnion("kind", [
   z.object({
