@@ -37,13 +37,31 @@ final class GazeBracketModel {
     var isVisible: Bool { phase != .hidden && region != nil }
     var isDim: Bool { phase == .lowConfidence }
 
-    func setActive(_ on: Bool) {
+    /// Activate/deactivate the brackets. On activation an optional `seed` region makes them visible
+    /// immediately (a deterministic resting rect) before the gaze CV publisher drives them; real
+    /// gaze frames then morph from there. An existing region is never clobbered (re-activation).
+    func setActive(_ on: Bool, seed: GazeRegion? = nil) {
         active = on
-        if !on {
+        if on {
+            if let seed, region == nil {
+                region = seed
+                phase = .tracking
+            }
+        } else {
             phase = .hidden
             region = nil
             lastTs = 0
         }
+    }
+
+    /// A deterministic centered region (~28%×12% of the display) for the brackets to rest on before
+    /// the gaze CV publisher lands. Contract space: top-left origin, y-down (matches screen px).
+    nonisolated static func centeredRegion(in screenSize: CGSize) -> GazeRegion {
+        let w = Double(screenSize.width) * 0.28
+        let h = Double(screenSize.height) * 0.12
+        return GazeRegion(x: (Double(screenSize.width) - w) / 2,
+                          y: (Double(screenSize.height) - h) / 2,
+                          w: w, h: h)
     }
 
     func apply(_ frame: BridgeFrame) {
