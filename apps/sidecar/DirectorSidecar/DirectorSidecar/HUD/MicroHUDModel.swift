@@ -84,7 +84,7 @@ final class MicroHUDModel {
                 runningSessions.removeAll { $0.id == result.sessionId }
             }
             recompute()
-        case .state, .referents, .intent, .cursor, .gaze, .error, .unknown:
+        case .state, .referents, .intent, .audit, .cursor, .gaze, .error, .unknown:
             break
         }
     }

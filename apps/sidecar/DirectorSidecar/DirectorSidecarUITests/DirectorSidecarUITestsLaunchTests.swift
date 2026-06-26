@@ -9,8 +9,12 @@ import XCTest
 
 final class DirectorSidecarUITestsLaunchTests: XCTestCase {
 
+    // Must stay false. When true, Xcode runs `testLaunch()` once per UI configuration and, to
+    // render the Dark configuration, switches the MACHINE's system appearance to Dark — which it
+    // leaves applied if the run is interrupted, stranding the developer's Mac in dark mode. We
+    // don't snapshot light/dark here, so sweeping configurations only risks that side effect.
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
-        true
+        false
     }
 
     override func setUpWithError() throws {

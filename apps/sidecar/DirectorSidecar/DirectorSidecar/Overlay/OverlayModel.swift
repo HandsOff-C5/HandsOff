@@ -72,7 +72,7 @@ final class OverlayModel {
             applyPointers(pointers)
         case let .runResult(result):
             poofAgent(result.sessionId)
-        case .state, .sessions, .transcript, .referents, .intent, .gaze, .error, .unknown:
+        case .state, .sessions, .transcript, .referents, .intent, .audit, .gaze, .error, .unknown:
             break
         }
     }

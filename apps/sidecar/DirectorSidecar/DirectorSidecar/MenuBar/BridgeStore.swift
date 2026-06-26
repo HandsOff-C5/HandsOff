@@ -63,10 +63,10 @@ final class BridgeStore {
     var needsGreenlightCount: Int { counts.needsGreenlight }
     var doneCount: Int { counts.done }
 
-    /// The ONE shared bridge connection (set by the app). A single socket fans out frames to
-    /// every model (menu store, HUD); commands route back through it. (Named `bridge` to avoid
-    /// clashing with the `connection: ConnectionState` UI property.)
-    @ObservationIgnored var bridge: BridgeConnection?
+    /// The command sink (set by the app). With the loop in-process (ADR 0005 Track D) this is the
+    /// `LoopEngine`, which calls the loop directly; commands route through it. (Named `bridge` to
+    /// avoid clashing with the `connection: ConnectionState` UI property.)
+    @ObservationIgnored var bridge: (any CommandSink)?
 
     /// Notifies the app when listening starts/stops (so the HUD can come up/down optimistically).
     @ObservationIgnored var onListeningChanged: ((Bool) -> Void)?
@@ -112,7 +112,7 @@ final class BridgeStore {
             pausedSessionIds.formIntersection(Set(sessions.map(\.id))) // drop agents that are gone
         case let .runResult(result):
             applyRunResult(result)
-        case .cursor, .transcript, .referents, .intent, .gaze, .error, .unknown:
+        case .cursor, .transcript, .referents, .intent, .audit, .gaze, .error, .unknown:
             break // the menu surface does not consume these (HUD/overlays do)
         }
     }

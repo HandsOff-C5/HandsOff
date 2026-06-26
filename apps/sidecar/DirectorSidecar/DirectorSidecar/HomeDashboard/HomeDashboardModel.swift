@@ -20,9 +20,13 @@ struct SessionVM: Identifiable, Equatable, Sendable {
     let status: ExecutionStatus
     let startedAt: Date
 
-    var needsGreenlight: Bool { status == .blocked }
+    /// A live approval is an intent state, not a session status — in the in-process loop `.blocked`
+    /// is a TERMINAL FAILURE, not a pending greenlight. No status maps to "needs you" today; the
+    /// real approval surface is the intent (HUD greenlight footer). Re-wiring the fleet "needs you"
+    /// badge to the live approval intent is deferred (see issue).
+    var needsGreenlight: Bool { false }
     var isRunning: Bool { status == .running }
-    var isDone: Bool { status == .succeeded || status == .failed || status == .rejected }
+    var isDone: Bool { status == .succeeded || status == .failed || status == .rejected || status == .blocked }
 
     init(_ session: SupervisionSession) {
         id = session.id
@@ -86,6 +90,9 @@ final class HomeDashboardModel {
     private(set) var loadState: LoadState = .connecting
     private(set) var selectedIntent: ResolvedIntentLite?
     private(set) var selectedRunResult: ExecutionStatus?
+    /// H4: the live Intention Log (every tool call, derived risk, approval state, result) the
+    /// "Agent Logs" view renders — fed by the `audit` topic, scoped to the current goal's session.
+    private(set) var auditLog: [AuditLogEntry] = []
     var filter: Filter = .all
     var selectedSessionId: String?
 
@@ -94,8 +101,9 @@ final class HomeDashboardModel {
     private(set) var intentions: [IntentionEntry] = []
     func seedIntentions(_ list: [IntentionEntry]) { intentions = list }
 
-    /// The shared bridge connection (set by the app) — for selectSession / greenlight / reject.
-    @ObservationIgnored var bridge: BridgeConnection?
+    /// The command sink (set by the app) — for selectSession / greenlight / reject. In-process
+    /// `LoopEngine` after ADR 0005 Track D (greenlight → loop.approve, reject → loop.reject).
+    @ObservationIgnored var bridge: (any CommandSink)?
     @ObservationIgnored private var connected = false
 
     var filteredSessions: [SessionVM] { Self.filtered(sessions, filter) }
@@ -110,10 +118,10 @@ final class HomeDashboardModel {
         }
     }
 
-    /// Optional Greenlight/Reject footer — destructive-only AND not yet executed (revised policy).
+    /// Greenlight/Reject footer — approval-required risk AND not yet executed.
     var showInspectorFooter: Bool {
         guard case let .ready(intent) = inspectorState else { return false }
-        return intent.riskLevel == .destructive && selectedRunResult == nil
+        return intent.riskLevel?.requiresApproval == true && selectedRunResult == nil
     }
 
     // MARK: frame application
@@ -123,15 +131,18 @@ final class HomeDashboardModel {
         case let .sessions(payload):
             sessions = payload.sessions.map(SessionVM.init)
             counts = payload.resolvedCounts
-            loadState = Self.loadState(sessionCount: sessions.count, connected: connected)
+            recomputeLoadState()
         case let .runResult(result):
             applyRunResult(result)
         case let .intent(intent):
             selectedIntent = intent
             selectedRunResult = nil
+        case let .audit(payload):
+            auditLog = payload.entries
         case let .state(topic, readiness):
             if topic == "readiness", let readiness {
                 self.readiness = BridgeStore.readinessLevel(for: readiness.capabilities)
+                recomputeLoadState()
             }
         case .cursor, .transcript, .referents, .gaze, .error, .unknown:
             break
@@ -140,7 +151,7 @@ final class HomeDashboardModel {
 
     func setConnection(_ state: ConnectionState) {
         connected = state == .connected
-        loadState = Self.loadState(sessionCount: sessions.count, connected: connected)
+        recomputeLoadState()
     }
 
     /// Select a session → bind the Inspector and ask the engine to (re)publish its intent.
@@ -152,7 +163,7 @@ final class HomeDashboardModel {
     }
 
     func greenlight(now: Date = Date()) {
-        guard case let .ready(intent) = inspectorState, intent.riskLevel == .destructive,
+        guard case let .ready(intent) = inspectorState, intent.riskLevel?.requiresApproval == true,
               let actionId = intent.id else { return }
         send(.greenlight(actionId: actionId, decidedAt: Self.iso(now)))
     }
@@ -167,6 +178,10 @@ final class HomeDashboardModel {
     private func send(_ command: Command) {
         guard let bridge else { return }
         Task { await bridge.send(command) }
+    }
+
+    private func recomputeLoadState() {
+        loadState = Self.loadState(sessionCount: sessions.count, connected: connected, readiness: readiness)
     }
 
     private nonisolated static func iso(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
@@ -191,8 +206,9 @@ final class HomeDashboardModel {
         }
     }
 
-    nonisolated static func loadState(sessionCount: Int, connected: Bool) -> LoadState {
+    nonisolated static func loadState(sessionCount: Int, connected: Bool, readiness: ReadinessLevel) -> LoadState {
         if !connected { return .error }
+        if readiness == .blocked { return .denied }
         return sessionCount == 0 ? .empty : .loaded
     }
 }

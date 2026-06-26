@@ -58,12 +58,19 @@ struct SessionCounts: Codable, Sendable, Equatable {
     }
 
     /// Derive counts from statuses alone (used after a `runResult` flips one row).
-    /// `needsGreenlight` == sessions awaiting a (destructive) approval == `blocked`;
-    /// `done` == terminal statuses; `running` == actively executing.
+    /// `done` == terminal statuses (incl. `blocked`); `running` == actively executing.
+    ///
+    /// NOTE: `needsGreenlight` is NOT derivable from status alone. In the in-process loop (ADR 0005)
+    /// a goal that ends `.blocked` is a TERMINAL FAILURE (budget / dedup / gate / resolver-blocked),
+    /// not a pending approval — the old "blocked == awaiting destructive approval" equivalence was a
+    /// TS-bridge-era assumption that the migration invalidated. Real "needs your approval" is a LIVE
+    /// intent state (a `.ready` mutating action awaiting `approve()`), surfaced via the intent frame
+    /// (HUD greenlight footer), not the session status. So status-only derivation reports 0 here;
+    /// wiring the session-fleet "needs you" badge to the live approval intent is deferred (see issue).
     init(derivingStatuses statuses: [ExecutionStatus]) {
         running = statuses.filter { $0 == .running }.count
-        needsGreenlight = statuses.filter { $0 == .blocked }.count
-        done = statuses.filter { $0 == .succeeded || $0 == .failed || $0 == .rejected }.count
+        needsGreenlight = 0
+        done = statuses.filter { $0 == .succeeded || $0 == .failed || $0 == .rejected || $0 == .blocked }.count
     }
 
     init(running: Int, needsGreenlight: Int, done: Int) {

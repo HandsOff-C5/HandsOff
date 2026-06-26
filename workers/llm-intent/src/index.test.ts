@@ -4,6 +4,7 @@ import worker, { type Env } from "./index";
 
 const env: Env = {
   OPENAI_API_KEY: "openai-key",
+  GEMINI_API_KEY: "gemini-key",
   HANDSOFF_APP_TOKEN: "app-token",
 };
 
@@ -23,12 +24,12 @@ function request(init: { headers?: HeadersInit; body?: unknown; method?: string 
   });
 }
 
-function openAiResponse() {
+function providerResponse(model = "gpt-4o-mini") {
   return {
     id: "chatcmpl-test",
     object: "chat.completion",
     created: 1,
-    model: "gpt-4o-mini",
+    model,
     choices: [
       {
         index: 0,
@@ -74,7 +75,7 @@ describe("llm intent Worker", () => {
 
   it("returns structured OpenAI choices for an authenticated app", async () => {
     const upstreamFetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify(openAiResponse()), {
+      new Response(JSON.stringify(providerResponse()), {
         headers: { "content-type": "application/json" },
       }),
     );
@@ -105,7 +106,57 @@ describe("llm intent Worker", () => {
     expect((init?.headers as Headers).get("authorization")).toBe("Bearer openai-key");
   });
 
-  it("rejects invalid request bodies before calling OpenAI", async () => {
+  it("uses Gemini when it is the configured provider", async () => {
+    const upstreamFetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(providerResponse("gemini-3.5-flash")), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await worker.fetch(
+      request({ headers: { Authorization: "Bearer app-token" } }),
+      { GEMINI_API_KEY: "gemini-key", HANDSOFF_APP_TOKEN: "app-token" },
+    );
+
+    expect(response.status).toBe(200);
+    const [url, init] = upstreamFetch.mock.calls[0]!;
+    expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions");
+    expect((init?.headers as Headers).get("authorization")).toBe("Bearer gemini-key");
+    expect(JSON.parse(String(init?.body))).toMatchObject({ model: "gemini-3.5-flash" });
+  });
+
+  it("falls back to Gemini when the OpenAI key is rejected", async () => {
+    const upstreamFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "bad key" } }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(providerResponse("gemini-3.5-flash")), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    const response = await worker.fetch(
+      request({ headers: { Authorization: "Bearer app-token" } }),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(upstreamFetch).toHaveBeenCalledTimes(2);
+    expect(upstreamFetch.mock.calls[0]?.[0]).toBe("https://api.openai.com/v1/chat/completions");
+    expect(upstreamFetch.mock.calls[1]?.[0]).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    );
+    expect(JSON.parse(String(upstreamFetch.mock.calls[1]?.[1]?.body))).toMatchObject({
+      model: "gemini-3.5-flash",
+    });
+  });
+
+  it("rejects invalid request bodies before calling a provider", async () => {
     const upstreamFetch = vi.spyOn(globalThis, "fetch");
 
     const response = await worker.fetch(
@@ -118,13 +169,20 @@ describe("llm intent Worker", () => {
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
-  it("rejects OpenAI failures without leaking provider details", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ error: { message: "bad key" } }), {
-        status: 401,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+  it("rejects provider failures without leaking provider details", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "bad key" } }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "bad key" } }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+      );
 
     const response = await worker.fetch(
       request({ headers: { Authorization: "Bearer app-token" } }),
@@ -132,6 +190,6 @@ describe("llm intent Worker", () => {
     );
 
     expect(response.status).toBe(502);
-    await expect(response.json()).resolves.toEqual({ error: "openai_intent_request_failed" });
+    await expect(response.json()).resolves.toEqual({ error: "intent_request_failed" });
   });
 });

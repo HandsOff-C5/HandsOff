@@ -14,6 +14,13 @@ struct ReticleOverlayView: View {
     let primaryHeight: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// The active display layout in contract space + which display THIS window covers. Empty/`nil`
+    /// is the single primary-only overlay (every cursor drawn at its raw contract point — the
+    /// original G5 behavior). In the multi-display fold-in each window passes its own `displayID`
+    /// so a cursor renders on exactly the display that owns it, in that display's LOCAL coords.
+    var displays: [DisplayRect] = []
+    var displayID: Int? = nil
+
     /// A friendly, critically-damped follow (heyClicky-style ease in/out): the rendered cursor
     /// trails the 60 Hz target instead of snapping, so movement glides and settles.
     private static let followEase = Animation.smooth(duration: 0.32)
@@ -21,16 +28,28 @@ struct ReticleOverlayView: View {
     var body: some View {
         ZStack {
             ForEach(model.cursors) { cursor in
-                let point = OverlayModel.resolvedViewPoint(
+                let cp = OverlayModel.resolvedViewPoint(
                     for: cursor, systemCursorCocoa: model.systemCursor, primaryHeight: primaryHeight
                 )
-                ReticleFollower(cursor: cursor)
-                    .position(point)
-                    .animation(reduceMotion ? nil : Self.followEase, value: point)
+                if let pt = localPoint(cp) {
+                    ReticleFollower(cursor: cursor)
+                        .position(pt)
+                        .animation(reduceMotion ? nil : Self.followEase, value: pt)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(false)
+    }
+
+    /// Resolve a contract-space point to THIS window's local coords, or `nil` when the point belongs
+    /// to a different display (so each cursor draws once). A point in the gap between monitors is
+    /// clamped to the nearest display by `DisplayGeometry.locate` and draws there. Empty `displays`
+    /// (or `nil` id) → primary-only fallback: pass the contract point straight through.
+    private func localPoint(_ cp: CGPoint) -> CGPoint? {
+        guard let displayID, !displays.isEmpty else { return cp }
+        guard let loc = DisplayGeometry.locate(cp.x, cp.y, in: displays), loc.displayID == displayID else { return nil }
+        return CGPoint(x: loc.localX, y: loc.localY)
     }
 }
 
