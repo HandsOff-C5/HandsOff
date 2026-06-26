@@ -118,13 +118,19 @@ struct DirectorSidecarApp: App {
         // user's head drives the Director `.user` cursor in a non-mock run.
         let services = DirectorServices()
 
+        // Head/face tracking → intent. The latest head point lands in this shared snapshot (written
+        // by the coordinator's head consumer below) and the loop's `HeadPointingIntake` reads it at
+        // goal start — folding the head cursor + the windows it points at into the resolver input so a
+        // look reaches the intent, not just the overlay cursor.
+        let headSnapshot = HeadPointSnapshot()
+
         // ADR 0005 Track D — no bridge: run the ported supervision loop IN-PROCESS and make it the
         // app's engine. The loop drives the SAME frames the socket used to deliver (engine.onFrame →
         // dispatch) and the UI's commands route to the loop (the models' command sink IS the engine).
         let loop = VoiceCuaLoop(
             driver: services.cua,
             resolve: IntentWorkerConfig.resolver(),
-            intake: SpeechOnlyIntake()
+            intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua)
         )
         let engine = LoopEngine(loop: loop)
         engine.onFrame = { frame in dispatch(frame) }
@@ -141,6 +147,7 @@ struct DirectorSidecarApp: App {
         let coordinator = ServiceCoordinator(
             services: services,
             onHeadPointer: { pointer in dispatch(.cursor(pointers: [pointer])) },
+            onHeadPoint: { point in headSnapshot.record(point) },
             onSpeech: { event in engine.ingestSpeech(event) }
         )
 

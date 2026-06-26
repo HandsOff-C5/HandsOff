@@ -120,6 +120,30 @@ private final class FakeSpeech: SpeechStreaming {
 }
 
 @MainActor
+@Test func headPointsAlsoFlowToTheRawHeadPointSink() async {
+    // The intent path (HeadPointSnapshot ← onHeadPoint) consumes the RAW HeadPoint off the same
+    // `.point` feed that drives the cursor — so a look reaches the loop, not just the overlay.
+    let head = FakeHead()
+    let speech = FakeSpeech()
+    let delivered = AsyncStream<HeadPoint>.makeStream()
+    let coordinator = ServiceCoordinator(
+        head: head, speech: speech,
+        onHeadPointer: { _ in },
+        onHeadPoint: { delivered.continuation.yield($0) }
+    )
+
+    coordinator.start()
+    coordinator.setSensing(true)
+
+    let point = HeadPoint(x: 150, y: 250, yaw: 0.1, pitch: -0.2, confidence: 0.8, ts: 99)
+    head.continuation.yield(.point(point))
+
+    var iterator = delivered.stream.makeAsyncIterator()
+    let received = await iterator.next()
+    #expect(received == point)   // the raw head point (yaw/pitch/confidence intact), not a projected cursor
+}
+
+@MainActor
 @Test func nonPointEventsDoNotEmitACursor() async {
     let head = FakeHead()
     let speech = FakeSpeech()

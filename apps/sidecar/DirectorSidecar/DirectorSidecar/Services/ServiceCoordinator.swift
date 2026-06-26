@@ -8,10 +8,12 @@
 //    listening on/off  → setSensing(_:) : front-camera head pointer + on-device mic UP / DOWN
 //    app terminate     → teardown()     : stop sensing, finish the head stream, cancel consumers
 //
-//  The head pointer's `.point` events are projected onto the bridge `cursorPosition` topic
-//  (`HeadPointerBridge.pointer(from:)`) and handed to `onHeadPointer`, which the app feeds into the
-//  same frame fan-out the engine bridge uses — so a real (non-mock) run drives the Director
-//  `.user` cursor from the user's head, exactly as `HeadPointerEvent.swift` anticipated.
+//  The head pointer's `.point` events drive TWO consumers off the one feed: they are projected onto
+//  the bridge `cursorPosition` topic (`HeadPointerBridge.pointer(from:)`) and handed to
+//  `onHeadPointer` for the Director `.user` cursor; AND the raw `HeadPoint` is handed to
+//  `onHeadPoint`, which the app records into the shared `HeadPointSnapshot` the loop's
+//  `HeadPointingIntake` reads at goal start — so a look reaches the intent, not just the on-screen
+//  reticle. A real (non-mock) run thus both moves the cursor and grounds the resolver from the head.
 //
 //  Speech events flow to `onSpeech`. The transcript CONSUMER (intent resolution) is the LLM-loop
 //  port (PORTING.md § Porting Order 3) — Track F owns only the mic's *lifecycle* (up/down with
@@ -91,6 +93,7 @@ final class ServiceCoordinator {
     private let head: any HeadSensing
     private let speech: any SpeechStreaming
     private let onHeadPointer: (Pointer) -> Void
+    private let onHeadPoint: (HeadPoint) -> Void
     private let onSpeech: (SpeechService.Event) -> Void
 
     private var headConsumer: Task<Void, Never>?
@@ -106,11 +109,13 @@ final class ServiceCoordinator {
         head: any HeadSensing,
         speech: any SpeechStreaming,
         onHeadPointer: @escaping (Pointer) -> Void,
+        onHeadPoint: @escaping (HeadPoint) -> Void = { _ in },
         onSpeech: @escaping (SpeechService.Event) -> Void = { _ in }
     ) {
         self.head = head
         self.speech = speech
         self.onHeadPointer = onHeadPointer
+        self.onHeadPoint = onHeadPoint
         self.onSpeech = onSpeech
     }
 
@@ -118,10 +123,11 @@ final class ServiceCoordinator {
     convenience init(
         services: DirectorServices,
         onHeadPointer: @escaping (Pointer) -> Void,
+        onHeadPoint: @escaping (HeadPoint) -> Void = { _ in },
         onSpeech: @escaping (SpeechService.Event) -> Void = { _ in }
     ) {
         self.init(head: services.headPointer, speech: services.speech,
-                  onHeadPointer: onHeadPointer, onSpeech: onSpeech)
+                  onHeadPointer: onHeadPointer, onHeadPoint: onHeadPoint, onSpeech: onSpeech)
     }
 
     // MARK: Lifecycle
@@ -178,7 +184,11 @@ final class ServiceCoordinator {
         switch event {
         case let .point(point):
             DirectorDiagnostics.services.debug("head point x=\(point.x, privacy: .public) y=\(point.y, privacy: .public) confidence=\(point.confidence, privacy: .public)")
+            // Two consumers off the one feed: the overlay cursor (projected to a `Pointer`) and the
+            // intent — the raw head point lands in the shared snapshot the loop's HeadPointingIntake
+            // reads at goal start, so a look reaches the resolver, not just the on-screen reticle.
             onHeadPointer(HeadPointerBridge.pointer(from: point))
+            onHeadPoint(point)
         case .started:
             DirectorDiagnostics.services.info("head pointer started")
         case .stopped:
