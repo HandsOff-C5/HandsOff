@@ -21,21 +21,21 @@ final class RailController {
     enum Edge { case leading, trailing }
 
     private let model: RailModel
-    private let onOpenHome: () -> Void
+    private let store: BridgeStore
     private let edge: Edge
     private let inset: CGFloat = 12
     /// Collapsed = an icon column; expanded (hover) = wide enough for the row labels. Fixed widths
     /// (not fittingSize) so the panel footprint is small when idle and never blocks clicks behind it.
-    private let collapsedWidth: CGFloat = 60
-    private let expandedWidth: CGFloat = 180
+    private let collapsedWidth: CGFloat = 62
+    private let expandedWidth: CGFloat = 184
     private var panel: RailPanel?
     /// Pending shrink-to-collapsed, deferred so the labels animate out before the panel narrows.
     private var collapseWork: DispatchWorkItem?
 
-    init(model: RailModel, edge: Edge = .trailing, onOpenHome: @escaping () -> Void) {
+    init(model: RailModel, edge: Edge = .trailing, store: BridgeStore) {
         self.model = model
         self.edge = edge
-        self.onOpenHome = onOpenHome
+        self.store = store
         observe()
         applyVisibility()
         NotificationCenter.default.addObserver(
@@ -95,7 +95,7 @@ final class RailController {
                 self.anchor()
             }
             collapseWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.36, execute: work)
         }
     }
 
@@ -118,7 +118,7 @@ final class RailController {
         panel.isOpaque = false
         panel.hasShadow = true // OS draws the capsule's rounded shadow from the content's alpha shape
         let host = NSHostingView(rootView: ThemedRoot {
-            RailView(model: model, onExpand: onOpenHome)
+            RailView(model: model, store: store)
         })
         panel.contentView = host
         return panel

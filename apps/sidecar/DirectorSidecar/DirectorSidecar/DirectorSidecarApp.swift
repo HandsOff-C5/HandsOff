@@ -54,7 +54,7 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
 
     func start(hud hudModel: HUDModel, micro microModel: MicroHUDModel,
                overlay overlayModel: OverlayModel, gaze: GazeBracketModel,
-               rail railModel: RailModel,
+               rail railModel: RailModel, store: BridgeStore,
                onOpenHome: @escaping () -> Void) {
         guard hud == nil else { return }   // once only
         hud = HUDPanelController(model: hudModel, edge: .trailing)
@@ -63,7 +63,8 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
         }
         overlay = OverlayController(model: overlayModel, gaze: gaze)
         // The Right-edge rail — the always-on ambient edge surface (replaces the parked micro-HUD).
-        railController = RailController(model: railModel, edge: .trailing, onOpenHome: onOpenHome)
+        // It drives its own actions (deactivate / view activity / pause / open) through the store.
+        railController = RailController(model: railModel, edge: .trailing, store: store)
     }
 
     /// Mock fn-key activation (the "fn" of this build): hold the fn/🌐 key while Director is frontmost
@@ -175,7 +176,7 @@ struct DirectorSidecarApp: App {
         ) { _ in
             MainActor.assumeIsolated {
                 surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze, rail: rail,
-                               onOpenHome: { store.send(.openHome) })
+                               store: store, onOpenHome: { store.send(.openHome) })
                 // fn press-and-hold drives the mock activation (hold → overlays up, release → down).
                 surfaces.installFnHold { held in store.send(held ? .startListening : .stopListening) }
             }
