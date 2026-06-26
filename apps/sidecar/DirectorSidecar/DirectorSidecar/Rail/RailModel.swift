@@ -25,17 +25,10 @@ final class RailModel {
     /// Defaults to `true` because the dashboard opens on launch (avoids a one-frame rail flash).
     private(set) var homeIsOpen = true
 
-    /// True while the pointer is over the rail — drives the hover-reveal of each row's text label
-    /// (and the panel widening that makes room for them).
+    /// True while the pointer is over the rail capsule — drives the hover-reveal of each row's text
+    /// label. The panel itself is a fixed width and never resizes, so this only animates the capsule.
     private(set) var isHovering = false
-    /// Fired synchronously on hover change so the controller can resize the panel in the SAME
-    /// runloop as the SwiftUI animation — otherwise the panel lags a frame and the right edge jumps.
-    @ObservationIgnored var onHoverChange: ((Bool) -> Void)?
-    func setHovering(_ on: Bool) {
-        guard on != isHovering else { return }
-        isHovering = on
-        onHoverChange?(on)
-    }
+    func setHovering(_ on: Bool) { isHovering = on }
 
     @ObservationIgnored private var connected = false
 

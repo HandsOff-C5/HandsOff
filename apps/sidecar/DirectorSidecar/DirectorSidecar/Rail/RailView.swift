@@ -55,11 +55,11 @@ struct RailView: View {
         }
         .clipShape(Self.shape)
         .overlay(Self.shape.strokeBorder(theme.border, lineWidth: 1))
-        .frame(maxWidth: .infinity, alignment: .trailing) // hug the screen's right edge; widen left
         .animation(Self.ease, value: model.isHovering)
         .animation(theme.standardMotion, value: model.isListening)
         .animation(theme.standardMotion, value: model.marks)
-        .onHover { model.setHovering($0) }
+        .onHover { model.setHovering($0) } // on the capsule only — the transparent area passes clicks
+        .frame(maxWidth: .infinity, alignment: .trailing) // right-align in the fixed-width panel
     }
 
     private var divider: some View {

@@ -24,13 +24,12 @@ final class RailController {
     private let store: BridgeStore
     private let edge: Edge
     private let inset: CGFloat = 12
-    /// Collapsed = an icon column; expanded (hover) = wide enough for the row labels. Fixed widths
-    /// (not fittingSize) so the panel footprint is small when idle and never blocks clicks behind it.
-    private let collapsedWidth: CGFloat = 62
-    private let expandedWidth: CGFloat = 172
+    /// The panel is a FIXED width, anchored by its right edge — it never resizes on hover, so the
+    /// window can't move and the right edge physically cannot shift. The capsule hugs its content
+    /// and animates LEFTWARD inside this fixed window (right-aligned). The collapsed icon column
+    /// sits at the right; the transparent area to its left is non-interactive (clicks pass through).
+    private let panelWidth: CGFloat = 172
     private var panel: RailPanel?
-    /// Pending shrink-to-collapsed, deferred so the labels animate out before the panel narrows.
-    private var collapseWork: DispatchWorkItem?
 
     init(model: RailModel, edge: Edge = .trailing, store: BridgeStore) {
         self.model = model
@@ -38,9 +37,6 @@ final class RailController {
         self.store = store
         observe()
         applyVisibility()
-        // Hover is handled SYNCHRONOUSLY (not via the async observation) so the panel resizes in the
-        // same runloop the capsule starts animating — the right edge stays put, no one-frame jump.
-        model.onHoverChange = { [weak self] hovering in self?.hoverChanged(hovering) }
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil
@@ -78,31 +74,11 @@ final class RailController {
         let panel = panel ?? makePanel()
         self.panel = panel
         let firstShow = !panel.isVisible
-        anchor()                          // position + size for the current (hover/content) state
+        anchor()                          // fixed width; only height (content) can change here
         if firstShow { panel.orderFrontRegardless() } // never makeKey/activate — must not steal focus
     }
 
-    /// Expand instantly (room for the labels before they animate in); defer the shrink so the labels
-    /// animate out first. Instant frame (no NSWindow animation) keeps the SwiftUI hover jitter-free.
-    private func hoverChanged(_ hovering: Bool) {
-        collapseWork?.cancel()
-        guard panel?.isVisible == true else { return }
-        if hovering {
-            anchor()
-        } else {
-            let work = DispatchWorkItem { [weak self] in
-                guard let self, !self.model.isHovering else { return }
-                self.anchor()
-            }
-            collapseWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.36, execute: work)
-        }
-    }
-
-    private func hide() {
-        collapseWork?.cancel()
-        panel?.orderOut(nil)
-    }
+    private func hide() { panel?.orderOut(nil) }
 
     private func makePanel() -> RailPanel {
         let panel = RailPanel(
@@ -127,15 +103,17 @@ final class RailController {
     private func anchor() {
         guard let panel, let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
-        // Width is hover-driven (constant); height follows the content (listening + mark count),
-        // which is independent of hover, so fittingSize.height stays stable as we widen. The frame
-        // is set instantly (the visible glide is the SwiftUI capsule inside the larger panel).
-        let width = model.isHovering ? expandedWidth : collapsedWidth
+        // FIXED width — never hover-dependent. Only the height follows the content (mark count).
+        // Because the width and right edge never change, the window never moves on hover.
+        let width = panelWidth
         let height = panel.contentView?.fittingSize.height ?? 240
         let x: CGFloat = edge == .trailing
             ? visible.maxX - width - inset
             : visible.minX + inset
         let y = visible.midY - height / 2
         panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+        #if DEBUG
+        print("[RAIL] anchor — width=\(width) rightEdge=\(x + width) (should equal screenMaxX-inset=\(visible.maxX - inset)); fires on show/screen/content only, NOT hover")
+        #endif
     }
 }
