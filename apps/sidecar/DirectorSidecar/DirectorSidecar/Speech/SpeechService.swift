@@ -238,6 +238,14 @@ enum SpeechService {
     }
 }
 
+/// A tiny thread-safe holder so the realtime audio tap can append to the CURRENT recognition request
+/// without touching the @MainActor session. The session swaps `request` on each task restart; the tap
+/// only reads it. A pointer read/write is atomic enough for this single-swapper/single-reader use, and
+/// `SFSpeechAudioBufferRecognitionRequest.append` is itself thread-safe.
+private final class CurrentRequestBox: @unchecked Sendable {
+    var request: SFSpeechAudioBufferRecognitionRequest?
+}
+
 @available(macOS 10.15, *)
 @MainActor
 private final class SFSpeechRecognizerSession {
@@ -249,6 +257,20 @@ private final class SFSpeechRecognizerSession {
     private var task: SFSpeechRecognitionTask?
     private var tapInstalled = false
     private var stopping = false
+    /// The realtime audio tap appends to whichever request is CURRENT via this thread-safe holder —
+    /// so a task restart (below) re-points capture without the tap ever touching the @MainActor self.
+    private let requestBox = CurrentRequestBox()
+    /// Finalized utterance segments accumulated across this push-to-talk hold. SFSpeech's on-device
+    /// recognizer endpoints a long hold into multiple segments (each `.isFinal` resets the next
+    /// segment's `formattedString`), so without accumulation only the latest segment would survive.
+    private var committedText = ""
+    /// The latest partial of the CURRENT in-flight segment — joined with `committedText` to form the
+    /// full transcript shown live and finalized on `stop()`.
+    private var lastPartial = ""
+    /// The most recent result seen — kept only for the final segment-averaged confidence.
+    private var lastResult: SFSpeechRecognitionResult?
+    /// True once the single `.final` for this hold has been emitted, so `stop()` never double-emits.
+    private var didEmitFinal = false
 
     init(emit: @escaping @MainActor (SpeechService.Event) -> Void) {
         self.emit = emit
@@ -269,13 +291,6 @@ private final class SFSpeechRecognizerSession {
             return
         }
 
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        if recognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-        }
-        self.request = request
-
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0 else {
@@ -283,8 +298,11 @@ private final class SFSpeechRecognizerSession {
             return
         }
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            request.append(buffer)
+        // One long-lived tap feeds whichever recognition request is current (via `requestBox`), so a
+        // task restart on each segment boundary keeps capturing the same mic stream. The tap runs on a
+        // realtime audio thread — it reads the box, never the @MainActor session.
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [box = requestBox] buffer, _ in
+            box.request?.append(buffer)
         }
         tapInstalled = true
 
@@ -298,11 +316,29 @@ private final class SFSpeechRecognizerSession {
             return
         }
 
+        startRecognitionTask()
+        emit(.ready)
+    }
+
+    /// Create a fresh recognition request + task feeding off the live audio tap. Called at start and
+    /// again after every segment `.isFinal`, so a multi-utterance push-to-talk hold keeps recognizing
+    /// past SFSpeech's per-segment endpointing (and past its ~1-minute single-task ceiling). The fresh
+    /// request resets `formattedString`, so `committedText + current` never overlaps (no duplication).
+    private func startRecognitionTask() {
+        guard let recognizer, !stopping else { return }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        if recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
+        }
+        self.request = request
+        requestBox.request = request
+        lastPartial = ""
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
                 guard let self else { return }
-                if let result {
-                    self.emit(result: result)
+                if let result, !self.stopping {
+                    self.handle(result: result)
                 }
                 if let error, !self.stopping {
                     self.emitError(kind: .providerUnavailable, message: error.localizedDescription)
@@ -310,7 +346,6 @@ private final class SFSpeechRecognizerSession {
                 }
             }
         }
-        emit(.ready)
     }
 
     func stop() {
@@ -322,7 +357,23 @@ private final class SFSpeechRecognizerSession {
         if engine.isRunning {
             engine.stop()
         }
+        requestBox.request = nil
         request?.endAudio()
+        // Push-to-talk: releasing fn ends the COMMAND now. Emit exactly ONE `.final` carrying the FULL
+        // transcript captured this hold — every committed segment plus the live segment. We do NOT
+        // wait for the recognizer's async `.isFinal` (it often never lands before teardown, and we
+        // already hold the text). This single final is the loop's one goal trigger per hold.
+        if !didEmitFinal {
+            let full = displayText(lastPartial)
+            if !full.isEmpty {
+                didEmitFinal = true
+                emit(.final(
+                    text: full,
+                    confidence: confidenceFromLastResult(),
+                    latencyMs: Date().timeIntervalSince(startedAt) * 1000,
+                    receivedAt: SpeechService.OnDeviceStream.nowMs()))
+            }
+        }
         task?.cancel()
         task = nil
         request = nil
@@ -350,17 +401,69 @@ private final class SFSpeechRecognizerSession {
         return nil
     }
 
-    private func emit(result: SFSpeechRecognitionResult) {
-        let text = result.bestTranscription.formattedString
+    /// Process one recognizer result during a push-to-talk hold. A `.isFinal` HERE is a SEGMENT
+    /// boundary (the user is still holding fn) — commit it to the accumulated transcript, surface the
+    /// growing full text as a PARTIAL (never a `.final`, which would start a goal mid-sentence), and
+    /// restart the task for the next segment. The one `.final` is emitted only on `stop()` (fn
+    /// release). Every partial carries the FULL accumulated text (committed segments + live segment).
+    private func handle(result: SFSpeechRecognitionResult) {
+        lastResult = result
+        let current = result.bestTranscription.formattedString
         let latencyMs = Date().timeIntervalSince(startedAt) * 1000
         let receivedAt = SpeechService.OnDeviceStream.nowMs()
         if result.isFinal {
-            let segments = result.bestTranscription.segments
-            let confidence = segments.isEmpty ? 0 : segments.reduce(0) { $0 + Double($1.confidence) } / Double(segments.count)
-            emit(.final(text: text, confidence: confidence, latencyMs: latencyMs, receivedAt: receivedAt))
-        } else {
-            emit(.partial(text: text, confidence: 0, latencyMs: latencyMs, receivedAt: receivedAt))
+            commit(current)
+            lastPartial = ""
+            emit(.partial(text: committedText, confidence: 0, latencyMs: latencyMs, receivedAt: receivedAt))
+            task = nil
+            startRecognitionTask()
+            return
         }
+        // SFSpeech's on-device recognizer usually starts a NEW utterance after a natural pause by
+        // simply RESETTING `formattedString` to the new words — WITHOUT emitting a final (observed
+        // live: partials climb to ~107 chars then drop to 3). Detect that silent rollover by comparing
+        // leading prefixes (port of @handsoff/speech `foldUtterance` / `isRevisionOfSameUtterance`):
+        // when the incoming partial doesn't share a prefix with the current one, checkpoint the old
+        // partial before adopting the new, so the whole hold accumulates instead of keeping only the
+        // last segment.
+        if !Self.isRevisionOfSameUtterance(lastPartial, current) {
+            commit(lastPartial)
+        }
+        lastPartial = current
+        emit(.partial(text: displayText(current), confidence: 0, latencyMs: latencyMs, receivedAt: receivedAt))
+    }
+
+    /// True when `next` is a revision/extension of the same utterance as `prev` (shared leading
+    /// prefix); false when the recognizer appears to have reset to a brand-new utterance. Mirrors the
+    /// TS `isRevisionOfSameUtterance` (first 20 chars, trimmed + case-insensitive).
+    private static func isRevisionOfSameUtterance(_ prev: String, _ next: String) -> Bool {
+        let a = prev.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let b = next.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if a.isEmpty || b.isEmpty { return true }
+        let n = min(a.count, b.count, 20)
+        return a.prefix(n) == b.prefix(n)
+    }
+
+    /// The accumulated transcript plus the current in-flight segment — what the HUD shows live and
+    /// what `stop()` finalizes. Whitespace-joined; either side may be empty.
+    private func displayText(_ current: String) -> String {
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if committedText.isEmpty { return trimmed }
+        if trimmed.isEmpty { return committedText }
+        return committedText + " " + trimmed
+    }
+
+    /// Append a finalized segment to the accumulated transcript.
+    private func commit(_ current: String) {
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        committedText = committedText.isEmpty ? trimmed : committedText + " " + trimmed
+    }
+
+    /// Segment-averaged confidence from the last result seen (0 when none) — for the final event.
+    private func confidenceFromLastResult() -> Double {
+        guard let segments = lastResult?.bestTranscription.segments, !segments.isEmpty else { return 0 }
+        return segments.reduce(0) { $0 + Double($1.confidence) } / Double(segments.count)
     }
 
     private func emitError(kind: SpeechService.SttErrorKind, message: String) {
