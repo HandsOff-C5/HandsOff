@@ -23,10 +23,10 @@ struct RailView: View {
     /// A friendly, slightly slower ease for the widen/collapse so it doesn't feel snappy/jarring.
     static let ease = Animation.smooth(duration: 0.34)
     /// FIXED inner widths — the rail never measures the text, so the right edge can't jump.
-    private var contentWidth: CGFloat { expanded ? 162 : 44 }
+    private var contentWidth: CGFloat { expanded ? 156 : 48 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             if model.isListening {
                 ActivatedRow(expanded: expanded) { store.send(.stopListening) }
                 divider
@@ -44,8 +44,8 @@ struct RailView: View {
             OpenRow(expanded: expanded) { store.send(.openHome) }
         }
         .frame(width: contentWidth, alignment: .leading)
-        .padding(.vertical, 9)
-        .padding(.horizontal, 9)
+        .padding(.vertical, 11)
+        .padding(.horizontal, 6)
         .background {
             if reduceTransparency {
                 Self.shape.fill(theme.opaqueSurface)
@@ -63,7 +63,7 @@ struct RailView: View {
     }
 
     private var divider: some View {
-        Divider().overlay(theme.separator).padding(.horizontal, 2)
+        Divider().overlay(theme.separator).padding(.horizontal, 2).padding(.vertical, 3)
     }
 }
 
@@ -77,12 +77,6 @@ private struct RowShell<Icon: View>: View {
     @ViewBuilder var icon: () -> Icon
 
     @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    private var hoverFill: Color {
-        // The rail glass is always dark, so a light wash reads as a selection; opaque mode adapts.
-        reduceTransparency ? theme.textPrimary.opacity(0.1) : .white.opacity(0.14)
-    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -94,10 +88,10 @@ private struct RowShell<Icon: View>: View {
                 .frame(width: 96, alignment: .leading)
                 .opacity(expanded ? 1 : 0)
         }
-        .padding(.horizontal, 5).padding(.vertical, 4)
+        .padding(.horizontal, 6).padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-            .fill(hovering && expanded ? hoverFill : .clear))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(hovering && expanded ? theme.controlBg : .clear)) // same hover token as the dashboard
         .contentShape(Rectangle())
     }
 }
@@ -134,10 +128,13 @@ private struct OpenRow: View {
     var body: some View {
         Button(action: action) {
             RowShell(expanded: expanded, hovering: hovering, label: "Open Director") {
+                // Circle to echo the agent marks (the user preferred this over a bare glyph).
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
                     .frame(width: 36, height: 36)
+                    .background(Circle().fill(theme.controlBg))
+                    .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
             }
         }
         .buttonStyle(.plain)
@@ -156,14 +153,10 @@ private struct AgentRow: View {
     let onPause: () -> Void
 
     @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var rowHover = false
     @State private var iconHover = false
 
     private var canPause: Bool { mark.isRunning }
-    private var hoverFill: Color {
-        reduceTransparency ? theme.textPrimary.opacity(0.1) : .white.opacity(0.14)
-    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -201,10 +194,10 @@ private struct AgentRow: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 5).padding(.vertical, 4)
+        .padding(.horizontal, 6).padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-            .fill(rowHover && expanded ? hoverFill : .clear))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(rowHover && expanded ? theme.controlBg : .clear)) // same hover token as the dashboard
         .onHover { rowHover = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(mark.agent): \(mark.title)")

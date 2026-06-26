@@ -27,7 +27,7 @@ final class RailController {
     /// Collapsed = an icon column; expanded (hover) = wide enough for the row labels. Fixed widths
     /// (not fittingSize) so the panel footprint is small when idle and never blocks clicks behind it.
     private let collapsedWidth: CGFloat = 62
-    private let expandedWidth: CGFloat = 184
+    private let expandedWidth: CGFloat = 172
     private var panel: RailPanel?
     /// Pending shrink-to-collapsed, deferred so the labels animate out before the panel narrows.
     private var collapseWork: DispatchWorkItem?
@@ -38,6 +38,9 @@ final class RailController {
         self.store = store
         observe()
         applyVisibility()
+        // Hover is handled SYNCHRONOUSLY (not via the async observation) so the panel resizes in the
+        // same runloop the capsule starts animating — the right edge stays put, no one-frame jump.
+        model.onHoverChange = { [weak self] hovering in self?.hoverChanged(hovering) }
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil
@@ -46,11 +49,10 @@ final class RailController {
 
     // MARK: observation
 
-    /// Re-evaluate on visibility, hover (width), and content changes (height: listening/marks).
+    /// Re-evaluate on visibility + content changes (height: listening/marks). Hover is separate.
     private func observe() {
         withObservationTracking {
             _ = model.isVisible
-            _ = model.isHovering
             _ = model.isListening
             _ = model.marks
         } onChange: { [weak self] in
@@ -73,21 +75,19 @@ final class RailController {
     // MARK: panel
 
     private func show() {
-        if let panel, panel.isVisible {
-            updateSize()                  // already shown — just re-size for hover/content
-            return
-        }
         let panel = panel ?? makePanel()
         self.panel = panel
-        anchor()                          // first appearance: position + size instantly
-        panel.orderFrontRegardless()      // never makeKey/activate — must not steal focus
+        let firstShow = !panel.isVisible
+        anchor()                          // position + size for the current (hover/content) state
+        if firstShow { panel.orderFrontRegardless() } // never makeKey/activate — must not steal focus
     }
 
-    /// Expand instantly (give the labels room before they animate in); defer the shrink so the
-    /// labels animate out first. No animated NSWindow frame → the SwiftUI hover stays jitter-free.
-    private func updateSize() {
+    /// Expand instantly (room for the labels before they animate in); defer the shrink so the labels
+    /// animate out first. Instant frame (no NSWindow animation) keeps the SwiftUI hover jitter-free.
+    private func hoverChanged(_ hovering: Bool) {
         collapseWork?.cancel()
-        if model.isHovering {
+        guard panel?.isVisible == true else { return }
+        if hovering {
             anchor()
         } else {
             let work = DispatchWorkItem { [weak self] in

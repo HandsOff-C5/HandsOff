@@ -28,7 +28,14 @@ final class RailModel {
     /// True while the pointer is over the rail — drives the hover-reveal of each row's text label
     /// (and the panel widening that makes room for them).
     private(set) var isHovering = false
-    func setHovering(_ on: Bool) { isHovering = on }
+    /// Fired synchronously on hover change so the controller can resize the panel in the SAME
+    /// runloop as the SwiftUI animation — otherwise the panel lags a frame and the right edge jumps.
+    @ObservationIgnored var onHoverChange: ((Bool) -> Void)?
+    func setHovering(_ on: Bool) {
+        guard on != isHovering else { return }
+        isHovering = on
+        onHoverChange?(on)
+    }
 
     @ObservationIgnored private var connected = false
 

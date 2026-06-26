@@ -18,7 +18,6 @@ struct DirectorMark: View {
 
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulse = false
 
     private var isRunning: Bool { status == .running || status == .queued }
     private var isDone: Bool { status == .succeeded || status == .failed || status == .rejected }
@@ -31,14 +30,16 @@ struct DirectorMark: View {
 
     var body: some View {
         ZStack {
-            // Running → a soft pulsing halo (radar-ping).
+            // Running → a soft pulsing halo (radar-ping). TimelineView-driven so a parent .animation
+            // transaction (e.g. the rail's hover widen) can't capture and freeze the loop.
             if isRunning, animated, !reduceMotion {
-                Circle().stroke(theme.accent, lineWidth: size * 0.042)
-                    .frame(width: size, height: size)
-                    .scaleEffect(pulse ? 1.5 : 1)
-                    .opacity(pulse ? 0 : 0.6)
-                    .animation(.easeOut(duration: 1.6).repeatForever(autoreverses: false), value: pulse)
-                    .onAppear { pulse = true }
+                TimelineView(.animation) { context in
+                    let p = (context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6)) / 1.6
+                    Circle().stroke(theme.accent, lineWidth: size * 0.042)
+                        .frame(width: size, height: size)
+                        .scaleEffect(1 + 0.5 * p)
+                        .opacity(0.6 * (1 - p))
+                }
             }
             Circle().fill(color.opacity(0.14))
                 .overlay(Circle().strokeBorder(color, lineWidth: size * 0.042))
@@ -60,6 +61,8 @@ struct DirectorMark: View {
 
 /// Gold equalizer bars pulsing like a live audio waveform — the listening / agent-working signal.
 /// No native waveform exists, so this is the one custom shape, shared by the rail pip and the cards.
+/// TimelineView-driven (continuous time → height) so a parent `.animation` transaction (the rail's
+/// hover widen) can't capture the loop and freeze the bars at full height.
 struct ListeningWaveform: View {
     var tint: Color? = nil
     var barCount: Int = 4
@@ -70,24 +73,27 @@ struct ListeningWaveform: View {
 
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var animating = false
 
     var body: some View {
         let color = tint ?? theme.accent
-        HStack(alignment: .center, spacing: spacing) {
-            ForEach(0..<barCount, id: \.self) { i in
-                Capsule().fill(color)
-                    .frame(width: barWidth, height: animating && !reduceMotion ? maxHeight : minHeight)
-                    .animation(
-                        reduceMotion ? nil
-                        : .easeInOut(duration: 0.45).repeatForever(autoreverses: true).delay(Double(i) * 0.13),
-                        value: animating
-                    )
+        TimelineView(.animation(paused: reduceMotion)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .center, spacing: spacing) {
+                ForEach(0..<barCount, id: \.self) { i in
+                    Capsule().fill(color)
+                        .frame(width: barWidth, height: height(bar: i, at: t))
+                }
             }
         }
         .frame(width: CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * spacing, height: maxHeight)
-        .onAppear { animating = true }
         .accessibilityHidden(true)
+    }
+
+    private func height(bar i: Int, at t: TimeInterval) -> CGFloat {
+        guard !reduceMotion else { return (minHeight + maxHeight) / 2 }
+        let phase = Double(i) * 0.55
+        let norm = (sin((t / 0.9 + phase) * 2 * .pi) + 1) / 2 // 0…1, staggered per bar
+        return minHeight + (maxHeight - minHeight) * norm
     }
 }
 
