@@ -45,6 +45,16 @@ struct SessionVM: Identifiable, Equatable, Sendable {
     }
 }
 
+/// One executed intention in the Home feed (the KB's "Intention Log" — pillar 4, Accountable by
+/// design): what the user said, when, and which apps/services it touched (reference chips, no logos).
+struct IntentionEntry: Identifiable, Equatable, Sendable {
+    let id: String
+    let at: Date
+    let transcript: String
+    let references: [String]   // app / service names → chips ("Cursor", "Slack")
+    let agent: String?         // the agent that carried it out, if any
+}
+
 @MainActor
 @Observable
 final class HomeDashboardModel {
@@ -70,6 +80,11 @@ final class HomeDashboardModel {
     private(set) var auditLog: [AuditLogEntry] = []
     var filter: Filter = .all
     var selectedSessionId: String?
+
+    /// The Home feed — executed intentions, newest first. Seeded by the mock fleet for now; the real
+    /// feed will accrue from transcript + intent frames (a later step).
+    private(set) var intentions: [IntentionEntry] = []
+    func seedIntentions(_ list: [IntentionEntry]) { intentions = list }
 
     /// The command sink (set by the app) — for selectSession / greenlight / reject. In-process
     /// `LoopEngine` after ADR 0005 Track D (greenlight → loop.approve, reject → loop.reject).

@@ -20,7 +20,8 @@ enum Command: Equatable {
     case startListening              // fn activation → stt_ondevice_start
     case commit                      // fn-end → execute the resolved intent
     case stopListening               // abort/cancel → stt_ondevice_stop (do NOT execute)
-    case pauseAll                    // interrupt path (per-agent pause UI is cut for the demo)
+    case pauseAll                    // interrupt path: pause every running agent
+    case pauseSession(String)        // pause a single agent (the agent submenu in the status menu)
     case openHome                    // focus/show the main Home Dashboard window
     case selectSession(String)       // Inspector binding (sessionId)
     case greenlight(actionId: String, decidedAt: String)  // approval-required risk
@@ -33,6 +34,7 @@ enum Command: Equatable {
         case .commit: return "commit"
         case .stopListening: return "stopListening"
         case .pauseAll: return "pauseAll"
+        case .pauseSession: return "pauseSession"
         case .openHome: return "openHome"
         case .selectSession: return "selectSession"
         case .greenlight: return "greenlight"
@@ -46,7 +48,7 @@ enum Command: Equatable {
         switch self {
         case .startListening, .commit, .stopListening, .pauseAll, .openHome:
             return try encoder.encode(Envelope(topic: topic, payload: EmptyPayload()))
-        case let .selectSession(sessionId):
+        case let .selectSession(sessionId), let .pauseSession(sessionId):
             return try encoder.encode(Envelope(topic: topic, payload: SelectSessionPayload(sessionId: sessionId)))
         case let .greenlight(actionId, decidedAt):
             return try encoder.encode(Envelope(topic: topic, payload: ApprovalDecisionPayload(

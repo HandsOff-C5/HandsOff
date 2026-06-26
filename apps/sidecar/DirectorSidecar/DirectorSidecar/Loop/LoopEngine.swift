@@ -142,7 +142,7 @@ final class LoopEngine: CommandSink {
             await loop.approve()
         case .reject:
             await loop.reject()
-        case .pauseAll, .stopListening:
+        case .pauseAll, .pauseSession, .stopListening:
             // The always-available interrupt (KD6). Safe on fn-release: a new goal's
             // `handleFinalTranscript` resets the interrupt flag before it runs, so stopping the mic
             // never kills the goal that the just-spoken transcript is about to start.

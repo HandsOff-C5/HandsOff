@@ -49,8 +49,11 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     private var micro: MicroHUDController?
     private var overlay: OverlayController?
 
+    private var railController: RailController?
+
     func start(hud hudModel: HUDModel, micro microModel: MicroHUDModel,
                overlay overlayModel: OverlayModel, gaze: GazeBracketModel,
+               rail railModel: RailModel,
                onOpenHome: @escaping () -> Void) {
         guard hud == nil else { return }   // once only
         hud = HUDPanelController(model: hudModel, edge: .trailing)
@@ -58,6 +61,8 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
             micro = MicroHUDController(model: microModel, fullHUD: hudModel, onOpenHome: onOpenHome)
         }
         overlay = OverlayController(model: overlayModel, gaze: gaze)
+        // The Right-edge rail — the always-on ambient edge surface (replaces the parked micro-HUD).
+        railController = RailController(model: railModel, edge: .trailing, onOpenHome: onOpenHome)
     }
 }
 
@@ -70,6 +75,7 @@ struct DirectorSidecarApp: App {
     let overlay: OverlayModel
     let gaze: GazeBracketModel
     let home: HomeDashboardModel
+    let rail: RailModel
     /// ADR 0005 Track D: the in-process engine (the ported `VoiceCuaLoop`) that replaces the
     /// loopback socket as the app's engine of record. Held for the app's whole run.
     private let engine: LoopEngine
@@ -90,11 +96,12 @@ struct DirectorSidecarApp: App {
         let overlay = OverlayModel()
         let gaze = GazeBracketModel()
         let home = HomeDashboardModel()
+        let rail = RailModel()
 
         // One fan-out of every frame to every model.
         let dispatch: (BridgeFrame) -> Void = { frame in
             store.apply(frame); hud.apply(frame); micro.apply(frame)
-            overlay.apply(frame); gaze.apply(frame); home.apply(frame)
+            overlay.apply(frame); gaze.apply(frame); home.apply(frame); rail.apply(frame)
         }
 
         // Track F: own the ported engine services and bind them to the lifecycle. Head-pointer
@@ -164,7 +171,7 @@ struct DirectorSidecarApp: App {
         engine.onFrame = { frame in dispatch(frame) }
         engine.onState = { state in
             store.setConnection(state); hud.setConnection(state); micro.setConnection(state)
-            overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state)
+            overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state); rail.setConnection(state)
         }
         store.bridge = engine
         home.bridge = engine
@@ -192,16 +199,23 @@ struct DirectorSidecarApp: App {
         store.onListeningChanged = { on in
             hud.setListening(on)
             micro.setListening(on)
-            overlay.setActive(on)  // Director cursor hugs the system cursor while active
-            gaze.setActive(on)     // eye-gaze brackets shown while active
+            overlay.setActive(on)  // the one Director cursor hugs the system cursor while active
+            // Eye-gaze brackets: seed a deterministic centered region so they appear on activation,
+            // before real gaze CV drives them (point/size morphing lands with the engine publisher).
+            let screen = NSScreen.main?.frame.size ?? CGSize(width: 1440, height: 900)
+            gaze.setActive(on, seed: on ? GazeBracketModel.centeredRegion(in: screen) : nil)
+            rail.setListening(on)  // the rail's LIVE pip lights while active
             #if DEBUG
+            // The scripted intention journey (transcript → intent → traveling cursors → full HUD) is
+            // parked behind `runsScriptedActivation`. Activation shows only the three ambient overlays
+            // unless it's flipped on (the later "populate the flow" step).
             activation?.cancel()
             if DevMockFleet.isEnabled {
                 // Mock owns the cursors; the real camera/mic stay OFF so dev demos never prompt for
                 // permissions or fight the mock fleet's drawn cursors.
-                if on {
+                if DevMockFleet.runsScriptedActivation, on {
                     activation = Task { await DevMockFleet.activationLoop(dispatch: dispatch, now: Date()) }
-                } else {
+                } else if !on {
                     dispatch(.cursor(pointers: [])) // mock: clear the agent cursors the loop drew
                 }
             } else {
@@ -214,6 +228,18 @@ struct DirectorSidecarApp: App {
             #endif
         }
 
+        // Menu "View Activity" → bind the dashboard to THAT agent (home owns the selection + its own
+        // engine send). In DEBUG mock mode, also publish that agent's plan so the inspector updates
+        // immediately — no engine is there to republish the selected intent.
+        store.onSelectSession = { id in
+            home.select(id)
+            #if DEBUG
+            if DevMockFleet.isEnabled { dispatch(.intent(DevMockFleet.intent(for: id))) }
+            #endif
+        }
+
+        // `store.onOpenHome` (rail ⤢ + menu "Open Home") is wired to SwiftUI's openWindow in the
+        // dashboard scene (HomeOpenWiring) so it re-creates the window even after the red-X close.
         self.engine = engine
         self.store = store
         self.hud = hud
@@ -221,6 +247,7 @@ struct DirectorSidecarApp: App {
         self.overlay = overlay
         self.gaze = gaze
         self.home = home
+        self.rail = rail
         self.services = services
         self.coordinator = coordinator
 
@@ -239,7 +266,7 @@ struct DirectorSidecarApp: App {
             forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
         ) { _ in
             MainActor.assumeIsolated {
-                surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze,
+                surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze, rail: rail,
                                onOpenHome: { store.send(.openHome) })
                 // C1 fix: install the global fn capture tap and route its phases to the listening
                 // commands — press-hold → start/stop, double-tap → toggle. Session-wide, so this fires
@@ -292,13 +319,14 @@ struct DirectorSidecarApp: App {
             // Listening (⌥⌘D, or the menu) — so the menu + dashboard are never obstructed. The
             // engine stays idle in mock mode (the mock fleet owns the frames); commands still
             // resolve to the engine's loop (a no-op while no goal is running).
-            Task {
+            Task { @MainActor in
                 await DevMockFleet.populate(
                     dispatch: dispatch,
-                    setState: { state in store.setConnection(state); micro.setConnection(state); overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state) },
+                    setState: { state in store.setConnection(state); micro.setConnection(state); overlay.setConnection(state); gaze.setConnection(state); home.setConnection(state); rail.setConnection(state) },
                     select: { id in home.select(id) },
                     now: Date()
                 )
+                home.seedIntentions(DevMockFleet.intentionFeed(now: Date()))
             }
         } else {
             engine.start()
@@ -314,9 +342,11 @@ struct DirectorSidecarApp: App {
     }
 
     var body: some Scene {
-        // G4 Home Dashboard — the product window (native SwiftUI, Option B).
-        WindowGroup("Director", id: "home") {
+        // G4 Home Dashboard — the product window. Single-instance `Window` (not `WindowGroup`) so the
+        // red-X close + "Open Home" re-open cleanly via openWindow(id:) and never duplicate.
+        Window("Director", id: "home") {
             ThemedRoot { HomeDashboardView(model: home) }
+                .modifier(HomeOpenWiring(store: store, rail: rail))
         }
         .commands {
             CommandMenu("Director") {
@@ -330,13 +360,41 @@ struct DirectorSidecarApp: App {
             ThemedRoot { ContentView() }
         }
 
-        // G1 product entry: menu-bar status item + glass dropdown.
+        // G1 product entry: menu-bar status item + NATIVE pull-down menu. The `.menu` style renders
+        // a real NSMenu (system liquid-glass material + native selection highlight), so MenuContent
+        // only declares menu items — no custom window/blur/hover. (The label stays themed for the
+        // readiness dot.)
         MenuBarExtra {
-            ThemedRoot { MenuContent(store: store) }
+            MenuContent(store: store)
         } label: {
             ThemedRoot { MenuBarLabel(readiness: store.menuReadiness) }
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
+    }
+}
+
+/// Wires `store.onOpenHome` (rail ⤢ + menu "Open Home") to SwiftUI's `openWindow`, captured from an
+/// in-scene view so it re-creates the single-instance Home window even after the red-X destroys it.
+private struct HomeOpenWiring: ViewModifier {
+    let store: BridgeStore
+    let rail: RailModel
+    @Environment(\.openWindow) private var openWindow
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                store.onOpenHome = {
+                    MainActor.assumeIsolated {
+                        openWindow(id: "home")
+                        NSApp.activate()
+                    }
+                }
+                // Home is showing → its minimized echo (the rail) hides.
+                rail.setHomeOpen(true)
+            }
+            .onDisappear {
+                // Home closed (red-X) → the rail returns as the ambient edge summary.
+                rail.setHomeOpen(false)
+            }
     }
 }
 

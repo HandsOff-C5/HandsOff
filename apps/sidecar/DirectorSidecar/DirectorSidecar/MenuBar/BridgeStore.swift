@@ -60,11 +60,23 @@ final class BridgeStore {
     /// Notifies the app when listening starts/stops (so the HUD can come up/down optimistically).
     @ObservationIgnored var onListeningChanged: ((Bool) -> Void)?
 
-    /// Send a command; optimistic local listening flag for snappy menu feedback.
+    /// Brings the Home dashboard window forward (the rail's ⤢ button + the menu's "Open Home").
+    /// A local UI action — `.openHome` must not depend on the engine round-trip.
+    @ObservationIgnored var onOpenHome: (() -> Void)?
+
+    /// Routes a menu "View Activity" selection into the dashboard model (which owns the selected
+    /// agent + its own engine `selectSession` send). Local so the inspector binds immediately,
+    /// rather than waiting on an engine round-trip that never comes in mock mode.
+    @ObservationIgnored var onSelectSession: ((String) -> Void)?
+
+    /// Send a command; some are local UI actions (listening flag, open Home, select) applied
+    /// optimistically and NOT re-forwarded here (the owning model forwards its own).
     func send(_ command: Command) {
         switch command {
         case .startListening: isListening = true; onListeningChanged?(true)
         case .stopListening: isListening = false; onListeningChanged?(false)
+        case .openHome: onOpenHome?()
+        case let .selectSession(id): onSelectSession?(id); return // HomeDashboardModel owns + forwards this
         default: break
         }
         guard let bridge else { return }

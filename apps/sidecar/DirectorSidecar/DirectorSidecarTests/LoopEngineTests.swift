@@ -367,6 +367,18 @@ struct LoopEngineCommandTests {
         #expect(loop.session?.status == .blocked)
     }
 
+    @Test func pauseSessionRoutesToInterrupt() async {
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState(commitLabel: "Send"))
+        let resolver = ScriptedResolver([act("click", args: clickSendArgs)])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+        let (engine, _) = makeEngine(loop: loop)
+
+        await loop.handleFinalTranscript(finalTranscript("send it"))
+        await engine.send(.pauseSession("session-1"))
+
+        #expect(loop.session?.status == .blocked)
+    }
+
     @Test func uiOnlyCommandsDoNotDisturbTheLoop() async {
         let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState())
         let resolver = ScriptedResolver([act("scroll"), done()])

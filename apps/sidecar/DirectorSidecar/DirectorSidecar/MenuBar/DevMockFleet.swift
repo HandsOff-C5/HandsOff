@@ -24,6 +24,12 @@ enum DevMockFleet {
         ProcessInfo.processInfo.environment["DIRECTOR_MOCK_DESTRUCTIVE"] == "1"
     }
 
+    /// The scripted "intention journey" (transcript → referents → intent → traveling agent cursors
+    /// → full HUD) is PARKED. Activating Director should show only the three ambient overlays (rail
+    /// waveform, centered gaze brackets, one hugging cursor), not a fake end-to-end run. Flip to
+    /// true to replay the full mock flow — the later step that wires up the populated experience.
+    static let runsScriptedActivation = false
+
     static let allCapsGranted = ReadinessPayload(capabilities: [
         CapabilityProbe(id: "camera", kind: "permission", state: "granted"),
         CapabilityProbe(id: "microphone", kind: "permission", state: "granted"),
@@ -95,6 +101,52 @@ enum DevMockFleet {
         )
     }
 
+    /// The Home feed: recently executed intentions, newest first — what was said, when, and the
+    /// apps/services each touched (reference chips). Stands in for the real transcript→intent history.
+    static func intentionFeed(now: Date) -> [IntentionEntry] {
+        func at(_ minutesAgo: Double) -> Date { now.addingTimeInterval(-minutesAgo * 60) }
+        return [
+            IntentionEntry(id: "i1", at: at(2),  transcript: "Summarize this GitHub issue and post the TL;DR in engineering.",
+                           references: ["GitHub", "Slack"], agent: "Claude Code"),
+            IntentionEntry(id: "i2", at: at(9),  transcript: "Copy the auth refactor notes from Cursor into the design doc.",
+                           references: ["Cursor", "Notion"], agent: "Claude Code"),
+            IntentionEntry(id: "i3", at: at(24), transcript: "Fix the flaky CUA test and open a pull request.",
+                           references: ["Cursor", "GitHub"], agent: "Cursor"),
+            IntentionEntry(id: "i4", at: at(51), transcript: "Read my latest email from Naama and draft a reply.",
+                           references: ["Mail"], agent: nil),
+            IntentionEntry(id: "i5", at: at(88), transcript: "Take the architecture diagram from Figma and drop it into the deck.",
+                           references: ["Figma", "Keynote"], agent: "Claude Code"),
+        ]
+    }
+
+    /// A distinct plan per agent, so selecting an agent (menu "View Activity" or a dashboard card)
+    /// actually changes the inspector — there's no engine here to republish the selected intent.
+    static func intent(for sessionId: String) -> ResolvedIntentLite {
+        if isDestructive { return mockIntent(destructive: true) }
+        switch sessionId {
+        case "session-1":
+            return ResolvedIntentLite(
+                id: "intent-auth", status: .ready, intentType: "refactor", riskLevel: .readOnly,
+                requiresApproval: false, summary: "Refactor the auth module", reason: nil,
+                steps: [
+                    ActionStepLite(id: "s1", label: "Extract token validation into AuthService", kind: "inspect_window_state", targetTitle: "auth.ts", proposed: nil),
+                    ActionStepLite(id: "s2", label: "Update the 12 call sites", kind: "type_text", targetTitle: "auth.ts", proposed: "authService.validate(token)"),
+                ]
+            )
+        case "session-2":
+            return ResolvedIntentLite(
+                id: "intent-cua", status: .ready, intentType: "fix", riskLevel: .readOnly,
+                requiresApproval: false, summary: "Fix the flaky CUA test", reason: nil,
+                steps: [
+                    ActionStepLite(id: "s1", label: "Read the failing assertion", kind: "inspect_window_state", targetTitle: "cua.test.ts", proposed: nil),
+                    ActionStepLite(id: "s2", label: "Await the pending settle race", kind: "type_text", targetTitle: "driver.ts", proposed: "await driver.settle()"),
+                ]
+            )
+        default:
+            return mockIntent(destructive: false)
+        }
+    }
+
     /// Launch state: a connected engine, a running fleet, and a selected agent's plan — so the
     /// Home Dashboard + Inspector are populated and fully interactive. NO overlays come up here
     /// (those are toggle-driven), so the menu + dashboard are never obstructed.
@@ -109,13 +161,13 @@ enum DevMockFleet {
         dispatch(.state(topic: "readiness", readiness: allCapsGranted))
         dispatch(.sessions(fleet(now: now)))
         select("session-1") // bind the Inspector to the running agent (G4b)
-        dispatch(.intent(mockIntent(destructive: isDestructive)))
+        dispatch(.intent(intent(for: "session-1")))
         dispatch(.audit(auditLog(now: now))) // H4: populate the Agent Logs view
     }
 
-    /// Activation loop (fired when the user toggles Listening on): the eye-gaze brackets morph,
-    /// the Listening HUD fills (transcript → referents → intent), and the agent cursors travel.
-    /// Cancelled when the user toggles off. No runResult — the HUD stays up until dismissed.
+    /// Activation loop — PARKED behind `runsScriptedActivation` (off). When replayed: the eye-gaze
+    /// brackets morph, the Listening HUD fills (transcript → referents → intent), and the agent
+    /// cursors travel. Cancelled when the user toggles off. No runResult — the HUD stays up.
     @MainActor
     static func activationLoop(dispatch: @escaping (BridgeFrame) -> Void, now: Date) async {
         // A cancellation-aware pause: returns false the moment the loop is cancelled (toggle off),
