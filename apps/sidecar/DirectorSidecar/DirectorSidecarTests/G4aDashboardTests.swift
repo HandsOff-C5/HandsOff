@@ -19,7 +19,8 @@ private func session(_ id: String, _ status: ExecutionStatus, title: String? = n
     let vm = SessionVM(SupervisionSession(id: "s1", status: .blocked, startedAt: "2026-06-24T18:00:00.000Z", updatedAt: "t", finishedAt: nil, title: "Delete tmp", agentLabel: "Claude Code"))
     #expect(vm.title == "Delete tmp")
     #expect(vm.agent == "Claude Code")
-    #expect(vm.needsGreenlight) // blocked
+    #expect(!vm.needsGreenlight) // blocked is a terminal failure, not a pending approval
+    #expect(vm.isDone)           // blocked folds into the terminal/Done bucket
     #expect(!vm.isRunning)
 }
 
@@ -31,8 +32,8 @@ private func session(_ id: String, _ status: ExecutionStatus, title: String? = n
     ]
     #expect(HomeDashboardModel.filtered(fleet, .all).count == 3)
     #expect(HomeDashboardModel.filtered(fleet, .running).map(\.id) == ["a"])
-    #expect(HomeDashboardModel.filtered(fleet, .needsYou).map(\.id) == ["b"])
-    #expect(HomeDashboardModel.filtered(fleet, .done).map(\.id) == ["c"])
+    #expect(HomeDashboardModel.filtered(fleet, .needsYou).isEmpty) // approval is intent-state, not status
+    #expect(HomeDashboardModel.filtered(fleet, .done).map(\.id) == ["b", "c"]) // blocked + succeeded
 }
 
 @Test func loadStateReflectsConnectionAndCount() {

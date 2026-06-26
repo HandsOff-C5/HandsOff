@@ -20,9 +20,13 @@ struct SessionVM: Identifiable, Equatable, Sendable {
     let status: ExecutionStatus
     let startedAt: Date
 
-    var needsGreenlight: Bool { status == .blocked }
+    /// A live approval is an intent state, not a session status — in the in-process loop `.blocked`
+    /// is a TERMINAL FAILURE, not a pending greenlight. No status maps to "needs you" today; the
+    /// real approval surface is the intent (HUD greenlight footer). Re-wiring the fleet "needs you"
+    /// badge to the live approval intent is deferred (see issue).
+    var needsGreenlight: Bool { false }
     var isRunning: Bool { status == .running }
-    var isDone: Bool { status == .succeeded || status == .failed || status == .rejected }
+    var isDone: Bool { status == .succeeded || status == .failed || status == .rejected || status == .blocked }
 
     init(_ session: SupervisionSession) {
         id = session.id

@@ -72,8 +72,10 @@ final class HUDModel {
     nonisolated static func phase(forRunResult status: ExecutionStatus) -> HUDPhase {
         switch status {
         case .succeeded: return .complete
-        case .failed, .rejected: return .error
-        case .blocked: return .awaitingGreenlight
+        // `.blocked` is a TERMINAL FAILURE here (the loop's budget/dedup/gate/resolver-blocked
+        // outcome), NOT a pending approval — a real approval is a `.ready` mutating INTENT, handled
+        // by `phase(for intent:)` above. So a blocked run result is an error, not awaitingGreenlight.
+        case .failed, .rejected, .blocked: return .error
         case .queued, .running: return .executing
         }
     }

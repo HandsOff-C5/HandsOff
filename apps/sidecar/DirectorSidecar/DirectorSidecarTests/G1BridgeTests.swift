@@ -30,8 +30,8 @@ import Foundation
     #expect(payload.counts == nil)
     let c = payload.resolvedCounts
     #expect(c.running == 1)
-    #expect(c.needsGreenlight == 1) // blocked == awaiting (destructive) approval
-    #expect(c.done == 1)            // succeeded
+    #expect(c.needsGreenlight == 0) // approval is a live intent state, not derivable from status
+    #expect(c.done == 2)            // succeeded + blocked (blocked is a terminal failure)
 }
 
 @Test func decodesRunResultFrame() throws {

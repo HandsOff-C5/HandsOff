@@ -83,7 +83,7 @@ extension ExecutionStatus {
         case .running: return "running"
         case .succeeded: return "complete"
         case .failed: return "failed"
-        case .blocked: return "needs greenlight"
+        case .blocked: return "blocked"
         case .rejected: return "rejected"
         }
     }
