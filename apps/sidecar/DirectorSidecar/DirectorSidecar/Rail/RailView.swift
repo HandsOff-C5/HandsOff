@@ -34,9 +34,9 @@ struct RailView: View {
             if !model.marks.isEmpty {
                 ForEach(model.marks) { mark in
                     AgentRow(
-                        mark: mark, expanded: expanded,
+                        mark: mark, paused: store.isPaused(mark.id), expanded: expanded,
                         onView: { store.send(.selectSession(mark.id)); store.send(.openHome) },
-                        onPause: { store.send(.pauseSession(mark.id)) }
+                        onToggle: { store.togglePaused(mark.id) }
                     )
                 }
                 divider
@@ -148,25 +148,27 @@ private struct OpenRow: View {
 
 private struct AgentRow: View {
     let mark: SessionVM
+    let paused: Bool
     let expanded: Bool
     let onView: () -> Void
-    let onPause: () -> Void
+    let onToggle: () -> Void
 
     @Environment(\.theme) private var theme
     @State private var rowHover = false
     @State private var iconHover = false
 
-    private var canPause: Bool { mark.isRunning }
+    // Active agents (running or paused) can be paused/resumed; done agents can't.
+    private var canControl: Bool { mark.isRunning || paused }
 
     var body: some View {
         HStack(spacing: 12) {
-            // The mark — hover swaps it to a Pause button for running agents.
-            Button(action: { canPause ? onPause() : onView() }) {
+            // The mark — hover swaps it to Pause (running) or Play (paused).
+            Button(action: { canControl ? onToggle() : onView() }) {
                 ZStack {
-                    DirectorMark(status: mark.status, size: 36)
-                        .opacity(iconHover && canPause ? 0 : 1)
-                    if canPause {
-                        Image(systemName: "pause.fill")
+                    DirectorMark(status: mark.status, paused: paused, size: 36)
+                        .opacity(iconHover && canControl ? 0 : 1)
+                    if canControl {
+                        Image(systemName: paused ? "play.fill" : "pause.fill")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(theme.goldInk)
                             .frame(width: 36, height: 36)
@@ -179,7 +181,7 @@ private struct AgentRow: View {
             }
             .buttonStyle(.plain)
             .onHover { iconHover = $0 }
-            .help(iconHover && canPause ? "Pause agent" : "\(mark.agent): \(mark.title)")
+            .help(iconHover && canControl ? (paused ? "Resume agent" : "Pause agent") : "\(mark.agent): \(mark.title)")
 
             // The rest of the row → View Activity.
             Button(action: onView) {

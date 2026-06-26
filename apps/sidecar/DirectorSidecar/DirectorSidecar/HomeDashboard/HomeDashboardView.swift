@@ -103,7 +103,8 @@ struct HomeDashboardView: View {
     }
 
     private func card(_ session: SessionVM) -> some View {
-        AgentCard(session: session, selected: session.id == model.selectedSessionId)
+        AgentCard(session: session, selected: session.id == model.selectedSessionId,
+                  paused: store.isPaused(session.id))
             .onTapGesture { model.select(session.id) }
     }
 

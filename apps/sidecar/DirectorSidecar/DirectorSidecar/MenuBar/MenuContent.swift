@@ -42,7 +42,9 @@ struct MenuContent: View {
                             store.send(.selectSession(session.id))
                             store.send(.openHome)
                         }
-                        Button("Pause Agent") { store.send(.pauseSession(session.id)) }
+                        Button(store.isPaused(session.id) ? "Resume Agent" : "Pause Agent") {
+                            store.togglePaused(session.id)
+                        }
                     }
                 }
             }

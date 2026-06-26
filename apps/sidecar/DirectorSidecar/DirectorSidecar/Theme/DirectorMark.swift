@@ -13,6 +13,9 @@ import SwiftUI
 /// pulsing halo), amber = needs greenlight, green + ✓ = complete. Scales from the rail's 36pt up.
 struct DirectorMark: View {
     let status: ExecutionStatus
+    /// Paused agents keep the static ring + arrowhead but drop the pulsing halo — the halo means
+    /// "actively working".
+    var paused: Bool = false
     var size: CGFloat = 36
     var animated: Bool = true
 
@@ -30,9 +33,9 @@ struct DirectorMark: View {
 
     var body: some View {
         ZStack {
-            // Running → a soft pulsing halo (radar-ping). TimelineView-driven so a parent .animation
-            // transaction (e.g. the rail's hover widen) can't capture and freeze the loop.
-            if isRunning, animated, !reduceMotion {
+            // Running (and not paused) → a soft pulsing halo (radar-ping). TimelineView-driven so a
+            // parent .animation transaction (e.g. the rail's hover widen) can't capture/freeze it.
+            if isRunning, !paused, animated, !reduceMotion {
                 TimelineView(.animation) { context in
                     let p = (context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6)) / 1.6
                     Circle().stroke(theme.accent, lineWidth: size * 0.042)

@@ -13,11 +13,12 @@ import SwiftUI
 struct AgentCard: View {
     let session: SessionVM
     let selected: Bool
+    var paused: Bool = false
     @Environment(\.theme) private var theme
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            DirectorMark(status: session.status, size: 50)
+            DirectorMark(status: session.status, paused: paused, size: 50)
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -31,7 +32,10 @@ struct AgentCard: View {
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(2)
                 HStack(spacing: 10) {
-                    if session.isRunning {
+                    if session.isRunning && paused {
+                        Label("Paused", systemImage: "pause.fill")
+                            .font(theme.kbd).foregroundStyle(theme.textTertiary)
+                    } else if session.isRunning {
                         ListeningWaveform(maxHeight: 14, minHeight: 5)
                     }
                     Spacer()
