@@ -12,9 +12,12 @@
 //  wired in full, and the HAND-gesture lane folds in alongside it (the ported `ReferentLoop` output,
 //  via `GestureSnapshot`/`GestureReferentFusion`) — combinatively, not as a priority hierarchy,
 //  exactly as buildPointingEvidence combined both. One sibling modality remains its own track and is
-//  intentionally NOT folded in here: the temporal multi-deictic binder (U6/U7 — needs a head/word
-//  capture-trace recorder that Swift does not record yet; HeadPointerService emits instantaneous
-//  points, not a trace).
+//  intentionally NOT folded in here: the temporal multi-deictic binder (U6/U7). Its pure core now
+//  exists — `TemporalBinder` (Binding/TemporalBinder.swift) plus the `CaptureTraceRecorder`
+//  (Binding/CaptureTrace.swift) that records the head/hand/word trace it consumes — but they are
+//  landed-but-unwired: this snapshot intake still folds only the instantaneous head point, not a
+//  per-word binding. Wiring the capture hotkey → recorder → binder into the goal-start intake (the
+//  buildPointingEvidence.ts:51-60,136-139 path) is the remaining step.
 //
 
 import Foundation
