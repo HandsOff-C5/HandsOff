@@ -48,8 +48,6 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     private var hud: HUDPanelController?
     private var micro: MicroHUDController?
     private var overlay: OverlayController?
-    private var fnMonitor: Any?
-    private var fnHeld = false
 
     func start(hud hudModel: HUDModel, micro microModel: MicroHUDModel,
                overlay overlayModel: OverlayModel, gaze: GazeBracketModel,
@@ -60,24 +58,6 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
             micro = MicroHUDController(model: microModel, fullHUD: hudModel, onOpenHome: onOpenHome)
         }
         overlay = OverlayController(model: overlayModel, gaze: gaze)
-    }
-
-    /// Mock fn-key activation (the "fn" of this build): hold the fn/🌐 key while Director is frontmost
-    /// → onHold(true); release → onHold(false). Local monitor, so no Accessibility prompt — works when
-    /// Director is the active app. (Holding fn while pointing at *other* apps needs a global monitor +
-    /// Accessibility; that's the next step. macOS fn behavior should be set to "Do Nothing" to avoid
-    /// the system intercepting it.)
-    func installFnHold(_ onHold: @escaping (Bool) -> Void) {
-        guard fnMonitor == nil else { return }
-        fnMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            let held = event.modifierFlags.contains(.function)
-            MainActor.assumeIsolated {
-                guard let self, held != self.fnHeld else { return }
-                self.fnHeld = held
-                onHold(held)
-            }
-            return event
-        }
     }
 }
 
@@ -98,6 +78,10 @@ struct DirectorSidecarApp: App {
     /// binds their start/stop/teardown to the app lifecycle. Held for the app's whole run.
     private let services: DirectorServices
     private let coordinator: ServiceCoordinator
+    /// C1 fix: the global fn (Globe) capture trigger — a session-wide CGEventTap, so hold-fn-and-speak
+    /// works while ANOTHER app is frontmost (the whole hands-off entry point). Replaces the old local
+    /// `NSEvent` monitor that only fired while Director itself was the active app. Held for the run.
+    private let fnHotkey: FnHotkeyService
 
     init() {
         let store = BridgeStore()
@@ -124,15 +108,51 @@ struct DirectorSidecarApp: App {
         // look reaches the intent, not just the overlay cursor.
         let headSnapshot = HeadPointSnapshot()
 
+        // Hand-gesture tracking → intent. `HeadPointingIntake` reads this shared snapshot at goal
+        // start and folds the latest locked referent / wrist-ray cursor into the resolver input
+        // alongside the head signal — so a hand pointed at a target reaches the intent (the gesture
+        // branch of buildPointingEvidence, ported in `GestureReferentFusion`). The live producer that
+        // records into it — `HandLandmarkerService` → `ReferentLoop` → `GestureReferentFusion.referent`
+        // — is the camera/calibration track (its own lane, like `HeadPointerService` is for the head);
+        // until it is wired the snapshot stays empty and the intake degrades to head/active-window.
+        let gestureSnapshot = GestureSnapshot()
+
+        // The live gesture producer the snapshot was waiting on. Build the ported `ReferentLoop` with
+        // a DEFAULT, uncalibrated normalized→screen mapping so a pointed hand is visible before any
+        // calibration flow: the wrist-ray signal is in normalized image coords ([0,1]), so an affine
+        // of (a=W, e=H) spans the primary display, and one pointable Surface covers it. Contract space
+        // is virtual-desktop px / top-left, and the primary sits at origin (0,0), so the mapped point
+        // drops straight onto the `cursorPosition` topic the overlay renders. `HandLandmarkerService`
+        // (DirectorServices) feeds this loop via the coordinator; quality is `.poor` (uncalibrated).
+        let primarySize = NSScreen.screens.first?.frame.size ?? CGSize(width: 1920, height: 1080)
+        let gestureSurfaces: [Contracts.Surface] = [
+            Contracts.Surface(
+                id: "display-primary",
+                bounds: Contracts.SurfaceBounds(x: 0, y: 0, w: primarySize.width, h: primarySize.height),
+                displayId: "primary",
+                title: "Primary Display")
+        ]
+        let gestureLoop = ReferentLoop(ReferentLoopOptions(
+            transform: CalibrationAffine(a: primarySize.width, b: 0, c: 0, d: 0, e: primarySize.height, f: 0),
+            surfaces: gestureSurfaces,
+            calibrationQuality: .poor,
+            dwell: DwellDebounceParams(enter: 0.6, exit: 0.4, dwellMs: 600, cooldownMs: 1000)))
+
         // ADR 0005 Track D — no bridge: run the ported supervision loop IN-PROCESS and make it the
         // app's engine. The loop drives the SAME frames the socket used to deliver (engine.onFrame →
         // dispatch) and the UI's commands route to the loop (the models' command sink IS the engine).
         let loop = VoiceCuaLoop(
             driver: services.cua,
             resolve: IntentWorkerConfig.resolver(),
-            intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua)
+            intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot)
         )
-        let engine = LoopEngine(loop: loop)
+        // Probe the cua-driver DAEMON's own TCC (accessibility/screen-recording) so readiness reflects
+        // the process a task runs through — its missing grants would otherwise only surface mid-task as
+        // a restart-required prompt. checkPermissions() degrades to unavailable, never throws.
+        let engine = LoopEngine(loop: loop, cuaPermissionProbe: { [services] in
+            if case let .succeeded(report) = await services.cua.checkPermissions() { return report }
+            return nil
+        })
         engine.onFrame = { frame in dispatch(frame) }
         engine.onState = { state in
             store.setConnection(state); hud.setConnection(state); micro.setConnection(state)
@@ -146,9 +166,16 @@ struct DirectorSidecarApp: App {
         // surface as HUD transcript frames. (Track F bound the mic lifecycle; this is its consumer.)
         let coordinator = ServiceCoordinator(
             services: services,
+            loop: gestureLoop,
+            gestureSurfaces: gestureSurfaces,
             onHeadPointer: { pointer in dispatch(.cursor(pointers: [pointer])) },
             onHeadPoint: { point in headSnapshot.record(point) },
-            onSpeech: { event in engine.ingestSpeech(event) }
+            onSpeech: { event in engine.ingestSpeech(event) },
+            // The hand's wrist-ray drives the SAME `.user` cursor (the coordinator suppresses the
+            // head cursor while a hand is present), and the locked referent / cursor lands in the
+            // shared snapshot the loop's `HeadPointingIntake` reads at goal start.
+            onGesturePointer: { pointer in dispatch(.cursor(pointers: [pointer])) },
+            onGestureReferent: { referent in gestureSnapshot.record(referent) }
         )
 
         // Listening toggle (the "fn" of this build): brings the three active overlays up/down. In
@@ -189,6 +216,12 @@ struct DirectorSidecarApp: App {
         self.services = services
         self.coordinator = coordinator
 
+        // C1 fix: own the global fn capture trigger. Started at launch (its CGEventTap + permission
+        // prompts must come up after AppKit finishes wiring event routing), with its phase stream
+        // routed to the same listening commands the menu/⌥⌘D use.
+        let fnHotkey = FnHotkeyService()
+        self.fnHotkey = fnHotkey
+
         // The overlay/HUD/micro controllers MUST NOT be created during App.init() — building their
         // always-on-top panels + global mouse monitors before AppKit finishes wiring event routing
         // silently kills input to the WHOLE app (Dashboard AND menu bar go dead). Defer to launch.
@@ -200,11 +233,40 @@ struct DirectorSidecarApp: App {
             MainActor.assumeIsolated {
                 surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze,
                                onOpenHome: { store.send(.openHome) })
-                // fn press-and-hold drives the mock activation (hold → overlays up, release → down).
-                surfaces.installFnHold { held in store.send(held ? .startListening : .stopListening) }
+                // C1 fix: install the global fn capture tap and route its phases to the listening
+                // commands — press-hold → start/stop, double-tap → toggle. Session-wide, so this fires
+                // while another app is frontmost (the entire hands-off entry point), unlike the old
+                // local monitor. Falls back gracefully (logs to stderr) if Accessibility/Input
+                // Monitoring aren't granted yet.
+                fnHotkey.start()
+                Task { @MainActor in
+                    for await phase in fnHotkey.phases {
+                        store.send(listeningCommand(for: phase, isListening: store.isListening))
+                    }
+                }
                 // Track F: begin consuming the head-pointer feed for the app's life (camera stays
                 // off until Listening turns sensing on). Deferred to launch alongside the surfaces.
                 coordinator.start()
+                // First-run permissions flow: explicitly request speech + microphone + camera so
+                // the OS prompts appear and the app registers in the Speech Recognition pane (which
+                // cannot be pre-granted in System Settings — the app MUST request once). Without
+                // this the STT path only ever reads `notDetermined` and fails every listen with
+                // "speech recognition not authorized"; the request APIs are no-ops once decided.
+                Task {
+                    let granted = await PermissionsService.requestMediaPermissions()
+                    DirectorDiagnostics.services.info(
+                        "media permissions speech=\(granted.speech.rawValue, privacy: .public) mic=\(granted.microphone.rawValue, privacy: .public) camera=\(granted.camera.rawValue, privacy: .public)")
+                    // CUA needs THIS app (the process that spawns cua-driver) to hold Screen Recording:
+                    // `get_window_state` captures the target window, and without that grant the driver
+                    // returns an EMPTY AX tree (0 elements) — the agent sees nothing to act on and the
+                    // loop just respawns launch_app. Accessibility backs the AX walk + the fn tap.
+                    // Request BOTH at launch so their prompts appear UP FRONT, never mid-task (a fresh
+                    // Screen Recording grant needs an app relaunch to take effect).
+                    let screenRecording = PermissionsService.requestScreenRecording()
+                    let accessibility = PermissionsService.promptAccessibility()
+                    DirectorDiagnostics.services.info(
+                        "cua permissions screen_recording=\(screenRecording ? "granted" : "denied", privacy: .public) accessibility=\(accessibility ? "granted" : "denied", privacy: .public)")
+                }
             }
         }
 

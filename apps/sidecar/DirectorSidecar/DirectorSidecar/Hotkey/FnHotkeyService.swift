@@ -33,6 +33,19 @@ enum CapturePhase: String, Sendable, Equatable {
     case toggle
 }
 
+/// Maps a global fn capture phase to the listening command the app sends, given the current
+/// listening state. Press-hold drives `.start`/`.stop`; a double-tap `.toggle` flips against the
+/// live state. Pure + synchronous so the wiring's routing decision is unit-tested without a
+/// CGEventTap — the gap that let "service never instantiated" ship: `FnGesture` was tested, the
+/// phase→command routing the host depends on was not.
+func listeningCommand(for phase: CapturePhase, isListening: Bool) -> Command {
+    switch phase {
+    case .start: return .startListening
+    case .stop: return .stopListening
+    case .toggle: return isListening ? .stopListening : .startListening
+    }
+}
+
 /// Pure gesture state machine. No I/O: takes monotonic-millisecond instants and returns
 /// the phase to emit. Fully unit-tested; the CGEventTap layer feeds it fn transitions and
 /// a recurring tick for hold detection.

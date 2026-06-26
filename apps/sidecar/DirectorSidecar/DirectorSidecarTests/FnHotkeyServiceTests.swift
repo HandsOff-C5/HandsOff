@@ -88,3 +88,20 @@ import Testing
     #expect(g.onPress(now: 10) == nil)      // spurious
     #expect(g.onRelease(now: 80) == nil)
 }
+
+// MARK: phase → listening command routing (the C1 wiring decision)
+// `FnGesture` was tested but the phase→command mapping the host wires into the app was not — the gap
+// that let "service never instantiated" ship. These pin the routing the app depends on.
+
+@Test func pressHoldPhasesRouteToStartAndStop() {
+    // Press-hold is absolute, independent of the current listening state.
+    #expect(listeningCommand(for: .start, isListening: false) == .startListening)
+    #expect(listeningCommand(for: .start, isListening: true) == .startListening)
+    #expect(listeningCommand(for: .stop, isListening: true) == .stopListening)
+    #expect(listeningCommand(for: .stop, isListening: false) == .stopListening)
+}
+
+@Test func doubleTapToggleFlipsAgainstCurrentState() {
+    #expect(listeningCommand(for: .toggle, isListening: false) == .startListening)
+    #expect(listeningCommand(for: .toggle, isListening: true) == .stopListening)
+}
