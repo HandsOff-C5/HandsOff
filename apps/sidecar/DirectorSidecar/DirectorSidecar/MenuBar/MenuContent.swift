@@ -20,10 +20,11 @@ struct MenuContent: View {
 
         Divider()
 
+        // No keyboard shortcut yet: activation is fn-hold, and the fn/globe key isn't a representable
+        // SwiftUI shortcut — it returns with AppKit-level menu control in the onboarding step.
         Button(store.isListening ? "Deactivate Director" : "Activate Director") {
             store.send(store.isListening ? .stopListening : .startListening)
         }
-        .keyboardShortcut("d", modifiers: [.option, .command])
         .disabled(!store.canListen)
 
         if !store.canListen, store.menuReadiness == .blocked {

@@ -141,6 +141,16 @@ struct DirectorSidecarApp: App {
             #endif
         }
 
+        // Menu "View Activity" → bind the dashboard to THAT agent (home owns the selection + its own
+        // engine send). In DEBUG mock mode, also publish that agent's plan so the inspector updates
+        // immediately — no engine is there to republish the selected intent.
+        store.onSelectSession = { id in
+            home.select(id)
+            #if DEBUG
+            if DevMockFleet.isEnabled { dispatch(.intent(DevMockFleet.intent(for: id))) }
+            #endif
+        }
+
         // `store.onOpenHome` (rail ⤢ + menu "Open Home") is wired to SwiftUI's openWindow in the
         // dashboard scene (HomeOpenWiring) so it re-creates the window even after the red-X close.
         self.connection = connection
