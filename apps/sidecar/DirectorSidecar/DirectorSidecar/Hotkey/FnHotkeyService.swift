@@ -3,8 +3,8 @@
 //  DirectorSidecar
 //
 //  Track E (ADR 0005): the global capture trigger on the bare `fn` (Globe) key, folded
-//  in from `apps/desktop/src-tauri/src/commands/hotkey.rs`. A listen-only CGEventTap on
-//  `kCGEventFlagsChanged` watches the `maskSecondaryFn` bit; the gesture grammar is:
+//  in from `apps/desktop/src-tauri/src/commands/hotkey.rs`. An active (non-suppressing) CGEventTap
+//  on `kCGEventFlagsChanged` watches the `maskSecondaryFn` bit; the gesture grammar is:
 //    * press-hold (>= holdThresholdMs) → `start` on commit, `stop` on release
 //    * double-tap (two taps within multiTapWindowMs) → `toggle`
 //    * a lone single tap emits nothing (it's only ever half of a potential double-tap).
@@ -14,8 +14,8 @@
 //  webview. The pure `FnGesture` state machine is unit-tested 1:1 with the Rust tests; the
 //  CGEventTap layer just feeds it real fn transitions plus a recurring hold tick.
 //
-//  Permission trade-off (unchanged from Rust): a listen-only tap needs the app to be a
-//  trusted Accessibility client (AXIsProcessTrusted) and, on recent macOS, Input Monitoring.
+//  Permission trade-off (unchanged from Rust): the tap needs the app to be a trusted
+//  Accessibility client (AXIsProcessTrusted) and, on recent macOS, Input Monitoring.
 //  macOS also swallows the bare fn press unless System Settings > Keyboard > "Press fn (Globe)
 //  key to" is "Do Nothing". Verify from the bundled .app, never `tauri dev`.
 //
@@ -216,7 +216,12 @@ final class FnHotkeyService: @unchecked Sendable {
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly, // never suppresses or rewrites events
+            // Active (not listen-only) so the tap sits AHEAD of passive listeners and head-inserts
+            // ahead of other active taps: macOS orders every passive tap after all active ones, so a
+            // focused app that actively consumes the bare fn (e.g. a terminal) would starve a
+            // listen-only tap. The callback returns every event unmodified, so this observes fn first
+            // without suppressing it — Director sees the gesture even when another app would swallow it.
+            options: .defaultTap,
             eventsOfInterest: mask,
             callback: fnTapCallback,
             userInfo: userInfo
