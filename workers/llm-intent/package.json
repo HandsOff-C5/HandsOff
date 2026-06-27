@@ -10,7 +10,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@handsoff/contracts": "workspace:*",
     "@handsoff/intent": "workspace:*",
     "openai": "^6.0.0"
   },

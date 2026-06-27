@@ -58,6 +58,7 @@ private let fixedObservabilityTime = "2026-06-27T12:00:00.000Z"
             timestamp: fixedObservabilityTime,
             component: "director.loop",
             event: "loop.ready",
+            platform: "macos",
             sessionId: "session-1",
             attributes: ["mode": .string("local"), "ready": .bool(true)],
             level: .info
@@ -67,6 +68,7 @@ private let fixedObservabilityTime = "2026-06-27T12:00:00.000Z"
             timestamp: fixedObservabilityTime,
             component: "director.loop",
             event: "resolver.resolve",
+            platform: "macos",
             traceId: "trace-1",
             spanId: "span-1",
             attributes: ["tool_count": .number(3)],
@@ -78,6 +80,7 @@ private let fixedObservabilityTime = "2026-06-27T12:00:00.000Z"
             timestamp: fixedObservabilityTime,
             component: "director.loop",
             event: "resolver.latency",
+            platform: "macos",
             name: "resolver_latency_ms",
             value: 42,
             unit: "ms"
@@ -87,6 +90,7 @@ private let fixedObservabilityTime = "2026-06-27T12:00:00.000Z"
             timestamp: fixedObservabilityTime,
             component: "director.loop",
             event: "session.started",
+            platform: "macos",
             sessionId: "session-1",
             stage: .sessionStarted
         ),
@@ -95,6 +99,7 @@ private let fixedObservabilityTime = "2026-06-27T12:00:00.000Z"
             timestamp: fixedObservabilityTime,
             component: "director.loop",
             event: "driver.call.failed",
+            platform: "macos",
             sessionId: "session-1",
             errorClass: "CuaDriverError",
             handled: true
@@ -169,6 +174,7 @@ private let fixedObservabilityTime = "2026-06-27T12:00:00.000Z"
         timestamp: fixedObservabilityTime,
         component: "director.loop",
         event: "resolver.latency",
+        platform: "macos",
         name: "resolver_latency_ms",
         value: 42,
         unit: "ms"

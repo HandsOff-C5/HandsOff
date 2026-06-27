@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import OSLog
 
 enum ObservabilityRecordKind: String, Codable, Sendable {
     case log
@@ -348,6 +349,25 @@ protocol ObservabilitySink: Sendable {
     func emit(_ envelope: ObservabilityEnvelope) async throws
 }
 
+struct ObservabilityOSLogSink: ObservabilitySink {
+    private let logger: Logger
+
+    init(
+        subsystem: String = Bundle.main.bundleIdentifier ?? "DirectorSidecar",
+        category: String = "observability"
+    ) {
+        self.logger = Logger(subsystem: subsystem, category: category)
+    }
+
+    func emit(_ envelope: ObservabilityEnvelope) async throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(envelope)
+        guard let line = String(data: data, encoding: .utf8) else { return }
+        logger.info("\(line, privacy: .public)")
+    }
+}
+
 actor ObservabilityMemorySink: ObservabilitySink {
     private let limit: Int
     private var emitted: [ObservabilityEnvelope] = []
@@ -376,17 +396,23 @@ struct ObservabilityClient: Sendable {
     let component: String
     let sink: any ObservabilitySink
     let policy: ObservabilityExportPolicy
+    let release: String?
+    let platform: String?
     let clock: @Sendable () -> String
 
     init(
         component: String,
         sink: any ObservabilitySink = ObservabilityMemorySink(),
         policy: ObservabilityExportPolicy = .localDefault,
+        release: String? = nil,
+        platform: String? = "macos",
         clock: @escaping @Sendable () -> String = { ObservabilityClient.timestamp() }
     ) {
         self.component = component
         self.sink = sink
         self.policy = policy
+        self.release = release
+        self.platform = platform
         self.clock = clock
     }
 
@@ -394,14 +420,18 @@ struct ObservabilityClient: Sendable {
         _ level: ObservabilityLogLevel,
         event: String,
         sessionId: String? = nil,
+        correlationId: String? = nil,
         attributes: [String: ObservabilityAttributeValue] = [:]
     ) async throws {
-        try await emit(kind: .log, event: event, sessionId: sessionId, attributes: attributes, level: level)
+        try await emit(
+            kind: .log, event: event, sessionId: sessionId, correlationId: correlationId,
+            attributes: attributes, level: level)
     }
 
     func span(
         event: String,
         sessionId: String? = nil,
+        correlationId: String? = nil,
         traceId: String? = nil,
         spanId: String? = nil,
         parentSpanId: String? = nil,
@@ -413,6 +443,7 @@ struct ObservabilityClient: Sendable {
             kind: .span,
             event: event,
             sessionId: sessionId,
+            correlationId: correlationId,
             traceId: traceId,
             spanId: spanId,
             attributes: attributes,
@@ -428,12 +459,14 @@ struct ObservabilityClient: Sendable {
         unit: String? = nil,
         event: String,
         sessionId: String? = nil,
+        correlationId: String? = nil,
         attributes: [String: ObservabilityAttributeValue] = [:]
     ) async throws {
         try await emit(
             kind: .metric,
             event: event,
             sessionId: sessionId,
+            correlationId: correlationId,
             attributes: attributes,
             name: name,
             value: value,
@@ -445,9 +478,12 @@ struct ObservabilityClient: Sendable {
         stage: ObservabilityAnalyticsStage,
         event: String,
         sessionId: String? = nil,
+        correlationId: String? = nil,
         attributes: [String: ObservabilityAttributeValue] = [:]
     ) async throws {
-        try await emit(kind: .analytics, event: event, sessionId: sessionId, attributes: attributes, stage: stage)
+        try await emit(
+            kind: .analytics, event: event, sessionId: sessionId, correlationId: correlationId,
+            attributes: attributes, stage: stage)
     }
 
     func error(
@@ -455,12 +491,14 @@ struct ObservabilityClient: Sendable {
         errorClass: String,
         handled: Bool,
         sessionId: String? = nil,
+        correlationId: String? = nil,
         attributes: [String: ObservabilityAttributeValue] = [:]
     ) async throws {
         try await emit(
             kind: .error,
             event: event,
             sessionId: sessionId,
+            correlationId: correlationId,
             attributes: attributes,
             errorClass: errorClass,
             handled: handled
@@ -471,6 +509,7 @@ struct ObservabilityClient: Sendable {
         kind: ObservabilityRecordKind,
         event: String,
         sessionId: String? = nil,
+        correlationId: String? = nil,
         traceId: String? = nil,
         spanId: String? = nil,
         attributes: [String: ObservabilityAttributeValue] = [:],
@@ -491,7 +530,10 @@ struct ObservabilityClient: Sendable {
             timestamp: now,
             component: component,
             event: event,
+            release: release,
+            platform: platform,
             sessionId: sessionId,
+            correlationId: correlationId,
             traceId: traceId,
             spanId: spanId,
             attributes: attributes,
@@ -513,5 +555,16 @@ struct ObservabilityClient: Sendable {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: Date())
+    }
+
+    static func bundleRelease(_ bundle: Bundle = .main) -> String? {
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        switch (version, build) {
+        case let (.some(version), .some(build)): return "\(version)+\(build)"
+        case let (.some(version), .none): return version
+        case let (.none, .some(build)): return build
+        case (.none, .none): return nil
+        }
     }
 }

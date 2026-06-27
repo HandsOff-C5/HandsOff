@@ -22,8 +22,6 @@ import {
   type SelectedReferent,
   type SupervisionAuditEvent,
   type SurfaceSnapshot,
-  safeParseObservabilityRecord,
-  type ObservabilityRecord,
 } from "@handsoff/contracts";
 import { createToolCatalog, cuaResultToActionResult, type CuaDriver } from "@handsoff/cua";
 import { resolveNextToolCall, type AttentionWindow } from "@handsoff/intent";
@@ -56,42 +54,9 @@ const DEFAULT_TARGET_RESOLVE_DELAY_MS = 1500;
 // list_windows) is free and not counted — only the agent's chosen actions are.
 // Replaces the old fixed `maxTicks=5`. Overridable via the `toolCallBudget` prop.
 const DEFAULT_TOOL_CALL_BUDGET = 30;
-const OBSERVABILITY_COMPONENT = "desktop.voice-cua";
-
-type ObservabilitySink = {
-  emit(record: ObservabilityRecord): void;
-};
-
-type ObservabilityOptions = {
-  sink?: ObservabilitySink;
-  analyticsConsent?: boolean;
-  release?: string;
-  platform?: string;
-};
-
-type ObservabilityAttributes = Record<string, string | number | boolean | null>;
-
-const defaultObservabilitySink: ObservabilitySink = {
-  emit(record) {
-    console.info("[handsoff.observability]", record);
-  },
-};
 
 function wait(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
-}
-
-function elapsedMs(startedAt: string, finishedAt: string): number {
-  const start = Date.parse(startedAt);
-  const finish = Date.parse(finishedAt);
-  if (!Number.isFinite(start) || !Number.isFinite(finish)) return 0;
-  return Math.max(0, finish - start);
-}
-
-function actionErrorClass(result: CuaActionResult): string {
-  if (result.status === "failed") return "CuaDriverError";
-  if (result.status === "blocked") return "CuaBlocked";
-  return "CuaActionError";
 }
 
 // A stable (tool, args) signature for loop-dedup (KD2): the actual driver call a
@@ -198,9 +163,6 @@ export function useVoiceCuaController(args: {
   // DEFAULT_TOOL_CALL_BUDGET). The loop stops with a clear blocked reason at the
   // ceiling so a misfiring loop cannot run away.
   toolCallBudget?: number;
-  // Local/test observability sink. Remote export stays deliberately out of this
-  // hook; callers decide whether to pass a local, test, or remote-gated sink.
-  observability?: ObservabilityOptions;
 }) {
   const [intent, setIntent] = useState<ResolvedIntent | null>(null);
   const [runResult, setRunResult] = useState<PlanRunResult | null>(null);
@@ -221,118 +183,6 @@ export function useVoiceCuaController(args: {
   headPointingRef.current = args.headPointing;
   resolveIntentRef.current = args.resolveIntent ?? resolveNextToolCall;
   const timestamp = () => args.now?.() ?? new Date().toISOString();
-
-  function observabilityBase(sessionId: string, event: string, at: string) {
-    return {
-      timestamp: at,
-      component: OBSERVABILITY_COMPONENT,
-      event,
-      sessionId,
-      correlationId: sessionId,
-      traceId: `trace-${sessionId}`,
-      ...(args.observability?.release ? { release: args.observability.release } : {}),
-      ...(args.observability?.platform ? { platform: args.observability.platform } : {}),
-    };
-  }
-
-  function emitObservability(record: ObservabilityRecord) {
-    const parsed = safeParseObservabilityRecord(record);
-    if (!parsed.success) {
-      console.warn("[handsoff.observability] dropped invalid record", {
-        component: record.component,
-        event: record.event,
-        reason: parsed.error.issues.map((issue) => issue.message).join("; "),
-      });
-      return;
-    }
-    (args.observability?.sink ?? defaultObservabilitySink).emit(parsed.data);
-  }
-
-  function emitLog(
-    sessionId: string,
-    event: string,
-    at: string,
-    level: Extract<ObservabilityRecord, { kind: "log" }>["level"],
-    attributes: ObservabilityAttributes = {},
-  ) {
-    emitObservability({
-      ...observabilityBase(sessionId, event, at),
-      kind: "log",
-      level,
-      attributes,
-    });
-  }
-
-  function emitSpan(
-    sessionId: string,
-    event: string,
-    startedAt: string,
-    finishedAt: string,
-    spanId: string,
-    status: Extract<ObservabilityRecord, { kind: "span" }>["status"],
-    attributes: ObservabilityAttributes = {},
-  ) {
-    emitObservability({
-      ...observabilityBase(sessionId, event, finishedAt),
-      kind: "span",
-      spanId,
-      durationMs: elapsedMs(startedAt, finishedAt),
-      status,
-      attributes,
-    });
-  }
-
-  function emitMetric(
-    sessionId: string,
-    event: string,
-    at: string,
-    name: string,
-    value: number,
-    unit?: string,
-    attributes: ObservabilityAttributes = {},
-  ) {
-    emitObservability({
-      ...observabilityBase(sessionId, event, at),
-      kind: "metric",
-      name,
-      value,
-      ...(unit ? { unit } : {}),
-      attributes,
-    });
-  }
-
-  function emitAnalytics(
-    sessionId: string,
-    event: string,
-    at: string,
-    stage: Extract<ObservabilityRecord, { kind: "analytics" }>["stage"],
-    attributes: ObservabilityAttributes = {},
-  ) {
-    if (!args.observability?.analyticsConsent) return;
-    emitObservability({
-      ...observabilityBase(sessionId, event, at),
-      kind: "analytics",
-      stage,
-      attributes,
-    });
-  }
-
-  function emitError(
-    sessionId: string,
-    event: string,
-    at: string,
-    errorClass: string,
-    handled: boolean,
-    attributes: ObservabilityAttributes = {},
-  ) {
-    emitObservability({
-      ...observabilityBase(sessionId, event, at),
-      kind: "error",
-      errorClass,
-      handled,
-      attributes,
-    });
-  }
 
   // Cursor fallback: probe the active window via the CUA driver, degrading the
   // surface to "unknown" availability/access when the probe doesn't succeed.
@@ -374,24 +224,6 @@ export function useVoiceCuaController(args: {
     await wait(args.targetResolveDelayMs ?? DEFAULT_TARGET_RESOLVE_DELAY_MS);
     const createdAt = timestamp();
     const started = sessions.current.start(createdAt);
-    emitLog(started.id, "session_started", createdAt, "info", {
-      confidence: finalTranscript.confidence,
-      speech_chars: finalTranscript.text.length,
-    });
-    emitMetric(
-      started.id,
-      "stt_latency_recorded",
-      createdAt,
-      "stt.latency.ms",
-      finalTranscript.latencyMs,
-      "ms",
-    );
-    emitAnalytics(started.id, "session_started", createdAt, "session_started");
-    emitAnalytics(started.id, "transcript_accepted", createdAt, "transcript_accepted", {
-      confidence: finalTranscript.confidence,
-      speech_chars: finalTranscript.text.length,
-      stt_latency_ms: finalTranscript.latencyMs,
-    });
 
     // Fuse every available pointing signal into the evidence list + deduplicated
     // surface candidates (combinative, U7 multi-target binding included). Pure
@@ -415,13 +247,6 @@ export function useVoiceCuaController(args: {
       headPointingRef.current,
       resolveActiveWindowSurface,
     );
-    emitAnalytics(started.id, "context_selected", timestamp(), "context_selected", {
-      evidence_count: pointingEvidence.length,
-      surface_count: surfaceCandidates.length,
-      has_capture_trace: context.captureTrace !== null,
-      has_gesture: context.gestureEvidence !== null || context.gestureCursor !== null,
-      has_head: headPointingRef.current !== undefined,
-    });
 
     const input: IntentInput = {
       sessionId: started.id,
@@ -597,18 +422,27 @@ export function useVoiceCuaController(args: {
     const observations = [...run.observations, observation];
     const input = inputForTick(run, run.nextTick, observations);
     if (stopIfInterrupted(run, input, timestamp())) return;
-    emitLog(run.sessionId, "intent_input_prepared", timestamp(), "debug", {
-      evidence_count: input.pointingEvidence.length,
-      surface_count: input.surfaceCandidates.length,
-      tick: run.nextTick,
-      tool_calls: run.toolCalls,
+    // Diagnostic: the exact transcript + live observation handed to the intent engine.
+    console.info("[handsoff] intent input", {
+      transcript: input.speech.finalTranscript.text,
+      tick: input.goalSession?.tick,
+      toolCalls: run.toolCalls,
+      surfaceCandidates: input.surfaceCandidates.map((s) => ({
+        id: s.id,
+        app: s.app,
+        title: s.title,
+      })),
+      pointingEvidence: input.pointingEvidence.map((p) => ({
+        source: p.source,
+        confidence: p.confidence,
+        strategy: p.strategy,
+        surfaceId: "surface" in p ? p.surface?.id : undefined,
+      })),
     });
     const toolsResult = await catalog.current.load();
     const tools: readonly DriverToolDefinition[] =
       toolsResult.status === "succeeded" ? toolsResult.value : [];
-    const resolveStartedAt = timestamp();
     const resolved = await resolveIntentRef.current(input, { createdAt, tools });
-    const resolvedAt = timestamp();
     if (stopIfInterrupted(run, input, timestamp())) return;
     // The gate (U2/KD3) derives risk per call from the actual tool each step
     // reaches — escalating a commit click and never trusting a model downgrade.
@@ -619,60 +453,14 @@ export function useVoiceCuaController(args: {
       resolved.status === "ready"
         ? withEffectiveRisk(resolved, planToolRisk(resolved.action_plan, observation))
         : resolved;
-    emitSpan(
-      run.sessionId,
-      "intent_resolved",
-      resolveStartedAt,
-      resolvedAt,
-      `intent-resolve-${run.nextTick}`,
-      "ok",
-      {
-        status: next.status,
-        surface_count: input.surfaceCandidates.length,
-        tick: run.nextTick,
-        tool_count: tools.length,
-      },
-    );
-    emitMetric(
-      run.sessionId,
-      "command_to_plan_latency_recorded",
-      resolvedAt,
-      "command_to_plan.ms",
-      elapsedMs(resolveStartedAt, resolvedAt),
-      "ms",
-      { status: next.status, tick: run.nextTick },
-    );
-    emitLog(run.sessionId, "intent_resolved", resolvedAt, "info", {
+    console.info("[handsoff] intent result", {
       status: next.status,
-      plan_steps: "action_plan" in next ? next.action_plan.action_plan.length : 0,
-      tick: run.nextTick,
+      reason: "reason" in next ? next.reason : undefined,
+      summary: "summary" in next ? next.summary : undefined,
+      referent: "referent" in next ? next.referent : undefined,
+      planSteps:
+        "action_plan" in next ? next.action_plan.action_plan.map((s) => s.kind) : undefined,
     });
-    if (next.status === "ready" && next.referent) {
-      emitMetric(
-        run.sessionId,
-        "referent_success_recorded",
-        resolvedAt,
-        "referent.success.count",
-        1,
-        "count",
-        { referent_source: next.referent.source },
-      );
-    }
-    if (
-      (next.status === "blocked" || next.status === "clarification_required") &&
-      run.nextTick === 0 &&
-      run.toolCalls === 0
-    ) {
-      emitMetric(
-        run.sessionId,
-        "false_activation_recorded",
-        resolvedAt,
-        "false_activation.count",
-        1,
-        "count",
-        { status: next.status },
-      );
-    }
     setIntent(next);
     if (next.status !== "satisfied") setRunResult(null);
     recordIntent(run.sessionId, createdAt, next);
@@ -730,7 +518,6 @@ export function useVoiceCuaController(args: {
       };
       setSession(sessions.current.run(run.sessionId, runningAt));
       recordToolCalls(run, readyIntent, observation, approvalState, result, runningAt);
-      emitActionOutcome(run.sessionId, readyIntent, runningAt, runningAt, result, approvalState);
       setRunResult({ status: "blocked", result });
       finishGoal(run, "blocked", runningAt);
       return;
@@ -744,7 +531,6 @@ export function useVoiceCuaController(args: {
     if (blocked) {
       setSession(sessions.current.run(run.sessionId, runningAt));
       recordToolCalls(run, readyIntent, observation, approvalState, blocked, runningAt);
-      emitActionOutcome(run.sessionId, readyIntent, runningAt, runningAt, blocked, approvalState);
       const result: PlanRunResult = { status: "blocked", result: blocked };
       setRunResult(result);
       finishGoal(run, "blocked", runningAt);
@@ -761,19 +547,10 @@ export function useVoiceCuaController(args: {
     const { result: actionResult, failedSignature } = await dispatchPlan(
       readyIntent.action_plan.action_plan,
     );
-    const actionFinishedAt = timestamp();
     const status: PlanRunResult["status"] =
       actionResult.status === "succeeded" ? "succeeded" : actionResult.status;
     const result: PlanRunResult = { status, result: actionResult };
     recordToolCalls(run, readyIntent, observation, approvalState, actionResult, runningAt);
-    emitActionOutcome(
-      run.sessionId,
-      readyIntent,
-      runningAt,
-      actionFinishedAt,
-      actionResult,
-      approvalState,
-    );
     setRunResult(result);
     setAuditEvents(audit.current.forSession(run.sessionId));
 
@@ -800,61 +577,6 @@ export function useVoiceCuaController(args: {
     });
   }
 
-  function emitActionOutcome(
-    sessionId: string,
-    readyIntent: Extract<ResolvedIntent, { status: "ready" }>,
-    startedAt: string,
-    finishedAt: string,
-    result: CuaActionResult,
-    approval: "auto" | "approved" | "rejected",
-  ) {
-    const succeeded = result.status === "succeeded";
-    const attributes = {
-      approval,
-      plan_steps: readyIntent.action_plan.action_plan.length,
-      risk: readyIntent.risk_level,
-      status: result.status,
-    };
-    emitSpan(
-      sessionId,
-      "cua_action_finished",
-      startedAt,
-      finishedAt,
-      `cua-action-${readyIntent.action_plan.id}`,
-      succeeded ? "ok" : "error",
-      attributes,
-    );
-    emitMetric(
-      sessionId,
-      "cua_action_latency_recorded",
-      finishedAt,
-      "cua.action.latency.ms",
-      elapsedMs(startedAt, finishedAt),
-      "ms",
-      { status: result.status },
-    );
-    emitAnalytics(
-      sessionId,
-      succeeded ? "action_completed" : "action_failed",
-      finishedAt,
-      succeeded ? "action_completed" : "action_failed",
-      attributes,
-    );
-    if (succeeded) return;
-    const errorClass = actionErrorClass(result);
-    emitMetric(sessionId, "cua_failure_recorded", finishedAt, "cua.failure.count", 1, "count", {
-      error_class: errorClass,
-      status: result.status,
-    });
-    emitLog(sessionId, "cua_action_failed", finishedAt, "warn", {
-      error_class: errorClass,
-      status: result.status,
-    });
-    emitError(sessionId, "cua_action_failed", finishedAt, errorClass, true, {
-      status: result.status,
-    });
-  }
-
   // Execute a tick's steps in order through `driver.call`, normalizing each
   // driver result to a CuaActionResult. Stops at the first non-success so a
   // failed step is surfaced for recovery; the last step's result represents the
@@ -877,10 +599,6 @@ export function useVoiceCuaController(args: {
     const run = goalRun.current;
     if (intent?.status !== "ready" || !session || !run) return;
     const runningAt = timestamp();
-    emitAnalytics(session.id, "plan_approved", runningAt, "plan_approved", {
-      plan_steps: intent.action_plan.action_plan.length,
-      risk: intent.risk_level,
-    });
     await runGoalAction(
       run,
       intent,
@@ -902,10 +620,6 @@ export function useVoiceCuaController(args: {
     if (run) {
       recordToolCalls(run, intent, run.observations.at(-1), "rejected", rejected, decidedAt);
     }
-    emitAnalytics(session.id, "plan_rejected", decidedAt, "plan_rejected", {
-      plan_steps: intent.action_plan.action_plan.length,
-      risk: intent.risk_level,
-    });
     audit.current.record({
       kind: "execution_finished",
       sessionId: session.id,
@@ -931,10 +645,6 @@ export function useVoiceCuaController(args: {
       const at = timestamp();
       const input = inputForTick(run, run.nextTick, run.observations);
       const next = blockedIntent(input, `intent-interrupted-${run.nextTick}`, at, "Interrupted");
-      emitAnalytics(run.sessionId, "interrupt_used", at, "interrupt_used", {
-        tick: run.nextTick,
-        tool_calls: run.toolCalls,
-      });
       setIntent(next);
       setRunResult(null);
       recordIntent(run.sessionId, at, next);

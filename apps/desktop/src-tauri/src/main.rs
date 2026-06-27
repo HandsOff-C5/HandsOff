@@ -28,7 +28,6 @@ fn main() {
         .manage(commands::head_track::HeadTrackState::default())
         .manage(commands::gesture_overlay::GestureOverlayState::default())
         .manage(commands::stt_ondevice::OnDeviceSttState::default())
-        .manage(commands::observability::ObservabilitySink::default())
         .setup(|app| {
             // L0: Director is menu-bar-first — run as an accessory app so there is
             // no Dock icon (the menu-bar item is the presence). The Home Dashboard
@@ -80,10 +79,7 @@ fn main() {
             commands::permissions::restart_app,
             commands::permissions::open_privacy_settings,
             commands::overlay::show_overlay,
-            commands::overlay::hide_overlay,
-            commands::observability::observability_emit,
-            commands::observability::observability_records,
-            commands::observability::observability_export_policy
+            commands::overlay::hide_overlay
         ])
         .build(tauri::generate_context!())
         .expect("error while building the HandsOff application")

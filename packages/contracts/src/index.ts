@@ -7,7 +7,6 @@ export * from "./cua";
 export * from "./driver-tools";
 export * from "./head-pointing";
 export * from "./intent";
-export * from "./observability";
 export * from "./readiness";
 export * from "./referent";
 export * from "./surface";

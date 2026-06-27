@@ -179,10 +179,6 @@ importers:
         version: link:../contracts
 
   workers/assemblyai-token:
-    dependencies:
-      '@handsoff/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260621.1
@@ -193,9 +189,6 @@ importers:
 
   workers/llm-intent:
     dependencies:
-      '@handsoff/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@handsoff/intent':
         specifier: workspace:*
         version: link:../../packages/intent
