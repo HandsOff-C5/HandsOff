@@ -1,6 +1,8 @@
 import { createFakeCuaDriver, cuaBlocked, cuaFailed } from "@handsoff/cua";
+import { ObservabilityMemorySink } from "@handsoff/contracts";
 import type {
   IntentInput,
+  ObservabilityRecord,
   PointingCandidate,
   PointingEvidence,
   ResolvedIntent,
@@ -47,6 +49,14 @@ const finalTranscript = {
   latencyMs: 100,
   receivedAt: 1,
 };
+
+function expectNoPrivateObservabilityAttributes(records: readonly ObservabilityRecord[]) {
+  const forbidden = /credential|password|prompt|raw|screenshot|secret|token|transcript/i;
+  for (const record of records) {
+    expect(Object.keys(record.attributes).some((key) => forbidden.test(key))).toBe(false);
+    expect(Object.values(record.attributes)).not.toContain(finalTranscript.text);
+  }
+}
 
 const gestureEvidence: PointingEvidence = {
   source: "gesture",
@@ -583,6 +593,145 @@ describe("useVoiceCuaController", () => {
     expect(callStep).toMatchObject({ kind: "call", tool: "click" });
   });
 
+  it("emits consented sanitized observability records for the app-side agent trace", async () => {
+    const sink = new ObservabilityMemorySink();
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    const resolveIntent = vi.fn(async (input: IntentInput) =>
+      input.goalSession?.tick === 0 ? ready(input) : satisfied(input),
+    );
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: headPointing(),
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+        observability: {
+          sink,
+          analyticsConsent: true,
+          platform: "macos",
+          release: "test",
+        },
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+    await waitFor(() => expect(result.current.intent?.status).toBe("ready"));
+
+    await act(async () => result.current.approve());
+
+    await waitFor(() => expect(result.current.intent?.status).toBe("satisfied"));
+    const records = sink.records();
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "log",
+          level: "info",
+          component: "desktop.voice-cua",
+          event: "session_started",
+          sessionId: "session-1",
+          correlationId: "session-1",
+          traceId: "trace-session-1",
+          attributes: { confidence: 0.95, speech_chars: 10 },
+        }),
+        expect.objectContaining({
+          kind: "metric",
+          event: "stt_latency_recorded",
+          name: "stt.latency.ms",
+          value: 100,
+          unit: "ms",
+        }),
+        expect.objectContaining({
+          kind: "span",
+          event: "intent_resolved",
+          spanId: "intent-resolve-0",
+          status: "ok",
+          attributes: expect.objectContaining({ status: "ready", tick: 0 }),
+        }),
+        expect.objectContaining({
+          kind: "metric",
+          event: "command_to_plan_latency_recorded",
+          name: "command_to_plan.ms",
+          value: 0,
+          unit: "ms",
+        }),
+        expect.objectContaining({
+          kind: "metric",
+          event: "referent_success_recorded",
+          name: "referent.success.count",
+          value: 1,
+          unit: "count",
+          attributes: { referent_source: "head" },
+        }),
+        expect.objectContaining({
+          kind: "span",
+          event: "cua_action_finished",
+          status: "ok",
+          attributes: expect.objectContaining({ approval: "approved", status: "succeeded" }),
+        }),
+      ]),
+    );
+    expect(
+      records.filter((record): record is Extract<ObservabilityRecord, { kind: "analytics" }> => {
+        return record.kind === "analytics";
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ stage: "session_started" }),
+        expect.objectContaining({ stage: "transcript_accepted" }),
+        expect.objectContaining({ stage: "context_selected" }),
+        expect.objectContaining({ stage: "plan_approved" }),
+        expect.objectContaining({ stage: "action_completed" }),
+      ]),
+    );
+    expectNoPrivateObservabilityAttributes(records);
+  });
+
+  it("counts a first-turn clarification as a false activation without raw speech", async () => {
+    const sink = new ObservabilityMemorySink();
+    const driver = createFakeCuaDriver({ state: fakeCuaWindowState({ surface: surface() }) });
+    const resolveIntent = vi.fn(
+      async (input: IntentInput): Promise<ResolvedIntent> => ({
+        status: "clarification_required",
+        id: "intent-1",
+        input,
+        constraints: [],
+        requires_approval: false,
+        target_agent: "none",
+        reason: "No attention-region candidates were available",
+        createdAt: NOW,
+      }),
+    );
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: { x: 10, y: 20 }, candidates: [] },
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+        observability: { sink },
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript(finalTranscript));
+
+    await waitFor(() => expect(result.current.intent?.status).toBe("clarification_required"));
+    const records = sink.records();
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "metric",
+          event: "false_activation_recorded",
+          name: "false_activation.count",
+          value: 1,
+          unit: "count",
+          attributes: { status: "clarification_required" },
+        }),
+      ]),
+    );
+    expectNoPrivateObservabilityAttributes(records);
+  });
+
   it("persists exact fake-CUA permission failures and feeds them back for recovery", async () => {
     const driver = createFakeCuaDriver({
       state: fakeCuaWindowState({ surface: surface() }),
@@ -644,6 +793,69 @@ describe("useVoiceCuaController", () => {
       reason: "Cannot recover: Accessibility permission denied",
     });
     expect(result.current.session?.status).toBe("blocked");
+  });
+
+  it("emits handled CUA error envelopes without raw speech when an action fails", async () => {
+    const sink = new ObservabilityMemorySink();
+    const notes = surface({ id: "notes:1", title: "Quick Note", app: "Notes" });
+    const driver = createFakeCuaDriver({
+      state: fakeCuaWindowState({ surface: notes }),
+      windows: [notes],
+      nextCallResult: cuaFailed("App did not launch"),
+    });
+    const resolveIntent = vi.fn(async (input: IntentInput): Promise<ResolvedIntent> => {
+      if (input.goalSession?.tick === 0) return readyLaunchTick(input, "Notes");
+      return {
+        status: "blocked",
+        id: "intent-cannot-recover",
+        input,
+        constraints: [],
+        requires_approval: false,
+        target_agent: "none",
+        reason: "Cannot recover",
+        createdAt: NOW,
+      };
+    });
+    const { result } = renderHook(() =>
+      useVoiceCuaController({
+        driver,
+        headPointing: { point: null, candidates: [] },
+        now: () => NOW,
+        resolveIntent,
+        targetResolveDelayMs: 0,
+        observability: { sink, analyticsConsent: true },
+      }),
+    );
+
+    act(() => result.current.handleFinalTranscript({ ...finalTranscript, text: "open Notes" }));
+
+    await waitFor(() => expect(result.current.intent?.status).toBe("blocked"));
+    const records = sink.records();
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "error",
+          event: "cua_action_failed",
+          errorClass: "CuaDriverError",
+          handled: true,
+          attributes: { status: "failed" },
+        }),
+        expect.objectContaining({
+          kind: "metric",
+          event: "cua_failure_recorded",
+          name: "cua.failure.count",
+          value: 1,
+          unit: "count",
+          attributes: { error_class: "CuaDriverError", status: "failed" },
+        }),
+        expect.objectContaining({
+          kind: "analytics",
+          event: "action_failed",
+          stage: "action_failed",
+        }),
+      ]),
+    );
+    expectNoPrivateObservabilityAttributes(records);
   });
 
   it("iterates a multi-step goal as observed one-action ticks and gates the mutating tick", async () => {
