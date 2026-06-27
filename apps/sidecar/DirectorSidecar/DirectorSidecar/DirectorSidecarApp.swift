@@ -191,8 +191,13 @@ struct DirectorSidecarApp: App {
         // app's engine. The loop drives the SAME frames the socket used to deliver (engine.onFrame →
         // dispatch) and the UI's commands route to the loop (the models' command sink IS the engine).
         // The intake reads the NATIVE window list (#150) — NOT driver.listWindows() — for its ranking.
+        // #148: dispatch through the HYBRID driver — IN-PROCESS native AX (the app's own Accessibility
+        // grant) is the DEFAULT for click/type/set_value + window reads; the `cua-driver` is the
+        // fallback only for AX-opaque surfaces. The native window source feeds both this and the intake.
+        let actionDriver = HybridActionDriver(
+            driver: services.cua, nativeWindows: { NativeWindowSource.onScreenWindows() })
         let loop = VoiceCuaLoop(
-            driver: services.cua,
+            driver: actionDriver,
             resolve: IntentWorkerConfig.resolver(),
             intake: HeadPointingIntake(
                 snapshot: headSnapshot, driver: services.cua, windowSource: nativeWindowList,
