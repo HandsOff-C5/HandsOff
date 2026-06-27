@@ -187,10 +187,12 @@ struct DirectorSidecarApp: App {
         // ADR 0005 Track D — no bridge: run the ported supervision loop IN-PROCESS and make it the
         // app's engine. The loop drives the SAME frames the socket used to deliver (engine.onFrame →
         // dispatch) and the UI's commands route to the loop (the models' command sink IS the engine).
+        let replayStore = SupervisionReplayStore.applicationSupport()
         let loop = VoiceCuaLoop(
             driver: services.cua,
             resolve: IntentWorkerConfig.resolver(),
-            intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot)
+            intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot),
+            replayStore: replayStore
         )
         // Probe the cua-driver DAEMON's own TCC (accessibility/screen-recording) so readiness reflects
         // the process a task runs through — its missing grants would otherwise only surface mid-task as
@@ -198,7 +200,7 @@ struct DirectorSidecarApp: App {
         let engine = LoopEngine(loop: loop, cuaPermissionProbe: { [services] in
             if case let .succeeded(report) = await services.cua.checkPermissions() { return report }
             return nil
-        })
+        }, replayStore: replayStore)
         engine.onFrame = { frame in dispatch(frame) }
         engine.onState = { state in
             store.setConnection(state); hud.setConnection(state); micro.setConnection(state)

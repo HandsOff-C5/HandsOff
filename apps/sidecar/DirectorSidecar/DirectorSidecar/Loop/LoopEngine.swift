@@ -35,6 +35,7 @@ final class LoopEngine: CommandSink {
     /// nil in tests (they assert the single synchronous base frame).
     private let cuaPermissionProbe: (@Sendable () async -> CuaPermissionReport?)?
     private let agentLabel: String
+    private let replayStore: SupervisionReplayStore?
 
     /// Frame fan-out to the view models (set by the app). Called on the main actor.
     var onFrame: ((BridgeFrame) -> Void)?
@@ -58,12 +59,14 @@ final class LoopEngine: CommandSink {
         loop: VoiceCuaLoop,
         agentLabel: String = "Director",
         readinessProbe: @escaping @Sendable () -> ReadinessPayload = { ReadinessService.probe() },
-        cuaPermissionProbe: (@Sendable () async -> CuaPermissionReport?)? = nil
+        cuaPermissionProbe: (@Sendable () async -> CuaPermissionReport?)? = nil,
+        replayStore: SupervisionReplayStore? = nil
     ) {
         self.loop = loop
         self.agentLabel = agentLabel
         self.readinessProbe = readinessProbe
         self.cuaPermissionProbe = cuaPermissionProbe
+        self.replayStore = replayStore
     }
 
     // MARK: Lifecycle
@@ -76,8 +79,26 @@ final class LoopEngine: CommandSink {
         DirectorDiagnostics.loop.info("engine started")
         onState?(.connected)
         refreshReadiness()
+        emitPersistedReplay()
         observeLoop()
         emitCurrentState()
+    }
+
+    private func emitPersistedReplay() {
+        guard let replayStore else { return }
+        let snapshot = replayStore.snapshot()
+        for session in snapshot.sessions where sessions[session.id] == nil {
+            sessionOrder.append(session.id)
+            sessionTitles[session.id] = snapshot.sessionTitles[session.id]
+            sessions[session.id] = LoopFrameMapping.wireSession(
+                session, title: snapshot.sessionTitles[session.id], agentLabel: agentLabel)
+        }
+        if !sessionOrder.isEmpty {
+            onFrame?(.sessions(SessionsPayload(sessions: sessionOrder.compactMap { sessions[$0] }, counts: nil)))
+        }
+        if !snapshot.auditRecords.isEmpty {
+            onFrame?(.audit(AuditLogPayload(entries: snapshot.auditRecords.map(\.entry))))
+        }
     }
 
     /// Re-probe macOS TCC and publish a fresh readiness frame. The app calls this when listening
@@ -182,6 +203,9 @@ final class LoopEngine: CommandSink {
             if sessions[session.id] == nil {
                 sessionOrder.append(session.id)
                 sessionTitles[session.id] = pendingGoalText
+                if let pendingGoalText {
+                    replayStore?.saveTitle(pendingGoalText, for: session.id)
+                }
             }
             sessions[session.id] = LoopFrameMapping.wireSession(
                 session, title: sessionTitles[session.id], agentLabel: agentLabel)
