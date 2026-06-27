@@ -4,10 +4,18 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-06-22",
   "workers_dev": true,
-  "kv_namespaces": [
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AGENT_REPLAY_SESSIONS",
+        "class_name": "AgentReplaySession",
+      },
+    ],
+  },
+  "migrations": [
     {
-      "binding": "AGENT_REPLAY_DEDUP",
-      "id": "replace-with-agent-replay-dedup-kv-id",
+      "tag": "v1",
+      "new_sqlite_classes": ["AgentReplaySession"],
     },
   ],
   "secrets": {

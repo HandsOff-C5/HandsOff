@@ -145,7 +145,7 @@ final class VoiceCuaLoop {
             sessionId: started.id,
             type: .transcriptFinal,
             timestamp: createdAt,
-            payload: Self.replayTranscriptPayload(finalTranscript)
+            payload: AgentReplayPayloads.transcript(finalTranscript)
         )
         let startedSessionId = started.id
         let startedAttributes: [String: ObservabilityAttributeValue] = [
@@ -268,7 +268,7 @@ final class VoiceCuaLoop {
             sessionId: run.sessionId,
             type: .loopFailed,
             timestamp: at,
-            payload: Self.replayLoopTerminalPayload(
+            payload: AgentReplayPayloads.loopTerminal(
                 status: "blocked",
                 errorClass: "Interrupted",
                 finalResponse: nil,
@@ -298,7 +298,7 @@ final class VoiceCuaLoop {
                 sessionId: run.sessionId,
                 type: .loopFailed,
                 timestamp: createdAt,
-                payload: Self.replayLoopTerminalPayload(
+                payload: AgentReplayPayloads.loopTerminal(
                     status: "blocked",
                     errorClass: "ActionBudgetExceeded",
                     finalResponse: nil,
@@ -336,7 +336,7 @@ final class VoiceCuaLoop {
             sessionId: run.sessionId,
             type: .intentResolved,
             timestamp: createdAt,
-            payload: Self.replayIntentPayload(next, tick: run.nextTick, durationMs: resolveDurationMs)
+            payload: AgentReplayPayloads.intent(next, tick: run.nextTick, durationMs: resolveDurationMs)
         )
         let resolverSessionId = run.sessionId
         let resolverTick = run.nextTick
@@ -350,10 +350,10 @@ final class VoiceCuaLoop {
                 sessionId: run.sessionId,
                 type: .loopFinished,
                 timestamp: createdAt,
-                payload: Self.replayLoopTerminalPayload(
+                payload: AgentReplayPayloads.loopTerminal(
                     status: "succeeded",
                     errorClass: nil,
-                    finalResponse: Self.replaySatisfiedSummary(next),
+                    finalResponse: AgentReplayPayloads.satisfiedSummary(next),
                     reason: nil)
             )
             await recordResolverObservability(
@@ -372,11 +372,11 @@ final class VoiceCuaLoop {
                 sessionId: run.sessionId,
                 type: .loopFailed,
                 timestamp: createdAt,
-                payload: Self.replayLoopTerminalPayload(
-                    status: Self.replayIntentStatus(next),
-                    errorClass: Self.replayIntentErrorClass(next),
+                payload: AgentReplayPayloads.loopTerminal(
+                    status: AgentReplayPayloads.intentStatus(next),
+                    errorClass: AgentReplayPayloads.intentErrorClass(next),
                     finalResponse: nil,
-                    reason: Self.replayIntentReason(next))
+                    reason: AgentReplayPayloads.intentReason(next))
             )
             await recordResolverObservability(
                 sessionId: resolverSessionId,
@@ -448,7 +448,7 @@ final class VoiceCuaLoop {
                 sessionId: run.sessionId,
                 type: .loopFailed,
                 timestamp: runningAt,
-                payload: Self.replayLoopTerminalPayload(
+                payload: AgentReplayPayloads.loopTerminal(
                     status: "blocked",
                     errorClass: "RepeatedActionBlocked",
                     finalResponse: nil,
@@ -479,11 +479,11 @@ final class VoiceCuaLoop {
                 sessionId: run.sessionId,
                 type: .loopFailed,
                 timestamp: runningAt,
-                payload: Self.replayLoopTerminalPayload(
+                payload: AgentReplayPayloads.loopTerminal(
                     status: "blocked",
                     errorClass: "CuaActionBlocked",
                     finalResponse: nil,
-                    reason: Self.replayActionResultMessage(blocked))
+                    reason: AgentReplayPayloads.actionResultMessage(blocked))
             )
             await recordActionObservability(
                 sessionId: run.sessionId,
@@ -556,7 +556,7 @@ final class VoiceCuaLoop {
                 sessionId: sessionId,
                 type: .toolCallStarted,
                 timestamp: startedAt,
-                payload: Self.replayToolCallStartedPayload(tool: tool, args: args)
+                payload: AgentReplayPayloads.toolCallStarted(tool: tool, args: args)
             )
             let callResult = await driver.call(tool: tool, input: .object(args.mapValues(\.asDriverValue)))
             last = cuaResultToActionResult(callResult, summary: "Called \(tool)")
@@ -564,11 +564,11 @@ final class VoiceCuaLoop {
                 sessionId: sessionId,
                 type: .toolCallFinished,
                 timestamp: timestamp(),
-                payload: Self.replayToolCallFinishedPayload(
+                payload: AgentReplayPayloads.toolCallFinished(
                     tool: tool,
                     args: args,
                     result: last,
-                    status: Self.replayActionResultStatus(last))
+                    status: AgentReplayPayloads.actionResultStatus(last))
             )
             guard case .succeeded = last else {
                 DirectorDiagnostics.loop.error("dispatch failed tool=\(tool, privacy: .public) result=\(Self.actionResultSummary(last), privacy: .public)")
@@ -593,7 +593,7 @@ final class VoiceCuaLoop {
             sessionId: sessionId,
             type: .approvalDecided,
             timestamp: timestamp(),
-            payload: Self.replayApprovalPayload(
+            payload: AgentReplayPayloads.approval(
                 decision: "approved",
                 risk: ready.riskLevel.rawValue,
                 actionCount: ready.actionPlan.actionPlan.count)
@@ -636,7 +636,7 @@ final class VoiceCuaLoop {
             sessionId: sessionId,
             type: .approvalDecided,
             timestamp: decidedAt,
-            payload: Self.replayApprovalPayload(
+            payload: AgentReplayPayloads.approval(
                 decision: "rejected",
                 risk: ready.riskLevel.rawValue,
                 actionCount: ready.actionPlan.actionPlan.count)
@@ -645,7 +645,7 @@ final class VoiceCuaLoop {
             sessionId: sessionId,
             type: .loopFailed,
             timestamp: decidedAt,
-            payload: Self.replayLoopTerminalPayload(
+            payload: AgentReplayPayloads.loopTerminal(
                 status: "rejected",
                 errorClass: "RejectedBeforeExecution",
                 finalResponse: nil,
@@ -682,7 +682,7 @@ final class VoiceCuaLoop {
                 sessionId: run.sessionId,
                 type: .loopFailed,
                 timestamp: at,
-                payload: Self.replayLoopTerminalPayload(
+                payload: AgentReplayPayloads.loopTerminal(
                     status: "blocked",
                     errorClass: "Interrupted",
                     finalResponse: nil,
@@ -722,212 +722,6 @@ final class VoiceCuaLoop {
         payload: Contracts.JSONValue
     ) -> AgentReplayEvent? {
         agentReplay?.record(sessionId: sessionId, type: type, timestamp: timestamp, payload: payload)
-    }
-
-    private static func replayTranscriptPayload(_ transcript: Contracts.FinalTranscript) -> Contracts.JSONValue {
-        var fields: [String: Contracts.JSONValue] = [
-            "text": .string(transcript.text),
-            "confidence": .number(transcript.confidence),
-            "latencyMs": .number(transcript.latencyMs),
-            "receivedAt": .number(transcript.receivedAt),
-        ]
-        if let words = transcript.words {
-            fields["words"] = .array(words.map { word in
-                .object([
-                    "text": .string(word.text),
-                    "startMs": .number(word.startMs),
-                    "endMs": .number(word.endMs),
-                    "confidence": .number(word.confidence),
-                ])
-            })
-        }
-        return .object(fields)
-    }
-
-    private static func replayIntentPayload(
-        _ intent: Contracts.ResolvedIntent,
-        tick: Int,
-        durationMs: Double
-    ) -> Contracts.JSONValue {
-        var fields: [String: Contracts.JSONValue] = [
-            "intentId": .string(intent.id),
-            "status": .string(replayIntentStatus(intent)),
-            "tick": .number(Double(tick)),
-            "durationMs": .number(durationMs),
-        ]
-        switch intent {
-        case let .ready(ready):
-            fields["risk"] = .string(ready.riskLevel.rawValue)
-            fields["requiresApproval"] = .bool(ready.requiresApproval)
-            fields["actionPlanId"] = .string(ready.actionPlan.id)
-            fields["summary"] = .string(ready.actionPlan.summary)
-            fields["toolCalls"] = .array(ready.actionPlan.actionPlan.map(replayActionStep(_:)))
-        case let .needsClarification(pending), let .blocked(pending):
-            fields["reason"] = .string(pending.reason)
-            fields["requiresApproval"] = .bool(pending.requiresApproval)
-        case let .satisfied(satisfied):
-            fields["summary"] = .string(satisfied.summary)
-        }
-        return .object(fields)
-    }
-
-    private static func replayActionStep(_ step: Contracts.ActionStep) -> Contracts.JSONValue {
-        let (tool, args) = StepDispatch.driverCallForStep(step)
-        return .object([
-            "stepId": .string(step.id),
-            "label": .string(step.label),
-            "tool": .string(tool),
-            "args": .object(args),
-        ])
-    }
-
-    private static func replayApprovalPayload(
-        decision: String,
-        risk: String,
-        actionCount: Int
-    ) -> Contracts.JSONValue {
-        .object([
-            "decision": .string(decision),
-            "risk": .string(risk),
-            "actionCount": .number(Double(actionCount)),
-        ])
-    }
-
-    private static func replayToolCallStartedPayload(
-        tool: String,
-        args: [String: Contracts.JSONValue]
-    ) -> Contracts.JSONValue {
-        .object([
-            "tool": .string(tool),
-            "args": .object(args),
-        ])
-    }
-
-    private static func replayToolCallFinishedPayload(
-        tool: String,
-        args: [String: Contracts.JSONValue],
-        result: Contracts.CuaActionResult,
-        status: String
-    ) -> Contracts.JSONValue {
-        .object([
-            "tool": .string(tool),
-            "args": .object(args),
-            "status": .string(status),
-            "result": replayActionResultPayload(result),
-        ])
-    }
-
-    private static func replayLoopTerminalPayload(
-        status: String,
-        errorClass: String?,
-        finalResponse: String?,
-        reason: String?
-    ) -> Contracts.JSONValue {
-        var fields: [String: Contracts.JSONValue] = [
-            "status": .string(status),
-        ]
-        if let errorClass { fields["errorClass"] = .string(errorClass) }
-        if let finalResponse { fields["finalResponse"] = .string(finalResponse) }
-        if let reason { fields["reason"] = .string(reason) }
-        return .object(fields)
-    }
-
-    private static func replayActionResultPayload(_ result: Contracts.CuaActionResult) -> Contracts.JSONValue {
-        switch result {
-        case let .succeeded(summary, state):
-            return .object([
-                "status": .string("succeeded"),
-                "summary": .string(summary),
-                "state": replayWindowState(state),
-            ])
-        case let .failed(error, state):
-            return .object([
-                "status": .string("failed"),
-                "error": .string(error),
-                "state": replayWindowState(state),
-            ])
-        case let .blocked(reason, state):
-            return .object([
-                "status": .string("blocked"),
-                "reason": .string(reason),
-                "state": replayWindowState(state),
-            ])
-        }
-    }
-
-    private static func replayWindowState(_ state: Contracts.CuaWindowState?) -> Contracts.JSONValue {
-        guard let state else { return .null }
-        return .object([
-            "surface": replaySurface(state.surface),
-            "capturedAt": .string(state.capturedAt),
-            "elementCount": .number(Double(state.elementCount)),
-            "elements": .array(state.elements.map { element in
-                .object([
-                    "id": .string(element.id),
-                    "index": element.index.map { .number(Double($0)) } ?? .null,
-                    "role": element.role.map(Contracts.JSONValue.string) ?? .null,
-                    "label": element.label.map(Contracts.JSONValue.string) ?? .null,
-                    "value": element.value.map(Contracts.JSONValue.string) ?? .null,
-                ])
-            }),
-        ])
-    }
-
-    private static func replaySurface(_ surface: Contracts.SurfaceSnapshot) -> Contracts.JSONValue {
-        .object([
-            "id": .string(surface.id),
-            "title": .string(surface.title),
-            "app": .string(surface.app),
-            "pid": surface.pid.map { .number(Double($0)) } ?? .null,
-            "windowId": surface.windowId.map { .number(Double($0)) } ?? .null,
-            "availability": .string(surface.availability.rawValue),
-            "accessStatus": .string(surface.accessStatus.rawValue),
-        ])
-    }
-
-    private static func replayActionResultStatus(_ result: Contracts.CuaActionResult) -> String {
-        switch result {
-        case .succeeded: return "succeeded"
-        case .failed: return "failed"
-        case .blocked: return "blocked"
-        }
-    }
-
-    private static func replayActionResultMessage(_ result: Contracts.CuaActionResult) -> String {
-        switch result {
-        case let .succeeded(summary, _): return summary
-        case let .failed(error, _): return error
-        case let .blocked(reason, _): return reason
-        }
-    }
-
-    private static func replayIntentStatus(_ intent: Contracts.ResolvedIntent) -> String {
-        switch intent {
-        case .ready: return "ready"
-        case .needsClarification: return "clarification_required"
-        case .blocked: return "blocked"
-        case .satisfied: return "satisfied"
-        }
-    }
-
-    private static func replayIntentErrorClass(_ intent: Contracts.ResolvedIntent) -> String {
-        switch intent {
-        case .needsClarification: return "ClarificationRequired"
-        case .blocked: return "ResolverBlocked"
-        case .ready, .satisfied: return "LoopTerminal"
-        }
-    }
-
-    private static func replayIntentReason(_ intent: Contracts.ResolvedIntent) -> String? {
-        switch intent {
-        case let .needsClarification(pending), let .blocked(pending): return pending.reason
-        case .ready, .satisfied: return nil
-        }
-    }
-
-    private static func replaySatisfiedSummary(_ intent: Contracts.ResolvedIntent) -> String? {
-        if case let .satisfied(satisfied) = intent { return satisfied.summary }
-        return nil
     }
 
     private func recordSessionStartedObservability(

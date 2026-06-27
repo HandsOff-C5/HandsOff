@@ -1,18 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import worker, { type AgentReplayEvent, type Env, type ReplayTestSink } from "./index";
-
-class MemoryKv {
-  private readonly values = new Map<string, string>();
-
-  async get(key: string): Promise<string | null> {
-    return this.values.get(key) ?? null;
-  }
-
-  async put(key: string, value: string): Promise<void> {
-    this.values.set(key, value);
-  }
-}
+import worker, {
+  AgentReplaySession,
+  type AgentReplayEvent,
+  type Env,
+  type ReplayTestSink,
+} from "./index";
 
 class MemoryReplaySink implements ReplayTestSink {
   private readonly written: AgentReplayEvent[] = [];
@@ -26,17 +19,62 @@ class MemoryReplaySink implements ReplayTestSink {
   }
 }
 
-function kv(): KVNamespace {
-  return new MemoryKv() as unknown as KVNamespace;
+class MemoryDurableObjectStorage {
+  private values = new Map<string, unknown>();
+  private alarm: number | null = null;
+
+  async get<T>(key: string): Promise<T | undefined> {
+    return this.values.get(key) as T | undefined;
+  }
+
+  async put(entries: Record<string, unknown>): Promise<void> {
+    for (const [key, value] of Object.entries(entries)) this.values.set(key, value);
+  }
+
+  async setAlarm(scheduledTime: number | Date): Promise<void> {
+    this.alarm = Number(scheduledTime);
+  }
+
+  async deleteAll(): Promise<void> {
+    this.values.clear();
+    this.alarm = null;
+  }
+}
+
+class MemoryReplaySessionNamespace {
+  private readonly sessions = new Map<string, AgentReplaySession>();
+
+  constructor(private readonly replayEnv: Env) {}
+
+  idFromName(name: string): DurableObjectId {
+    return { name, equals: (other) => other.name === name, toString: () => name };
+  }
+
+  get(id: DurableObjectId): DurableObjectStub {
+    const sessionId = id.name ?? id.toString();
+    let session = this.sessions.get(sessionId);
+    if (session === undefined) {
+      session = new AgentReplaySession(
+        { storage: new MemoryDurableObjectStorage() } as unknown as DurableObjectState,
+        this.replayEnv,
+      );
+      this.sessions.set(sessionId, session);
+    }
+    return session as unknown as DurableObjectStub;
+  }
 }
 
 function env(overrides: Partial<Env> = {}): Env {
-  return {
+  const replayEnv = {
     HANDSOFF_APP_TOKEN: "app-token",
-    AGENT_REPLAY_DEDUP: kv(),
     AGENT_REPLAY_TEST_SINK: new MemoryReplaySink(),
     ...overrides,
-  };
+  } as Env;
+  if (overrides.AGENT_REPLAY_SESSIONS === undefined) {
+    (replayEnv as { AGENT_REPLAY_SESSIONS: DurableObjectNamespace }).AGENT_REPLAY_SESSIONS =
+      new MemoryReplaySessionNamespace(replayEnv) as unknown as DurableObjectNamespace;
+  }
+  return replayEnv;
 }
 
 function replayRequest(
@@ -58,6 +96,19 @@ function testSinkRequest(
     headers,
   });
 }
+
+function headerValue(headers: HeadersInit | undefined, name: string): string | null {
+  return new Headers(headers).get(name);
+}
+
+type ReplayResponseBody = {
+  readonly accepted: readonly {
+    readonly eventId: string;
+    readonly sessionId: string;
+    readonly seq: number;
+  }[];
+  readonly duplicateEventIds: readonly string[];
+};
 
 const timestamp = "2026-06-27T15:00:00.000Z";
 
@@ -152,6 +203,28 @@ describe("agent replay Worker", () => {
     await expect(sinkResponse.json()).resolves.toEqual({ records: [first] });
   });
 
+  it("serializes concurrent duplicate eventIds through the session coordinator", async () => {
+    const replayEnv = env();
+    const first = representativeEvents[0]!;
+
+    const responses = await Promise.all([
+      worker.fetch(replayRequest({ events: [first] }), replayEnv),
+      worker.fetch(replayRequest({ events: [first] }), replayEnv),
+    ]);
+    const bodies = await Promise.all(
+      responses.map(async (response) => (await response.json()) as ReplayResponseBody),
+    );
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(bodies.flatMap((body) => body.accepted)).toEqual([
+      { eventId: first.eventId, sessionId: first.sessionId, seq: first.seq },
+    ]);
+    expect(bodies.flatMap((body) => body.duplicateEventIds)).toEqual([first.eventId]);
+
+    const sinkResponse = await worker.fetch(testSinkRequest("session-1"), replayEnv);
+    await expect(sinkResponse.json()).resolves.toEqual({ records: [first] });
+  });
+
   it("rejects excluded credential-like replay payload fields before writing", async () => {
     const replayEnv = env();
     const response = await worker.fetch(
@@ -201,6 +274,32 @@ describe("agent replay Worker", () => {
     });
   });
 
+  it("does not burn replay state when the downstream write fails", async () => {
+    const upstreamFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("nope", { status: 502 }))
+      .mockResolvedValueOnce(new Response("{}"));
+    const replayEnv = env({
+      AGENT_REPLAY_TEST_SINK: undefined,
+      LANGFUSE_PUBLIC_KEY: "public-key",
+      LANGFUSE_SECRET_KEY: "secret-key",
+      LANGFUSE_BASE_URL: "https://langfuse.test",
+    });
+    const first = representativeEvents[0]!;
+
+    const failed = await worker.fetch(replayRequest({ events: [first] }), replayEnv);
+    expect(failed.status).toBe(502);
+    await expect(failed.json()).resolves.toEqual({ error: "langfuse_replay_write_failed" });
+
+    const retry = await worker.fetch(replayRequest({ events: [first] }), replayEnv);
+    expect(retry.status).toBe(200);
+    await expect(retry.json()).resolves.toEqual({
+      accepted: [{ eventId: first.eventId, sessionId: first.sessionId, seq: first.seq }],
+      duplicateEventIds: [],
+    });
+    expect(upstreamFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("writes replay records to Langfuse ingestion with stable trace and event ids", async () => {
     const upstreamFetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response("{}"));
     const replayEnv = env({
@@ -228,7 +327,7 @@ describe("agent replay Worker", () => {
     const [url, init] = upstreamFetch.mock.calls[0]!;
     expect(url).toBe("https://langfuse.test/api/public/ingestion");
     expect(init).toMatchObject({ method: "POST" });
-    expect((init?.headers as Record<string, string>).authorization).toBe(
+    expect(headerValue(init?.headers as HeadersInit, "authorization")).toBe(
       `Basic ${btoa("public-key:secret-key")}`,
     );
     expect(JSON.parse(String(init?.body))).toEqual({

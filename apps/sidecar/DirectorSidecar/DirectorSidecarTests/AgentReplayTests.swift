@@ -88,6 +88,27 @@ private func replayInput(_ text: String = "scroll") -> Contracts.IntentInput {
     )
 }
 
+private func replayPayloadObject(_ value: Contracts.JSONValue) throws -> [String: Contracts.JSONValue] {
+    guard case let .object(fields) = value else {
+        Issue.record("expected object payload")
+        return [:]
+    }
+    return fields
+}
+
+private func replayPayloadArray(_ value: Contracts.JSONValue) throws -> [Contracts.JSONValue] {
+    guard case let .array(values) = value else {
+        Issue.record("expected array payload")
+        return []
+    }
+    return values
+}
+
+private func replayPayloadJSONString(_ value: Contracts.JSONValue) throws -> String {
+    let data = try JSONEncoder().encode(value)
+    return String(decoding: data, as: UTF8.self)
+}
+
 @MainActor
 struct AgentReplayStoreTests {
     @Test func persistsPendingEventsAndContinuesStableSeqAfterRestart() async throws {
@@ -239,6 +260,117 @@ struct AgentReplayWorkerClientTests {
             AgentReplayAcceptedEvent(eventId: event.eventId, sessionId: event.sessionId, seq: event.seq),
         ])
         #expect(ack.duplicateEventIds == ["session-1:9:loop_finished"])
+    }
+}
+
+struct AgentReplayPayloadTests {
+    @Test func redactsInputArgsFromIntentAndToolCallReplayPayloads() throws {
+        let surface = #"""
+        {"id":"surface-1","title":"Checkout","app":"Notes","pid":321,"windowId":654,"availability":"available","accessStatus":"accessible"}
+        """#
+        let intentJSON = #"""
+        {
+          "status":"ready",
+          "id":"intent-1",
+          "input":{
+            "sessionId":"session-1",
+            "speech":{"finalTranscript":{"kind":"final","text":"type the code","confidence":0.95,"latencyMs":100,"receivedAt":1}},
+            "pointingEvidence":[],
+            "surfaceCandidates":[\#(surface)]
+          },
+          "intent_type":"type_text",
+          "referent":null,
+          "constraints":[],
+          "risk_level":"reversible",
+          "requires_approval":false,
+          "target_agent":"cua-driver",
+          "action_plan":{
+            "id":"plan-1",
+            "summary":"Fill the form",
+            "risk_level":"reversible",
+            "requires_approval":false,
+            "target_agent":"cua-driver",
+            "action_plan":[
+              {"id":"s1","label":"Type code","kind":"type_text","target":{"surface":\#(surface),"elementIndex":7},"text":"hunter2-code"},
+              {"id":"s2","label":"Set card","kind":"set_value","target":{"surface":\#(surface),"elementIndex":8},"value":"4111111111111111"}
+            ]
+          },
+          "createdAt":"\#(replayTimestamp)"
+        }
+        """#
+        let intent = try JSONDecoder().decode(Contracts.ResolvedIntent.self, from: Data(intentJSON.utf8))
+
+        let resolved = AgentReplayPayloads.intent(intent, tick: 0, durationMs: 12)
+        let resolvedFields = try replayPayloadObject(resolved)
+        let toolCalls = try replayPayloadArray(try #require(resolvedFields["toolCalls"]))
+        let typeCall = try replayPayloadObject(toolCalls[0])
+        let typeArgs = try replayPayloadObject(try #require(typeCall["args"]))
+        let setCall = try replayPayloadObject(toolCalls[1])
+        let setArgs = try replayPayloadObject(try #require(setCall["args"]))
+
+        #expect(typeArgs["text"] == nil)
+        #expect(typeArgs["inputLength"] == .number(12))
+        #expect(typeArgs["element_index"] == .number(7))
+        #expect(setArgs["value"] == nil)
+        #expect(setArgs["inputLength"] == .number(16))
+        #expect(setArgs["element_index"] == .number(8))
+
+        let started = AgentReplayPayloads.toolCallStarted(
+            tool: "type_text",
+            args: ["element_index": .number(7), "text": .string("hunter2-code")]
+        )
+        let startedArgs = try replayPayloadObject(try #require(replayPayloadObject(started)["args"]))
+        #expect(startedArgs["text"] == nil)
+        #expect(startedArgs["inputLength"] == .number(12))
+
+        let finished = AgentReplayPayloads.toolCallFinished(
+            tool: "set_value",
+            args: ["element_index": .number(8), "value": .string("4111111111111111")],
+            result: .succeeded(
+                summary: "Called set_value",
+                state: Contracts.CuaWindowState(
+                    surface: Contracts.SurfaceSnapshot(
+                        id: "surface-1",
+                        title: "Checkout",
+                        app: "Notes",
+                        pid: 321,
+                        windowId: 654,
+                        availability: .available,
+                        accessStatus: .accessible
+                    ),
+                    capturedAt: replayTimestamp,
+                    elementCount: 1,
+                    elements: [
+                        Contracts.CuaElement(
+                            id: "field-1",
+                            index: 8,
+                            role: "AXTextField",
+                            label: "Card",
+                            value: "4111111111111111"
+                        ),
+                    ]
+                )
+            ),
+            status: "succeeded"
+        )
+        let finishedFields = try replayPayloadObject(finished)
+        let finishedArgs = try replayPayloadObject(try #require(finishedFields["args"]))
+        #expect(finishedArgs["value"] == nil)
+        #expect(finishedArgs["inputLength"] == .number(16))
+        let finishedResult = try replayPayloadObject(try #require(finishedFields["result"]))
+        let finishedState = try replayPayloadObject(try #require(finishedResult["state"]))
+        let finishedElements = try replayPayloadArray(try #require(finishedState["elements"]))
+        let finishedElement = try replayPayloadObject(try #require(finishedElements.first))
+        #expect(finishedElement["value"] == nil)
+        #expect(finishedElement["valueLength"] == .number(16))
+
+        let replayJSON = try [
+            resolved,
+            started,
+            finished,
+        ].map(replayPayloadJSONString).joined(separator: "\n")
+        #expect(!replayJSON.contains("hunter2-code"))
+        #expect(!replayJSON.contains("4111111111111111"))
     }
 }
 

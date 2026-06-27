@@ -2,6 +2,8 @@ const REPLAY_EVENTS_PATH = "/v1/agent-replay/events";
 const TEST_SINK_PATH_PREFIX = "/v1/agent-replay/test-sink/";
 const DEFAULT_LANGFUSE_BASE_URL = "https://cloud.langfuse.com";
 const DEFAULT_RETENTION_DAYS = 30;
+const RETENTION_MS = DEFAULT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const LAST_SEQ_KEY = "last_seq";
 const encoder = new TextEncoder();
 
 const replayEventTypes = [
@@ -39,7 +41,7 @@ export interface Env {
   readonly LANGFUSE_SECRET_KEY?: string;
   readonly LANGFUSE_BASE_URL?: string;
   readonly LANGFUSE_ENVIRONMENT?: string;
-  readonly AGENT_REPLAY_DEDUP: KVNamespace;
+  readonly AGENT_REPLAY_SESSIONS: DurableObjectNamespace;
   readonly AGENT_REPLAY_TEST_SINK?: ReplayTestSink;
 }
 
@@ -205,35 +207,134 @@ function parseReplayRequest(raw: ReplayRequestBody): AgentReplayEvent[] | Respon
   return events;
 }
 
-function readDedupStore(env: Env): KVNamespace | Response {
-  if (typeof env.AGENT_REPLAY_DEDUP?.get !== "function") {
-    return json({ error: "agent_replay_dedup_missing" }, 500);
+function readReplaySessions(env: Env): DurableObjectNamespace | Response {
+  if (
+    typeof env.AGENT_REPLAY_SESSIONS?.idFromName !== "function" ||
+    typeof env.AGENT_REPLAY_SESSIONS.get !== "function"
+  ) {
+    return json({ error: "agent_replay_sessions_missing" }, 500);
   }
-  return env.AGENT_REPLAY_DEDUP;
+  return env.AGENT_REPLAY_SESSIONS;
 }
 
 function eventKey(eventId: string): string {
   return `event:${eventId}`;
 }
 
-function lastSeqKey(sessionId: string): string {
-  return `session:${sessionId}:last_seq`;
-}
-
 interface PendingEvents {
   readonly eventsToWrite: readonly AgentReplayEvent[];
   readonly duplicateEventIds: readonly string[];
-  readonly maxSeqBySession: ReadonlyMap<string, number>;
+}
+
+interface ReplaySessionRequestBody {
+  readonly events?: unknown;
+}
+
+function retentionExpiresAt(): number {
+  return Date.now() + RETENTION_MS;
+}
+
+export class AgentReplaySession {
+  private gate: Promise<unknown> = Promise.resolve();
+
+  constructor(
+    private readonly state: DurableObjectState,
+    private readonly env: Env,
+  ) {}
+
+  async fetch(request: Request): Promise<Response> {
+    if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+
+    let rawBody: ReplaySessionRequestBody;
+    try {
+      rawBody = (await request.json()) as ReplaySessionRequestBody;
+    } catch {
+      return json({ error: "invalid_agent_replay_request" }, 400);
+    }
+
+    if (!isRecord(rawBody) || !Array.isArray(rawBody.events)) {
+      return json({ error: "invalid_agent_replay_request" }, 400);
+    }
+
+    return this.runExclusive(() => this.acceptEvents(rawBody.events as AgentReplayEvent[]));
+  }
+
+  private runExclusive<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.gate.then(work, work);
+    this.gate = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private async acceptEvents(events: readonly AgentReplayEvent[]): Promise<Response> {
+    const eventsToWrite: AgentReplayEvent[] = [];
+    const duplicateEventIds: string[] = [];
+    const seenEventIds = new Set<string>();
+    let previousSeq = (await this.state.storage.get<number>(LAST_SEQ_KEY)) ?? -1;
+    if (!Number.isFinite(previousSeq)) previousSeq = -1;
+
+    for (const event of events) {
+      if (seenEventIds.has(event.eventId)) {
+        duplicateEventIds.push(event.eventId);
+        continue;
+      }
+      seenEventIds.add(event.eventId);
+
+      if ((await this.state.storage.get(eventKey(event.eventId))) !== undefined) {
+        duplicateEventIds.push(event.eventId);
+        continue;
+      }
+
+      if (event.seq <= previousSeq) {
+        return json({ error: "non_monotonic_agent_replay_seq", eventId: event.eventId }, 409);
+      }
+
+      previousSeq = event.seq;
+      eventsToWrite.push(event);
+    }
+
+    const writeFailure = await writeReplay(eventsToWrite, this.env);
+    if (writeFailure !== null) return writeFailure;
+
+    if (eventsToWrite.length > 0) {
+      const writes: Record<string, string | number> = { [LAST_SEQ_KEY]: previousSeq };
+      for (const event of eventsToWrite) {
+        writes[eventKey(event.eventId)] = event.sessionId;
+      }
+      await this.state.storage.put(writes);
+      await this.state.storage.setAlarm(retentionExpiresAt());
+    }
+
+    return json({ eventsToWrite, duplicateEventIds });
+  }
+
+  async alarm(): Promise<void> {
+    await this.state.storage.deleteAll();
+  }
+}
+
+function eventsBySession(
+  events: readonly AgentReplayEvent[],
+): ReadonlyMap<string, readonly AgentReplayEvent[]> {
+  const sessions = new Map<string, AgentReplayEvent[]>();
+  for (const event of events) {
+    const sessionEvents = sessions.get(event.sessionId) ?? [];
+    sessionEvents.push(event);
+    sessions.set(event.sessionId, sessionEvents);
+  }
+  return sessions;
 }
 
 async function selectPendingEvents(
   events: readonly AgentReplayEvent[],
-  dedup: KVNamespace,
+  sessions: DurableObjectNamespace,
 ): Promise<PendingEvents | Response> {
   const eventsToWrite: AgentReplayEvent[] = [];
   const duplicateEventIds: string[] = [];
   const seenEventIds = new Set<string>();
-  const maxSeqBySession = new Map<string, number>();
+  const uniqueEvents: AgentReplayEvent[] = [];
 
   for (const event of events) {
     if (seenEventIds.has(event.eventId)) {
@@ -241,42 +342,26 @@ async function selectPendingEvents(
       continue;
     }
     seenEventIds.add(event.eventId);
-
-    if ((await dedup.get(eventKey(event.eventId))) !== null) {
-      duplicateEventIds.push(event.eventId);
-      continue;
-    }
-
-    let previousSeq = maxSeqBySession.get(event.sessionId);
-    if (previousSeq === undefined) {
-      const storedSeq = await dedup.get(lastSeqKey(event.sessionId));
-      previousSeq = storedSeq === null ? -1 : Number(storedSeq);
-      if (!Number.isFinite(previousSeq)) previousSeq = -1;
-    }
-    if (event.seq <= previousSeq) {
-      return json({ error: "non_monotonic_agent_replay_seq", eventId: event.eventId }, 409);
-    }
-
-    maxSeqBySession.set(event.sessionId, event.seq);
-    eventsToWrite.push(event);
+    uniqueEvents.push(event);
   }
 
-  return { eventsToWrite, duplicateEventIds, maxSeqBySession };
-}
+  for (const [sessionId, sessionEvents] of eventsBySession(uniqueEvents).entries()) {
+    const stub = sessions.get(sessions.idFromName(sessionId));
+    const response = await stub.fetch(
+      new Request("https://agent-replay.internal/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ events: sessionEvents }),
+      }),
+    );
+    if (!response.ok) return response;
 
-async function rememberAcceptedEvents(
-  dedup: KVNamespace,
-  events: readonly AgentReplayEvent[],
-  maxSeqBySession: ReadonlyMap<string, number>,
-): Promise<void> {
-  const writes: Promise<unknown>[] = [];
-  for (const event of events) {
-    writes.push(dedup.put(eventKey(event.eventId), event.sessionId));
+    const pending = (await response.json()) as PendingEvents;
+    eventsToWrite.push(...pending.eventsToWrite);
+    duplicateEventIds.push(...pending.duplicateEventIds);
   }
-  for (const [sessionId, seq] of maxSeqBySession.entries()) {
-    writes.push(dedup.put(lastSeqKey(sessionId), String(seq)));
-  }
-  await Promise.all(writes);
+
+  return { eventsToWrite, duplicateEventIds };
 }
 
 function traceIdForSession(sessionId: string): string {
@@ -423,16 +508,12 @@ async function handleReplayRequest(request: Request, env: Env): Promise<Response
   const events = parseReplayRequest(rawBody);
   if (events instanceof Response) return events;
 
-  const dedup = readDedupStore(env);
-  if (dedup instanceof Response) return dedup;
+  const sessions = readReplaySessions(env);
+  if (sessions instanceof Response) return sessions;
 
-  const pending = await selectPendingEvents(events, dedup);
+  const pending = await selectPendingEvents(events, sessions);
   if (pending instanceof Response) return pending;
 
-  const writeFailure = await writeReplay(pending.eventsToWrite, env);
-  if (writeFailure !== null) return writeFailure;
-
-  await rememberAcceptedEvents(dedup, pending.eventsToWrite, pending.maxSeqBySession);
   return json({
     accepted: pending.eventsToWrite.map((event) => ({
       eventId: event.eventId,
