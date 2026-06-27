@@ -36,6 +36,8 @@ public struct FaceMapping {
     private let gainCurve: GainCurve
     /// Dead-zone (`FR-9`): control-vector magnitude below this drives no edge motion (at rest).
     private let deadZone: Double
+    /// Asymmetric vertical gain for the cursor-DOWNWARD direction (`Params.face.verticalDownGain`).
+    private let downGain: Double
 
     // Fixed structural blend weights (the salvaged controlVector mix). Not tuned knobs.
     private let noseWeightEdge: Double = 0.75
@@ -47,13 +49,15 @@ public struct FaceMapping {
         speed: Double,
         correctionWeight: Double = Params.face.correctionWeight,
         gainCurve: GainCurve = GainCurve(),
-        deadZone: Double = Params.face.deadZone
+        deadZone: Double = Params.face.deadZone,
+        downGain: Double = Params.face.verticalDownGain
     ) {
         self.mode = mode
         self.speed = speed
         self.correctionWeight = correctionWeight
         self.gainCurve = gainCurve
         self.deadZone = deadZone
+        self.downGain = downGain
     }
 
     /// Offset-from-neutral control vector. Edge/absolute share one formula; relative uses the
@@ -116,8 +120,11 @@ public struct FaceMapping {
         guard screen.width > 0, screen.height > 0 else { return .zero }
         let gain = speed * 0.45
         let nx = clamp01(0.5 + Double(vector.x) * gain)
-        // Flip: positive (up) control vector → smaller CG y.
-        let ny = clamp01(0.5 - Double(vector.y) * gain)
+        // Flip: positive (up) control vector → smaller CG y. The DOWNWARD half (vector.y < 0,
+        // cursor toward the bottom) gets `downGain×` more reach so the head-down signal — which
+        // travels much less than head-up — still reaches the bottom edge. Continuous at y == 0.
+        let vGain = vector.y < 0 ? gain * downGain : gain
+        let ny = clamp01(0.5 - Double(vector.y) * vGain)
         return CGPoint(
             x: screen.minX + CGFloat(nx) * screen.width,
             y: screen.minY + CGFloat(ny) * screen.height

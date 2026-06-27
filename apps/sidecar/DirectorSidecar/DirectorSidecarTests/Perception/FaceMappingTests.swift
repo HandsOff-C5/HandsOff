@@ -41,11 +41,14 @@ private let screen = CGRect(x: 0, y: 0, width: 1000, height: 800)
     #expect(abs(v.y - (-0.075)) < 1e-9)
 
     // absolutePoint: gain = speed·0.45 = 2.25 ; nx = clamp(0.5 + 0.075·2.25) = 0.66875.
-    // CG top-left: ny flips the up-positive control → ny = clamp(0.5 - v.y·gain)
-    //            = clamp(0.5 - (-0.075)·2.25) = 0.66875.
+    // CG top-left: ny flips the up-positive control → ny = clamp(0.5 - v.y·vGain). Here v.y < 0
+    // (cursor DOWNWARD), so the asymmetric down-gain applies: vGain = gain·verticalDownGain =
+    // 2.25·1.8 = 4.05 (Params.face.verticalDownGain fixes the "can't reach the bottom" asymmetry).
+    //   ny = clamp(0.5 - (-0.075)·4.05) = 0.80375.
+    // x is unaffected by the down-gain (horizontal stays symmetric).
     let p = mapping.absolutePoint(vector: v, screen: screen)
     #expect(abs(p.x - 668.75) < 1e-6)   // 0.66875 · 1000
-    #expect(abs(p.y - 535.0) < 1e-6)    // 0.66875 · 800
+    #expect(abs(p.y - 643.0) < 1e-6)    // 0.80375 · 800
 }
 
 @Test func testEdgeMode() {
