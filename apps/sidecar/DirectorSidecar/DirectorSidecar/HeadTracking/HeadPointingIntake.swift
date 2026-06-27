@@ -80,9 +80,22 @@ enum HeadPointingFusion {
         head: HeadPoint?,
         windows: [CuaWindow],
         gesture: GestureReferent? = nil,
+        perceptionTarget: (surface: Contracts.SurfaceSnapshot, confidence: Double)? = nil,
         radius: Double = AttentionRanking.defaultRadius
     ) -> Built {
         var evidence: [Contracts.PointingEvidence] = []
+
+        // Perception NBest branch (#150): the live `PerceptionBus` continuously ranks the bias-
+        // corrected hit against the driver window set and `PointingAligner` fuses the modalities into
+        // ONE top window. When present it LEADS the candidate list as a `point-to-window` referent, so
+        // the resolved window the user is pointing at wins the dedup over the coarser head-neighborhood
+        // and display surfaces. Absent (no live bus / no window under the hit) the head/gesture path
+        // below is unchanged — this is purely additive.
+        if let perceptionTarget {
+            evidence.append(Contracts.PointingEvidence(
+                source: .gesture, confidence: perceptionTarget.confidence, strategy: "point-to-window",
+                surface: perceptionTarget.surface, cursor: nil))
+        }
 
         // Gesture branch (buildPointingEvidence lines 83-96): the locked referent leads, then the
         // wrist-ray cursor position (even without a lock). The cursor entry is skipped when a locked
@@ -158,6 +171,13 @@ struct HeadPointingIntake: IntentIntake {
     /// the live gesture consumer). Optional so the head-only path and tests stay unchanged; when nil
     /// no gesture branch is folded in.
     var gesture: GestureSnapshot? = nil
+    /// The perception NBest consumer (#150): the live fused "what is the user pointing at" answer.
+    /// Optional so the legacy head/gesture path and tests stay unchanged; when nil no perception
+    /// branch is folded in. Paired with `screen` to resolve the ranked id back to a real surface.
+    var aligner: PointingAligner? = nil
+    var screen: ScreenSnapshotProvider? = nil
+    /// Confidence the resolved point-to-window referent leads with (#150 U1 — gesture weight 0.9).
+    var perceptionConfidence: Double = 0.9
     var radius: Double = AttentionRanking.defaultRadius
 
     func makeInput(
@@ -171,10 +191,19 @@ struct HeadPointingIntake: IntentIntake {
             windows = []
         }
         let gestureReferent = gesture?.current
+
+        // Resolve the perception aligner's fused top window back to a real surface (id → driver
+        // window). Nil unless the live bus ranked a window under the bias-corrected hit.
+        var perceptionTarget: (surface: Contracts.SurfaceSnapshot, confidence: Double)? = nil
+        if let aligner, let screen, let top = aligner.top(), let win = screen.surface(forId: top.id) {
+            perceptionTarget = (win.surface, perceptionConfidence)
+        }
+
         let built = HeadPointingFusion.build(
-            head: snapshot.current, windows: windows, gesture: gestureReferent, radius: radius)
+            head: snapshot.current, windows: windows, gesture: gestureReferent,
+            perceptionTarget: perceptionTarget, radius: radius)
         DirectorDiagnostics.loop.info(
-            "intake head=\(snapshot.current != nil, privacy: .public) gesture=\(gestureReferent?.isEmpty == false, privacy: .public) windows=\(windows.count, privacy: .public) evidence=\(built.pointingEvidence.count, privacy: .public) candidates=\(built.surfaceCandidates.count, privacy: .public)")
+            "intake head=\(snapshot.current != nil, privacy: .public) gesture=\(gestureReferent?.isEmpty == false, privacy: .public) pointToWindow=\(perceptionTarget != nil, privacy: .public) windows=\(windows.count, privacy: .public) evidence=\(built.pointingEvidence.count, privacy: .public) candidates=\(built.surfaceCandidates.count, privacy: .public)")
         return Contracts.IntentInput(
             sessionId: sessionId,
             finalTranscript: finalTranscript,

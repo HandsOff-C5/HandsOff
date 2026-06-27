@@ -159,13 +159,32 @@ struct DirectorSidecarApp: App {
             calibrationQuality: .poor,
             dwell: DwellDebounceParams(enter: 0.6, exit: 0.4, dwellMs: 600, cooldownMs: 1000)))
 
+        // Face/hand migration: the one camera owner (constructed here, before the loop, so its live
+        // perception NBest consumer can ground the intake). Fans each frame to the face + hand plugins:
+        //   • hand → the `.user` cursor (`cursorPosition` topic) + the gesture intent snapshot
+        //   • face → the gaze region (`gazeFocus` topic)         + the head-point intent snapshot
+        // #150: the bus ranks each hit against the live driver window list (`windowSource`) and
+        // `PointingAligner` fuses the result; the intake folds the fused top window as a leading
+        // point-to-window referent. Per-display hand calibration (RB-3) is loaded for the main display
+        // from the persisted profile (uncalibrated when none is stored — the capture flow is deferred).
+        let calibrationRepo = CalibrationProfileRepository()
+        let perception = PerceptionService(
+            windowSource: { [services] in
+                if case let .succeeded(windows) = await services.cua.listWindows() { return windows }
+                return []
+            },
+            calibration: calibrationRepo.load(forDisplayID: CGMainDisplayID())?.calibrationFit()
+        )
+
         // ADR 0005 Track D — no bridge: run the ported supervision loop IN-PROCESS and make it the
         // app's engine. The loop drives the SAME frames the socket used to deliver (engine.onFrame →
         // dispatch) and the UI's commands route to the loop (the models' command sink IS the engine).
         let loop = VoiceCuaLoop(
             driver: services.cua,
             resolve: IntentWorkerConfig.resolver(),
-            intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot)
+            intake: HeadPointingIntake(
+                snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot,
+                aligner: perception.aligner, screen: perception.screen)
         )
         // Probe the cua-driver DAEMON's own TCC (accessibility/screen-recording) so readiness reflects
         // the process a task runs through — its missing grants would otherwise only surface mid-task as
@@ -203,12 +222,9 @@ struct DirectorSidecarApp: App {
             onGestureReferent: { _ in }
         )
 
-        // Face/hand migration: the one camera owner. Fans each frame to the face + hand plugins:
-        //   • hand → the `.user` cursor (`cursorPosition` topic) + the gesture intent snapshot
-        //   • face → the gaze region (`gazeFocus` topic)         + the head-point intent snapshot
-        // The bridge callbacks arrive on the main thread (PerceptionService marshals them); the two
+        // Wire the one camera owner's four callbacks (constructed above, before the loop). The bridge
+        // callbacks arrive on the main thread (PerceptionService marshals them); the two intent
         // snapshots are lock-protected. Wire all four before sensing turns on.
-        let perception = PerceptionService()
         perception.onCursorPosition = { payload in dispatch(.cursor(pointers: payload.pointers)) }
         perception.onGazeFocus = { gaze in dispatch(.gaze(gaze)) }
         perception.onFaceEvidence = { point in headSnapshot.record(point) }

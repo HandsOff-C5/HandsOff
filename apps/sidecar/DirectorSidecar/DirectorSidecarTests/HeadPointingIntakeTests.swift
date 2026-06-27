@@ -138,6 +138,36 @@ struct HeadPointingFusionTests {
         #expect(!built.pointingEvidence.contains { $0.strategy == "head-neighborhood-empty" })
     }
 
+    @Test func perceptionTargetLeadsAndWinsTheDedup() {
+        // #150: the live perception NBest aligner resolved a window under the bias-corrected hit. It
+        // is folded as a LEADING `point-to-window` referent, so it wins the dedup over the coarser
+        // head-neighborhood for the SAME window (and over any display surface).
+        let target = window("textedit", bounds(100, 100, 200, 200))
+        let built = HeadPointingFusion.build(
+            head: head(150, 150),
+            windows: [target],
+            perceptionTarget: (surface: target.surface, confidence: 0.9))
+
+        // The point-to-window referent leads the evidence list.
+        let first = built.pointingEvidence.first
+        #expect(first?.strategy == "point-to-window")
+        #expect(first?.surface?.id == "textedit")
+        #expect(first?.confidence == 0.9)
+
+        // The head-neighborhood for the SAME window is still emitted, but the resolved window leads
+        // and the dedup keeps a single candidate (the point-to-window one, first-seen).
+        #expect(built.pointingEvidence.contains { $0.strategy == "head-neighborhood" && $0.surface?.id == "textedit" })
+        #expect(built.surfaceCandidates.map(\.id) == ["textedit"])
+    }
+
+    @Test func noPerceptionTargetLeavesTheLegacyPathUnchanged() {
+        // Absent a perception target the evidence is exactly the head path (additive guarantee).
+        let target = window("w", bounds(100, 100, 200, 200))
+        let withNil = HeadPointingFusion.build(head: head(150, 150), windows: [target])
+        #expect(!withNil.pointingEvidence.contains { $0.strategy == "point-to-window" })
+        #expect(withNil.pointingEvidence.first?.strategy == "face-tracker-position")
+    }
+
     @Test func emitsHeadNeighborhoodEmptyWhenNothingIsNear() {
         let built = HeadPointingFusion.build(
             head: head(0, 0),

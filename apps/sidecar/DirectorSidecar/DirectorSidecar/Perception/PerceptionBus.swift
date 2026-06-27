@@ -37,12 +37,18 @@ extension FaceModelPlugin: PerceptionPlugin {
 
 final class PerceptionBus {
 
-    /// The 300ms fusion ring the aligner (S4) consumes.
+    /// The 300ms fusion ring the aligner (`PointingAligner`) consumes.
     let ring: PointingEventRing
     /// Builds the S1 cursorPosition/gazeFocus/transcript payloads.
     let publisher: PerceptionPublisher
-    /// Per-user pointing-bias learner (confirmed-selection learning is wired in S4).
+    /// Per-user pointing-bias learner. Lock-protected: `route` reads it (`correct`) off the plugin
+    /// queues while `confirmSelection` mutates it from the intent/commit path.
     private(set) var bias: PointingBiasLearner
+    private let biasLock = NSLock()
+
+    /// The live AX/driver window set NBestCluster ranks each screen-hit against. Read synchronously
+    /// on the plugin queue per frame; nil → no ranking (the pre-wire behavior, empty n-best).
+    private let screenProvider: (() -> ScreenEvent?)?
 
     private let adapter: PointingEventAdapter
     private let entries: [(plugin: PerceptionPlugin, queue: DispatchQueue)]
@@ -61,12 +67,14 @@ final class PerceptionBus {
         adapter: PointingEventAdapter = PointingEventAdapter(),
         ring: PointingEventRing = PointingEventRing(),
         publisher: PerceptionPublisher = PerceptionPublisher(),
-        bias: PointingBiasLearner = PointingBiasLearner()
+        bias: PointingBiasLearner = PointingBiasLearner(),
+        screenProvider: (() -> ScreenEvent?)? = nil
     ) {
         self.adapter = adapter
         self.ring = ring
         self.publisher = publisher
         self.bias = bias
+        self.screenProvider = screenProvider
         self.entries = plugins.map { plugin in
             (plugin, DispatchQueue(label: "com.handsoff.perception.\(plugin.perceptionSource.rawValue)"))
         }
@@ -82,7 +90,19 @@ final class PerceptionBus {
                 _ = entry.plugin.process(frame)
                 guard let output = entry.plugin.latestOutput else { return }
 
-                let event = self.adapter.event(from: output, source: entry.plugin.perceptionSource)
+                // Rank the bias-corrected screen hit against the live window set (FR-4). A frozen
+                // (dropout) frame asserts no fresh referent, so it is not ranked — the adapter also
+                // clears n-best on a frozen frame (I6), this just avoids the wasted work.
+                let nBest: [WindowOrRegionRef]
+                if output.state != .frozen, let screen = self.screenProvider?() {
+                    let corrected = self.correctedHit(PixelPoint(x: output.point.x, y: output.point.y))
+                    nBest = NBestCluster.rank(hit: corrected, in: screen)
+                } else {
+                    nBest = []
+                }
+
+                let event = self.adapter.event(
+                    from: output, source: entry.plugin.perceptionSource, nBestTargets: nBest)
                 self.ring.insert(event)
 
                 switch entry.plugin.perceptionSource {
@@ -102,5 +122,35 @@ final class PerceptionBus {
     /// Block until every plugin queue has drained the dispatched work (test/teardown determinism).
     func waitUntilIdle() {
         for entry in entries { entry.queue.sync {} }
+    }
+
+    /// Apply the per-user learned bias to a raw screen hit (lock-protected — `route` calls this off
+    /// the plugin queues while `confirmSelection` may be mutating the learner).
+    private func correctedHit(_ raw: PixelPoint) -> PixelPoint {
+        biasLock.lock()
+        defer { biasLock.unlock() }
+        return bias.correct(raw)
+    }
+
+    /// The confirmed-selection learning seam (FR-19, INV-5/INV-12): a user-CONFIRMED commit on a
+    /// target feeds the learner so the bias offset (and, with a duration, the integration window)
+    /// converge to the owner. ONLY confirmed selections may move the model — raw/unconfirmed
+    /// pointing never reaches here. `predicted` is the ray's screen hit at selection time; `actual`
+    /// is the confirmed target's center.
+    func confirmSelection(predicted: PixelPoint, actual: PixelPoint, gestureDurationMs: Double? = nil) {
+        biasLock.lock()
+        defer { biasLock.unlock() }
+        if let gestureDurationMs {
+            bias.observeConfirmed(predicted: predicted, actual: actual, gestureDurationMs: gestureDurationMs)
+        } else {
+            bias.observeConfirmed(predicted: predicted, actual: actual)
+        }
+    }
+
+    /// The learned bias snapshot (thread-safe read) — for the intent path's `correct` and tests.
+    var currentBias: PointingBiasLearner {
+        biasLock.lock()
+        defer { biasLock.unlock() }
+        return bias
     }
 }

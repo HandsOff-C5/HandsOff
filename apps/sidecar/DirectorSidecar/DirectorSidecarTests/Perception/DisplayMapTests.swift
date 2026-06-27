@@ -48,3 +48,23 @@ import CoreGraphics
     #expect(abs(n.x - (2640.0 / 3360.0)) < 1e-12)   // 0.785714...
     #expect(abs(n.y - 0.5) < 1e-12)
 }
+
+// PerceptionService.unionBounds — the multi-display screen rect the perception cursor maps across:
+// flip each Cocoa (bottom-left) frame to CG top-left with the menu-bar height, then union.
+
+@Test func testPerceptionUnionBounds_singleDisplayReducesToPrimary() {
+    // Union-of-one MUST equal the old primary-only default: (0, 0, w, h).
+    let primary = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+    let union = PerceptionService.unionBounds(ofCocoaFrames: [primary], menuBarHeight: 1080)
+    #expect(union == CGRect(x: 0, y: 0, width: 1920, height: 1080))
+}
+
+@Test func testPerceptionUnionBounds_secondDisplayAbovePrimaryGivesNegativeOriginY() {
+    // Cocoa: primary (0,0,1920,1080); a display directly ABOVE it sits at y=1080 (bottom-left, y up).
+    // Flipped to CG top-left (h0=1080): primary -> (0,0,1920,1080); above -> (0,-1080,1920,1080).
+    // Union spans y ∈ [-1080, 1080] → origin.y = -1080, height 2160 (CLAUDE.md I7 negative origins).
+    let primary = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+    let above = CGRect(x: 0, y: 1080, width: 1920, height: 1080)
+    let union = PerceptionService.unionBounds(ofCocoaFrames: [primary, above], menuBarHeight: 1080)
+    #expect(union == CGRect(x: 0, y: -1080, width: 1920, height: 2160))
+}
