@@ -88,6 +88,20 @@ private final class StubClient: NextToolCallClient, @unchecked Sendable {
     }
 }
 
+/// A small `CuaScreenshot` fixture for the U5 vision path — a 1×1 PNG payload is enough to assert the
+/// inline `data:` image part is assembled; `pngBase64` is overridable for the over-cap degrade case.
+private func makeScreenshot(
+    pngBase64: String = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC",
+    mimeType: String = "image/png"
+) -> CuaScreenshot {
+    let window = CuaWindow(
+        id: "notes:1", title: "Quick Note", app: "Notes", pid: 42, windowId: 7,
+        availability: .available, accessStatus: .accessible, focused: true, bounds: nil, zIndex: 0)
+    return CuaScreenshot(
+        surface: window, capturedAt: "2026-06-22T12:00:02.000Z",
+        mimeType: mimeType, width: 1, height: 1, pngBase64: pngBase64)
+}
+
 private func completion(_ call: NextToolCall?, finishReason: String? = "stop", refusal: String? = nil) -> NextToolCallCompletion {
     NextToolCallCompletion(choices: [
         .init(finishReason: finishReason, message: .init(parsed: call, refusal: refusal)),
@@ -223,7 +237,7 @@ private struct DescribedError: Error, CustomStringConvertible {
     let messages = NextToolCallPrompt.buildMessages(input, tools: try sampleTools())
     #expect(messages.count == 2)
     #expect(messages[0].role == "system")
-    let payload = try parseObject(messages[1].content)
+    let payload = try parseObject(textPayload(messages[1].content))
 
     #expect(payload["goal"] as? String == "scroll to find Boogie Woogie")
     let snapshot = try #require(payload["latestSnapshot"] as? [String: Any])
@@ -264,7 +278,7 @@ private struct DescribedError: Error, CustomStringConvertible {
             ["source": "fusion", "confidence": 0.8, "strategy": "temporal-bind:that@5100", "surface": slack],
         ],
         surfaceCandidates: [notes, slack])
-    let payload = try parseObject(NextToolCallPrompt.buildMessages(input, tools: try sampleTools())[1].content)
+    let payload = try parseObject(textPayload(NextToolCallPrompt.buildMessages(input, tools: try sampleTools())[1].content))
 
     let bound = try #require(payload["boundReferents"] as? [[String: Any]])
     #expect(bound.count == 2)
@@ -321,11 +335,118 @@ private struct DescribedError: Error, CustomStringConvertible {
     // Covers U9: the exact pointed text reaches the model payload next to boundReferents.
     let input = try makeInput(
         transcript: "summarize this", selectionText: "Bug: clicks no-op on Catalyst windows")
-    let payload = try parseObject(NextToolCallPrompt.buildMessages(input, tools: try sampleTools())[1].content)
+    let payload = try parseObject(textPayload(NextToolCallPrompt.buildMessages(input, tools: try sampleTools())[1].content))
     #expect(payload["selectionText"] as? String == "Bug: clicks no-op on Catalyst windows")
     // Present (not absent) even when there is no selection — encoded as JSON null.
-    let bare = try parseObject(NextToolCallPrompt.buildMessages(try makeInput(), tools: try sampleTools())[1].content)
+    let bare = try parseObject(textPayload(NextToolCallPrompt.buildMessages(try makeInput(), tools: try sampleTools())[1].content))
     #expect(bare["selectionText"] is NSNull)
+}
+
+// MARK: - U5 screenshot threading + U11 app-context injection (Phase 2, additive)
+
+@Test func threadsScreenshotAsInlineImagePartAlongsideTextPayload() throws {
+    // U5: a present screenshot makes the user turn multimodal — the JSON payload as the leading text
+    // part, the capture as an inline `data:image/png;base64,…` image part.
+    let messages = NextToolCallPrompt.buildMessages(
+        try makeInput(), tools: try sampleTools(),
+        screenshot: makeScreenshot(pngBase64: "iVBORw0KGgoAAAA="))
+    #expect(messages.count == 2)
+    guard case let .parts(parts) = messages[1].content else {
+        Issue.record("expected multimodal user content, got \(messages[1].content)"); return
+    }
+    // The encoded JSON payload survives as the leading text part…
+    guard case let .text(text) = parts[0] else { Issue.record("expected leading text part"); return }
+    #expect(try parseObject(text)["goal"] != nil)
+    // …and the screenshot rides as an inline data: image part.
+    let imagePart = parts.first { if case .imageURL = $0 { return true } else { return false } }
+    guard case let .imageURL(url) = try #require(imagePart) else { Issue.record("expected image part"); return }
+    #expect(url == "data:image/png;base64,iVBORw0KGgoAAAA=")
+}
+
+@Test func textOnlyPathIsByteIdenticalWithNilScreenshotAndUnknownApp() throws {
+    // Regression: nil screenshot + an unknown app (no observations, head-only evidence, a non-catalog
+    // candidate) must produce the exact pre-Phase-2 two-turn output — bare system prompt, string user.
+    let input = try makeInput(
+        pointingEvidence: [["source": "head", "confidence": 0.9, "strategy": "head-neighborhood"]],
+        surfaceCandidates: [surfaceDict(app: "Xcode")])
+    let messages = NextToolCallPrompt.buildMessages(input, tools: try sampleTools())
+    #expect(messages.count == 2)
+    // System turn is the bare prompt — no app section appended (ChatMessage is Equatable).
+    #expect(messages[0] == ChatMessage(role: "system", content: NextToolCallPrompt.systemPrompt))
+    // User turn is the legacy string-content form (NOT multimodal), role unchanged.
+    #expect(messages[1].role == "user")
+    guard case .text = messages[1].content else { Issue.record("expected string-content user turn"); return }
+}
+
+@Test func overCapScreenshotDegradesToTextOnlyUserTurn() throws {
+    // U5 guard: an inline image past `ContentPart.maxImageBase64Bytes` must NOT fail the resolve —
+    // buildMessages drops the image and keeps the text turn so the loop keeps making progress AX-only.
+    let huge = String(repeating: "A", count: ContentPart.maxImageBase64Bytes + 1)
+    let messages = NextToolCallPrompt.buildMessages(
+        try makeInput(), tools: try sampleTools(), screenshot: makeScreenshot(pngBase64: huge))
+    #expect(messages.count == 2)
+    guard case let .text(text) = messages[1].content else {
+        Issue.record("expected text-only user turn after over-cap image drop"); return
+    }
+    #expect(try parseObject(text)["goal"] != nil)
+}
+
+@Test func injectsKnownFocusedAppContextIntoSystemTurn() throws {
+    // U11: the latest observation's focused window app drives the lookup — a catalog hit appends the
+    // app fragment to the system turn (after the intact U2 prompt); an unknown app leaves it bare.
+    let chrome = surfaceDict(id: "chrome:1", title: "GitHub", app: "Google Chrome", pid: 99, windowId: 3)
+    let known = try makeInput(goalSession: [
+        "goal": "open the repo", "tick": 1,
+        "observations": [[
+            "tick": 1, "capturedAt": "2026-06-22T12:00:01.000Z", "windows": [chrome],
+            "state": ["surface": chrome, "capturedAt": "2026-06-22T12:00:01.000Z", "elementCount": 0, "elements": []],
+        ]],
+    ])
+    let system = NextToolCallPrompt.buildMessages(known, tools: try sampleTools())[0]
+    #expect(system.role == "system")
+    guard case let .text(text) = system.content else { Issue.record("expected text system turn"); return }
+    #expect(text.hasPrefix(NextToolCallPrompt.systemPrompt))                       // U2 guidance survives…
+    #expect(text.contains("App context — Chromium browser (Chrome / Brave):"))    // …with the U11 fragment…
+    #expect(text.contains("Cmd+L = focus the address/search bar"))
+    #expect(text.contains(AppContextCatalog.guardrail))                           // …closing with the guardrail.
+
+    // An unknown focused app leaves the system turn exactly the bare prompt.
+    let slack = surfaceDict(id: "slack:1", title: "Slack", app: "Slack", pid: 5, windowId: 9)
+    let unknown = try makeInput(goalSession: [
+        "goal": "read the channel", "tick": 1,
+        "observations": [[
+            "tick": 1, "capturedAt": "2026-06-22T12:00:01.000Z", "windows": [slack],
+            "state": ["surface": slack, "capturedAt": "2026-06-22T12:00:01.000Z", "elementCount": 0, "elements": []],
+        ]],
+    ])
+    #expect(NextToolCallPrompt.buildMessages(unknown, tools: try sampleTools())[0]
+        == ChatMessage(role: "system", content: NextToolCallPrompt.systemPrompt))
+}
+
+@Test func fusionPayloadKeysSurviveScreenshotAndAppContextInjection() throws {
+    // Regression (the differentiator): with BOTH a screenshot and a known app, the user payload still
+    // carries the live fusion keys (boundReferents / selectionText / candidateSurfaces) intact, and
+    // the app context only ever lands in the SYSTEM turn.
+    let notes = surfaceDict(id: "win-notes", title: "Notes", app: "Notes")
+    let input = try makeInput(
+        transcript: "summarize this",
+        pointingEvidence: [["source": "fusion", "confidence": 0.9, "strategy": "temporal-bind:this@1100", "surface": notes]],
+        surfaceCandidates: [notes],
+        selectionText: "the selected passage")
+    let messages = NextToolCallPrompt.buildMessages(input, tools: try sampleTools(), screenshot: makeScreenshot())
+    guard case let .parts(parts) = messages[1].content, case let .text(text) = parts[0] else {
+        Issue.record("expected multimodal user turn with leading text"); return
+    }
+    let payload = try parseObject(text)
+    let bound = try #require(payload["boundReferents"] as? [[String: Any]])
+    #expect(bound.first?["word"] as? String == "this")
+    #expect(payload["selectionText"] as? String == "the selected passage")
+    let candidates = try #require(payload["candidateSurfaces"] as? [[String: Any]])
+    #expect(candidates.first?["id"] as? String == "win-notes")
+    // The app context lands in the SYSTEM turn (Notes is in the catalog), never the user payload.
+    guard case let .text(system) = messages[0].content else { Issue.record("expected text system turn"); return }
+    #expect(system.contains("App context — Notes:"))
+    #expect(payload["appContext"] == nil)
 }
 
 // MARK: - Contracts.ToolRisk (tool-risk.ts)
@@ -426,4 +547,17 @@ private let emptyElementTarget = Contracts.ToolCallTarget(
 
 private func parseObject(_ json: String) throws -> [String: Any] {
     try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+}
+
+/// The JSON text payload of a user turn — the bare string for a legacy string-content message, or the
+/// leading text part of a multimodal (text + image) message. The resolver's user turn is one or the
+/// other, so this lets a test read the payload uniformly across the text-only and vision paths.
+private func textPayload(_ content: ChatMessage.Content) throws -> String {
+    switch content {
+    case let .text(text):
+        return text
+    case let .parts(parts):
+        for case let .text(text) in parts { return text }
+        throw DescribedError(description: "no text part in multimodal content")
+    }
 }

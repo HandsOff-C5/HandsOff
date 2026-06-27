@@ -13,6 +13,20 @@ const messages = [
   { role: "user", content: JSON.stringify({ goal: "click there" }) },
 ];
 
+// U5: a multimodal user turn — `content` is an OpenAI/Gemini array of parts (a text part plus an
+// inline base64 image part). The Worker treats `messages` as opaque `unknown[]`, so this must be
+// forwarded to the provider byte-for-byte (no reshaping of the content array).
+const multimodalMessages = [
+  { role: "system", content: "You are HandsOff's autonomous computer-use agent." },
+  {
+    role: "user",
+    content: [
+      { type: "text", text: JSON.stringify({ goal: "click there" }) },
+      { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
+    ],
+  },
+];
+
 function request(init: { headers?: HeadersInit; body?: unknown; method?: string } = {}) {
   return new Request("https://intent.handsoff.test/v1/resolve-intent", {
     method: init.method ?? "POST",
@@ -106,6 +120,30 @@ describe("llm intent Worker", () => {
     expect((init?.headers as Headers).get("authorization")).toBe("Bearer openai-key");
     // KD4: with no request/env override, the upgraded OpenAI default is used.
     expect(JSON.parse(String(init?.body))).toMatchObject({ model: "gpt-4o" });
+  });
+
+  it("forwards multimodal array-of-parts message content to the provider unchanged", async () => {
+    const upstreamFetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(providerResponse()), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await worker.fetch(
+      request({
+        headers: { Authorization: "Bearer app-token" },
+        body: { messages: multimodalMessages },
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const [url, init] = upstreamFetch.mock.calls[0]!;
+    expect(url).toBe("https://api.openai.com/v1/chat/completions");
+    // The content array (text + image_url) is forwarded to the provider verbatim — the Worker does
+    // not flatten, reshape, or drop the inline image part.
+    const forwarded = JSON.parse(String(init?.body));
+    expect(forwarded.messages).toEqual(multimodalMessages);
   });
 
   it("honors the OPENAI_MODEL env override over the upgraded default", async () => {

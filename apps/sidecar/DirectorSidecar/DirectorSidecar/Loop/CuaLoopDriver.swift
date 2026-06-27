@@ -131,22 +131,25 @@ struct SpeechOnlyIntake: IntentIntake {
 
 // MARK: - Resolver seam
 
-/// The loop's "head" (`args.resolveIntent`): given the live input + the tool catalog, emit the next
-/// driver tool call toward the goal (a `ready` tool_call intent), or signal done/clarify/blocked.
-/// Risk is re-derived by the loop against the live snapshot — the resolver is never trusted for it.
+/// The loop's "head" (`args.resolveIntent`): given the live input + the tool catalog + an optional
+/// window screenshot, emit the next driver tool call toward the goal (a `ready` tool_call intent), or
+/// signal done/clarify/blocked. Risk is re-derived by the loop against the live snapshot — the
+/// resolver is never trusted for it. `screenshot` is the optional vision turn (U5): the loop passes
+/// the capture it already has (or nil); a closure that can't supply one ignores the 4th argument.
 typealias NextToolCallResolving = @Sendable (
     _ input: Contracts.IntentInput,
     _ createdAt: String,
-    _ tools: [DriverToolDefinition]
+    _ tools: [DriverToolDefinition],
+    _ screenshot: CuaScreenshot?
 ) async -> Contracts.ResolvedIntent
 
 enum LoopResolver {
     /// The production resolver: forward to the Worker-backed `NextToolCallResolver` (Track C) with
     /// a long-lived client. Keeps Worker config out of the loop — the app wiring supplies the client.
     static func worker(client: NextToolCallClient, model: String = NextToolCallResolver.defaultModel) -> NextToolCallResolving {
-        { input, createdAt, tools in
+        { input, createdAt, tools, screenshot in
             await NextToolCallResolver.resolveNextToolCall(
-                input, client: client, tools: tools, model: model, createdAt: createdAt)
+                input, client: client, tools: tools, model: model, createdAt: createdAt, screenshot: screenshot)
         }
     }
 }

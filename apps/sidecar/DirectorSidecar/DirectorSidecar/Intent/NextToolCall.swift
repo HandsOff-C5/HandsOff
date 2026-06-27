@@ -61,15 +61,18 @@ enum NextToolCallResolver {
         tools: [DriverToolDefinition] = [],
         model: String = defaultModel,
         intentId: String = "intent-llm",
-        createdAt: String? = nil
+        createdAt: String? = nil,
+        screenshot: CuaScreenshot? = nil
     ) async -> Contracts.ResolvedIntent {
         let stamp = createdAt ?? isoNow()
         let id = intentId
 
         do {
+            // The optional `screenshot` rides along as the vision part of the user turn (U5);
+            // `buildMessages` degrades to the text-only turn when it is nil or over the image cap.
             let completion = try await client.completeNextToolCall(
                 model: model,
-                messages: NextToolCallPrompt.buildMessages(input, tools: tools)
+                messages: NextToolCallPrompt.buildMessages(input, tools: tools, screenshot: screenshot)
             )
             guard let choice = completion.choices.first else {
                 return .blockedIntent(status: .blocked, input: input, id: id, createdAt: stamp,

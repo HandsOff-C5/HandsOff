@@ -100,7 +100,7 @@ private func makeLoop(driver: FakeLoopDriver, resolver: ScriptedResolver) -> Voi
     // so it stays main-actor-isolated — the nonisolated-default-arg quirk DirectorServices documents.
     VoiceCuaLoop(
         driver: driver,
-        resolve: { input, createdAt, _ in await resolver.resolve(input, createdAt) },
+        resolve: { input, createdAt, _, _ in await resolver.resolve(input, createdAt) },
         now: { "2026-06-22T12:00:00.000Z" },
         targetResolveDelayMs: 0,
         toolCallBudget: VoiceCuaLoop.defaultToolCallBudget)
@@ -309,7 +309,7 @@ struct IntentWorkerConfigTests {
 
     @Test func resolverDegradesToBlockedWhenUnconfigured() async {
         let resolver = IntentWorkerConfig.resolver(env: [:], bundle: .main)
-        let intent = await resolver(makeInput("hi"), "t", [])
+        let intent = await resolver(makeInput("hi"), "t", [], nil)
         guard case let .blocked(pending) = intent else {
             Issue.record("expected a blocked intent when the worker is unconfigured")
             return

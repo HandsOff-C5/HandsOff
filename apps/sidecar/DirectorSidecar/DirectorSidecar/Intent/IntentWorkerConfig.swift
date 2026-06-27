@@ -67,7 +67,9 @@ enum IntentWorkerConfig {
     }
 
     /// The degraded resolver: a clean `blocked` intent (no transport, no mock) naming the missing keys.
-    static let notConfiguredResolver: NextToolCallResolving = { input, createdAt, _ in
+    /// The 4th argument (the optional U5 vision screenshot) is ignored — an unconfigured resolver
+    /// never reaches the Worker, so there is nothing to send the capture to.
+    static let notConfiguredResolver: NextToolCallResolving = { input, createdAt, _, _ in
         Contracts.ResolvedIntent.blockedIntent(
             status: .blocked,
             input: input,

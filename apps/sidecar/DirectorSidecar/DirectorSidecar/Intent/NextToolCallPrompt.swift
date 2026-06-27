@@ -15,12 +15,13 @@
 
 import Foundation
 
-/// One chat message on the wire — `{ role, content }`, forwarded verbatim by the Worker to
-/// the provider. `content` is a JSON object string for the user turn, plain text for system.
-struct ChatMessage: Codable, Sendable, Equatable {
-    let role: String
-    let content: String
-}
+// `ChatMessage` (the on-the-wire `{ role, content }` model) lives in IntentWorkerClient.swift —
+// it is the wire body's content type and carries the multimodal (text + image) content the Worker
+// forwards opaquely. `buildMessages` keeps the text-only turns BYTE-IDENTICAL by default; it grows
+// two ADDITIVE seams: an optional `screenshot` (U5) makes the user turn multimodal (the JSON payload
+// as the text part + the capture as an inline `data:` image part), and the focused/bound app's
+// affordance fragment (U11, `AppContextCatalog`) is appended to the system turn when that app is
+// known. Neither touches the fusion payload keys (boundReferents / selectionText / candidateSurfaces).
 
 enum NextToolCallPrompt {
     /// How many recent observations of loop memory to send — enough for the model to see its
@@ -83,7 +84,8 @@ enum NextToolCallPrompt {
     /// full tool menu.
     static func buildMessages(
         _ input: Contracts.IntentInput,
-        tools: [DriverToolDefinition]
+        tools: [DriverToolDefinition],
+        screenshot: CuaScreenshot? = nil
     ) -> [ChatMessage] {
         let observations = input.goalSession?.observations ?? []
         let payload: Contracts.JSONValue = .object([
@@ -100,9 +102,58 @@ enum NextToolCallPrompt {
             "availableTools": .array(toolMenu(tools)),
         ])
         return [
-            ChatMessage(role: "system", content: systemPrompt),
-            ChatMessage(role: "user", content: encode(payload)),
+            systemMessage(for: input),
+            userMessage(text: encode(payload), screenshot: screenshot),
         ]
+    }
+
+    // MARK: - Message assembly
+
+    /// The system turn: the static `systemPrompt`, plus the focused/bound app's affordance fragment
+    /// (U11) when that app is in `AppContextCatalog`. Unknown (or no) app → exactly `systemPrompt`,
+    /// byte-identical to the pre-U11 system turn. The fragment is appended after a blank line and
+    /// NEVER touches the user payload — `boundReferents`/`selectionText`/`candidateSurfaces` are the
+    /// same whether or not an app matches.
+    private static func systemMessage(for input: Contracts.IntentInput) -> ChatMessage {
+        guard let fragment = AppContextCatalog.contextFragment(for: focusedAppName(input)) else {
+            return ChatMessage(role: "system", content: systemPrompt)
+        }
+        return ChatMessage(role: "system", content: systemPrompt + "\n\n" + fragment)
+    }
+
+    /// The user turn: the encoded JSON payload as the text part, plus the optional `screenshot` as an
+    /// inline `data:<mime>;base64,…` image part (U5 vision). With no screenshot it is the legacy
+    /// string-content message — byte-identical to the pre-U5 user turn, so the Worker and the
+    /// text-only path are unaffected. An over-cap capture degrades GRACEFULLY to the text-only message
+    /// (the AX snapshot in `text` still drives the next call) rather than failing the resolve — the
+    /// screenshot is an enhancement, never a gate.
+    private static func userMessage(text: String, screenshot: CuaScreenshot?) -> ChatMessage {
+        guard let screenshot else { return ChatMessage(role: "user", content: text) }
+        do {
+            return try ChatMessage(role: "user", parts: [
+                .text(text),
+                .image(base64: screenshot.pngBase64, mimeType: screenshot.mimeType),
+            ])
+        } catch {
+            // IntentWorkerError.imageTooLarge — drop the image, keep the goal/snapshot text turn.
+            return ChatMessage(role: "user", content: text)
+        }
+    }
+
+    /// The application the model is acting in/at, for the U11 app-context lookup: the latest
+    /// observation's focused window app (the surface it is driving this tick), else the first
+    /// temporally-bound deictic referent's surface app (what the user pointed at), else the top
+    /// ranked candidate surface's app. Nil when no surface is known — the system turn then carries no
+    /// app section.
+    private static func focusedAppName(_ input: Contracts.IntentInput) -> String? {
+        if let observation = input.goalSession?.observations.last,
+           let surface = observation.state?.surface ?? observation.windows.first {
+            return surface.app
+        }
+        if let bound = input.pointingEvidence.first(where: { $0.source == .fusion })?.surface {
+            return bound.app
+        }
+        return input.surfaceCandidates.first?.app
     }
 
     // MARK: - Snapshot

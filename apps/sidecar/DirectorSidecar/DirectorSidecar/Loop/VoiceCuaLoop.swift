@@ -70,6 +70,13 @@ final class VoiceCuaLoop {
     static let maxDistinctFailedStrategies = 3
     /// Fixed retarget grace before intent resolution (the controller's DEFAULT_TARGET_RESOLVE_DELAY_MS).
     static let defaultTargetResolveDelayMs = 1500
+    /// U6 read-source thinness floor. An observation is "thin" — too sparse for the resolver to read
+    /// the source from the AX text alone — when it carries FEWER than `minReadableTextElements`
+    /// non-empty label/value texts AND under `minReadableTextLength` characters of readable text in
+    /// total. A thin tick triggers exactly one vision screenshot (U6); rich on EITHER axis stays
+    /// text-only (Phase 1). Named so the threshold is tunable + unit-testable in isolation.
+    static let minReadableTextElements = 6
+    static let minReadableTextLength = 200
 
     init(
         driver: any CuaLoopDriver,
@@ -198,6 +205,46 @@ final class VoiceCuaLoop {
             pointingEvidence: pointing, surfaceCandidates: candidates, goalSession: goalSession)
     }
 
+    // MARK: Read-source vision fallback (U6)
+
+    /// Capture the one-shot U6 vision turn for a THIN observation — a single window screenshot the
+    /// resolver's vision seam reads when the AX text is too sparse to read the source from. Returns nil
+    /// (leaving the resolver on the AX-only path) when the content is rich enough (Phase 1 — no
+    /// capture), the focused window is unknown, or the capture fails (e.g. Screen Recording not
+    /// granted). One capture max per tick (the cost guard); never throws. The coordinate-click
+    /// fallback's own screenshot (dispatch path) is a DISTINCT capture and unaffected by this.
+    private func screenshotIfThin(_ observation: Contracts.GoalLoopObservation) async -> CuaScreenshot? {
+        guard Self.axContentIsThin(observation.state) else { return nil }
+        guard let surface = observation.state?.surface ?? observation.windows.first,
+              let pid = surface.pid, let windowId = surface.windowId else {
+            DirectorDiagnostics.loop.info("U6 thin AX but no focused window to capture — AX-only resolve")
+            return nil
+        }
+        guard case let .succeeded(shot) = await driver.screenshot(pid: pid, windowId: windowId) else {
+            DirectorDiagnostics.loop.warning("U6 vision capture failed (thin AX) — degrading to AX-only resolve")
+            return nil
+        }
+        DirectorDiagnostics.loop.info("U6 thin AX → vision capture pid=\(pid, privacy: .public) window=\(windowId, privacy: .public)")
+        return shot
+    }
+
+    /// Whether `state`'s AX content is too thin for the resolver to read the source from text alone —
+    /// the U6 trigger for a one-shot vision capture. Thin when there is no window state, the AX tree is
+    /// empty, or the elements carry too little readable text: fewer than `minReadableTextElements`
+    /// non-empty label/value texts AND under `minReadableTextLength` characters total (an opaque
+    /// canvas / Catalyst surface the AX bridge barely describes). Rich on EITHER axis → text-only.
+    /// Pure + static so the threshold is unit-testable without driving the loop.
+    static func axContentIsThin(_ state: Contracts.CuaWindowState?) -> Bool {
+        guard let state else { return true }
+        if state.elementCount == 0 || state.elements.isEmpty { return true }
+        let texts = state.elements
+            .flatMap { [$0.label, $0.value] }
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+        let totalLength = texts.reduce(0) { $0 + $1.count }
+        return texts.count < minReadableTextElements && totalLength < minReadableTextLength
+    }
+
     // MARK: Audit
 
     private func recordIntent(_ sessionId: String, _ createdAt: String, _ next: Contracts.ResolvedIntent) {
@@ -313,7 +360,13 @@ final class VoiceCuaLoop {
         if stopIfInterrupted(run, input, at: timestamp()) { return }
 
         let tools = await catalog.loadedTools()
-        let resolved = await resolve(input, createdAt, tools)
+        // U6 read-source vision fallback: when this tick's AX content is too thin for the resolver to
+        // read the source from the text snapshot alone, capture exactly ONE window screenshot and hand
+        // it to the resolver's vision turn (the U5 seam). A rich AX tree stays text-only (Phase 1). A
+        // capture failure (e.g. Screen Recording not granted) degrades to an AX-only resolve — never a
+        // crash, never a throw out of the loop.
+        let visionShot = await screenshotIfThin(observation)
+        let resolved = await resolve(input, createdAt, tools, visionShot)
         if stopIfInterrupted(run, input, at: timestamp()) { return }
         DirectorDiagnostics.loop.info("resolver returned \(Self.intentSummary(resolved), privacy: .public)")
 
@@ -457,9 +510,14 @@ final class VoiceCuaLoop {
 
         if stopIfInterrupted(ranRun, readyIntent.input, at: timestamp()) { return }
 
-        // Recovery (KD2): a failed action is a normal observation, not the end of the goal. Feed the
-        // failure forward so the resolver tries an alternative; only an exhausted budget / interrupt
-        // / a resolver-emitted blocked|done ends the loop.
+        // Recovery (KD2 / U10): a failed action is a normal observation, not the end of the goal —
+        // INCLUDING a driver error that names a stale/unknown/invalid element or token (the resolver
+        // cited a handle from a snapshot the window has since moved past). Feed the failure forward so
+        // the NEXT tick re-observes and the resolver re-resolves against the FRESH snapshot's tokens;
+        // only an exhausted budget / interrupt / a resolver-emitted blocked|done ends the loop. There
+        // is no new terminal failure for a stale token: it flows through this same arm. The act each
+        // tick already cites tokens from the immediately-preceding observation (`inputForTick` grounds
+        // on `observations.last`), so no path dispatches a stale snapshot's token on purpose.
         await continueGoal(ranRun, timestamp(), .init(
             actionId: readyIntent.actionPlan.id, result: actionResult))
     }

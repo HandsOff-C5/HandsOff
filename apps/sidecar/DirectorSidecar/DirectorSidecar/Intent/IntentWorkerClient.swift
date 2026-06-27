@@ -17,6 +17,144 @@
 
 import Foundation
 
+/// One chat message on the wire — `{ role, content }`, forwarded verbatim by the Worker to the
+/// provider. `content` is polymorphic, matching the OpenAI/Gemini message shape:
+///   - a bare JSON string (system/user text — the legacy, pre-U5 shape), or
+///   - a JSON array of `ContentPart`s (the multimodal/vision shape) — a text part and/or an
+///     inline base64 image part.
+/// A string-content message encodes byte-identically to the pre-U5 shape (`{"role":…,"content":"…"}`)
+/// so the Worker and every existing call site see no change; the Worker already forwards a
+/// content array opaquely (`messages: unknown[]`), so the wire model is the only thing that grows.
+/// (Lives with `IntentRequestBody` — this is the wire body's content type, not prompt logic.)
+struct ChatMessage: Codable, Sendable, Equatable {
+    let role: String
+    let content: Content
+
+    /// `content` is either a plain string or an ordered array of parts. Modeled as an enum so the
+    /// two on-the-wire forms stay explicit and the string form can be encoded byte-for-byte as before.
+    enum Content: Sendable, Equatable {
+        case text(String)
+        case parts([ContentPart])
+    }
+
+    /// Legacy string-content message. Encodes to `{"role":…,"content":"<text>"}` — byte-identical
+    /// to the pre-U5 shape, so existing call sites (the prompt builder's system/user turns) and the
+    /// Worker are unaffected.
+    init(role: String, content: String) {
+        self.role = role
+        self.content = .text(content)
+    }
+
+    /// Multimodal message: `content` becomes a JSON array of parts (text and/or image), the
+    /// OpenAI/Gemini vision shape. Validates each part up front — throws
+    /// `IntentWorkerError.imageTooLarge` if any inline image's base64 payload exceeds
+    /// `ContentPart.maxImageBase64Bytes`, so an oversized image is a typed failure here rather
+    /// than a malformed/oversized request the Worker would forward.
+    init(role: String, parts: [ContentPart]) throws {
+        try parts.forEach { try $0.validate() }
+        self.role = role
+        self.content = .parts(parts)
+    }
+
+    private enum Key: String, CodingKey { case role, content }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: Key.self)
+        try container.encode(role, forKey: .role)
+        switch content {
+        // The string form encodes the bare string for `content` — the exact pre-U5 output.
+        case let .text(text): try container.encode(text, forKey: .content)
+        case let .parts(parts): try container.encode(parts, forKey: .content)
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: Key.self)
+        role = try container.decode(String.self, forKey: .role)
+        // `content` is a string or an array of parts; try the string form first (the common case).
+        if let text = try? container.decode(String.self, forKey: .content) {
+            content = .text(text)
+        } else {
+            content = .parts(try container.decode([ContentPart].self, forKey: .content))
+        }
+    }
+}
+
+/// One part of a multimodal `content` array — the OpenAI/Gemini vision message shapes:
+///   text  → `{"type":"text","text":"…"}`
+///   image → `{"type":"image_url","image_url":{"url":"data:image/png;base64,…"}}`
+enum ContentPart: Codable, Sendable, Equatable {
+    case text(String)
+    /// A full image URL — typically an inline `data:<mime>;base64,<payload>` data URL.
+    case imageURL(String)
+
+    /// Build an inline image part from a captured PNG (e.g. a `CuaScreenshot`'s `mimeType` +
+    /// `pngBase64`), assembling the `data:<mime>;base64,<payload>` URL the provider expects.
+    static func image(base64 payload: String, mimeType: String = "image/png") -> ContentPart {
+        .imageURL("data:\(mimeType);base64,\(payload)")
+    }
+
+    /// Cap on an inline image's base64 payload. 10 MiB of base64 (~7.5 MB of decoded PNG) sits
+    /// comfortably above a Retina full-window screenshot yet well under the provider's request-size
+    /// limit, so an over-cap image is rejected here as a typed error instead of being forwarded as a
+    /// malformed/oversized request the provider would reject with a 400/413.
+    static let maxImageBase64Bytes = 10 * 1024 * 1024
+
+    /// The base64 payload of a `data:…;base64,…` image part, or nil for a text part or a non-base64
+    /// (remote `https`) image URL — neither carries an inline payload to bound.
+    var inlineImageBase64: String? {
+        guard case let .imageURL(url) = self,
+              let range = url.range(of: ";base64,") else { return nil }
+        return String(url[range.upperBound...])
+    }
+
+    /// Reject an inline image whose base64 payload exceeds the cap. No-op for text/remote parts.
+    func validate() throws {
+        guard let payload = inlineImageBase64 else { return }
+        let byteCount = payload.utf8.count
+        guard byteCount <= ContentPart.maxImageBase64Bytes else {
+            throw IntentWorkerError.imageTooLarge(
+                "image-too-large: inline image base64 is \(byteCount) bytes, over the " +
+                "\(ContentPart.maxImageBase64Bytes)-byte cap")
+        }
+    }
+
+    private enum Key: String, CodingKey {
+        case type
+        case text
+        case imageURL = "image_url"
+    }
+
+    /// The nested `{ "url": … }` object an `image_url` part wraps.
+    private struct ImageURLBox: Codable, Equatable { let url: String }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: Key.self)
+        switch self {
+        case let .text(text):
+            try container.encode("text", forKey: .type)
+            try container.encode(text, forKey: .text)
+        case let .imageURL(url):
+            try container.encode("image_url", forKey: .type)
+            try container.encode(ImageURLBox(url: url), forKey: .imageURL)
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: Key.self)
+        switch try container.decode(String.self, forKey: .type) {
+        case "text":
+            self = .text(try container.decode(String.self, forKey: .text))
+        case "image_url":
+            self = .imageURL(try container.decode(ImageURLBox.self, forKey: .imageURL).url)
+        case let other:
+            throw DecodingError.dataCorruptedError(
+                forKey: .type, in: container,
+                debugDescription: "unknown content part type \(other)")
+        }
+    }
+}
+
 /// The injection seam the resolver depends on. Mirrors the TS `client.chat.completions.parse`
 /// shape: given a model + messages, return the Worker's `{ choices }` completion.
 protocol NextToolCallClient: Sendable {
@@ -90,12 +228,16 @@ enum IntentWorkerError: Error, Equatable, CustomStringConvertible {
     case invalidConfiguration(String)
     case missingCredentials(String)
     case providerUnavailable(String)
+    /// An inline image part's base64 payload exceeded `ContentPart.maxImageBase64Bytes` — the
+    /// message is rejected before it can become a malformed/oversized provider request.
+    case imageTooLarge(String)
 
     var description: String {
         switch self {
         case let .invalidConfiguration(message),
              let .missingCredentials(message),
-             let .providerUnavailable(message):
+             let .providerUnavailable(message),
+             let .imageTooLarge(message):
             return message
         }
     }

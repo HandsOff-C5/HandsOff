@@ -32,34 +32,46 @@ private actor FakeLoopDriver: CuaLoopDriver {
     private var stateCursor = 0
     private let tools: [DriverToolDefinition]
     private let callResults: [String: CuaResult<JSONValue>]
+    /// When true, every `screenshot` call FAILS — models a missing Screen Recording grant so the U6
+    /// vision fallback (and the #158 coordinate fallback) must degrade gracefully, not crash.
+    private let screenshotFails: Bool
     private(set) var genericCalls: [String] = []
     private(set) var genericInputs: [JSONValue] = []
+    /// Total `screenshot` calls — lets the U6 tests assert "exactly ONE capture" vs "no capture".
+    private(set) var screenshotCount = 0
 
     init(
         windows: [CuaWindow],
         windowState: CuaWindowState?,
         stateSequence: [CuaWindowState] = [],
         tools: [DriverToolDefinition] = [],
-        callResults: [String: CuaResult<JSONValue>] = [:]
+        callResults: [String: CuaResult<JSONValue>] = [:],
+        screenshotFails: Bool = false
     ) {
         self.windows = windows
         self.windowState = windowState
         self.stateSequence = stateSequence
         self.tools = tools
         self.callResults = callResults
+        self.screenshotFails = screenshotFails
     }
 
     func listWindows() -> CuaResult<[CuaWindow]> { .succeeded(windows) }
 
-    /// A scripted vision capture so the #158 coordinate fallback can read window bounds + pixel size.
-    /// Bounds (0,0)/size 200×400 with a 200×400 screenshot → a 1× scale, so a frame center maps to
-    /// itself (the conversion math is exercised in unit tests; here we just need the path to run).
+    /// A scripted vision capture used by BOTH the U6 read-source fallback (passed to the resolver) and
+    /// the #158 coordinate fallback (which reads window bounds + pixel size). Bounds (0,0)/size 200×400
+    /// with a 200×400 screenshot → a 1× scale, so a frame center maps to itself (the conversion math is
+    /// exercised in unit tests; here we just need the path to run). Fails when `screenshotFails` is set.
     func screenshot(pid: Int, windowId: Int) -> CuaResult<CuaScreenshot> {
+        screenshotCount += 1
+        if screenshotFails { return .failed(error: "screen recording not granted") }
         let surface = windows.first(where: \.focused) ?? windows.first ?? focusedWindow()
         return .succeeded(CuaScreenshot(
             surface: surface, capturedAt: "2026-06-22T12:00:00.000Z",
             mimeType: "image/png", width: 200, height: 400, pngBase64: ""))
     }
+
+    func screenshotsTaken() -> Int { screenshotCount }
 
     func getWindowState(pid: Int, windowId: Int) -> CuaResult<CuaWindowState> {
         if !stateSequence.isEmpty {
@@ -96,11 +108,17 @@ private actor ScriptedResolver {
     private let decisions: [NextToolCall]
     private var index = 0
     private(set) var inputs: [Contracts.IntentInput] = []
+    /// The screenshot the loop handed the resolver each tick — nil when the AX content was rich enough
+    /// (U6 stayed text-only) or a capture failed. Lets a test prove the U6 vision turn was supplied.
+    private(set) var screenshots: [CuaScreenshot?] = []
 
     init(_ decisions: [NextToolCall]) { self.decisions = decisions }
 
-    func resolve(_ input: Contracts.IntentInput, _ createdAt: String) -> Contracts.ResolvedIntent {
+    func resolve(
+        _ input: Contracts.IntentInput, _ createdAt: String, _ screenshot: CuaScreenshot? = nil
+    ) -> Contracts.ResolvedIntent {
         inputs.append(input)
+        screenshots.append(screenshot)
         let decision = index < decisions.count
             ? decisions[index]
             : NextToolCall(status: .blocked, tool: nil, args: nil, rationale: "exhausted",
@@ -111,6 +129,7 @@ private actor ScriptedResolver {
     }
 
     func seenInputs() -> [Contracts.IntentInput] { inputs }
+    func seenScreenshots() -> [CuaScreenshot?] { screenshots }
 }
 
 // MARK: - Builders
@@ -169,6 +188,28 @@ private func settingsPaneState() -> CuaWindowState {
             parentIndex: nil, depth: 1, token: "s0002:0")])
 }
 
+/// A THIN AX state (U6): a single sparse element, far below the readable-text floor — the signature of
+/// an opaque canvas / Catalyst surface the AX bridge barely describes. Triggers the one-shot vision
+/// capture so the resolver can read the source the AX tree didn't expose.
+private func thinAxState() -> CuaWindowState {
+    CuaWindowState(
+        surface: focusedWindow(), capturedAt: "2026-06-22T12:00:00.000Z",
+        elementCount: 1,
+        elements: [CuaElement(id: "c0", index: 0, role: "AXGroup", label: "Canvas", value: nil)])
+}
+
+/// A RICH AX state (U6): many readable elements (≥ `minReadableTextElements`), so the resolve stays
+/// text-only (Phase 1) and NO vision screenshot is captured.
+private func richAxState() -> CuaWindowState {
+    let elements = (0..<7).map { index in
+        CuaElement(id: "e\(index)", index: index, role: "AXStaticText",
+                   label: "Paragraph \(index) of the article body", value: nil)
+    }
+    return CuaWindowState(
+        surface: focusedWindow(), capturedAt: "2026-06-22T12:00:00.000Z",
+        elementCount: elements.count, elements: elements)
+}
+
 /// A reversible click that cites the battery row by token AND index + pid/window_id (so risk derives
 /// the element and it auto-runs, and `clickTargetKey`/coordinate fallback can resolve it).
 private let clickBatteryArgs = #"{"element_index":0,"element_token":"s0001:0","pid":42,"window_id":7}"#
@@ -208,7 +249,7 @@ private func makeLoop(
 ) -> VoiceCuaLoop {
     VoiceCuaLoop(
         driver: driver,
-        resolve: { input, createdAt, _ in await resolver.resolve(input, createdAt) },
+        resolve: { input, createdAt, _, screenshot in await resolver.resolve(input, createdAt, screenshot) },
         now: { "2026-06-22T12:00:00.000Z" },
         targetResolveDelayMs: 0,
         toolCallBudget: toolCallBudget,
@@ -626,5 +667,98 @@ struct VoiceCuaLoopTests {
 
         #expect(isClarification(loop.intent))
         #expect(blockedReason(loop.intent)?.contains("Screen Recording") == true)
+    }
+
+    // U6 read-source (a): a THIN AX observation captures exactly ONE vision screenshot and hands it to
+    // the resolver, so the model can read the source the sparse AX tree didn't expose.
+    @Test func thinAxObservationCapturesOneScreenshotForResolver() async {
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: thinAxState())
+        let resolver = ScriptedResolver([done()])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("summarize this"))
+
+        #expect(await driver.screenshotsTaken() == 1)                            // exactly one capture
+        #expect(await resolver.seenScreenshots().compactMap { $0 }.count == 1)   // resolver got the image
+        #expect(isSatisfied(loop.intent))
+    }
+
+    // U6 read-source (b): a RICH AX observation stays text-only — no screenshot is captured and the
+    // resolver receives no image (Phase 1 behavior preserved when the AX tree is readable).
+    @Test func richAxObservationSkipsScreenshot() async {
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: richAxState())
+        let resolver = ScriptedResolver([done()])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("summarize this"))
+
+        #expect(await driver.screenshotsTaken() == 0)
+        #expect(await resolver.seenScreenshots().compactMap { $0 }.isEmpty)
+        #expect(isSatisfied(loop.intent))
+    }
+
+    // U6 read-source (c): a capture FAILURE (Screen Recording not granted) degrades to an AX-only
+    // resolve — the resolver gets no image, the loop keeps driving the goal, and nothing crashes.
+    @Test func screenshotFailureDegradesToAxOnlyResolve() async {
+        let driver = FakeLoopDriver(
+            windows: [focusedWindow()], windowState: thinAxState(), screenshotFails: true)
+        let resolver = ScriptedResolver([act("scroll"), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("scroll then summarize"))
+
+        // Both ticks were thin → two capture ATTEMPTS, both failed; the resolver saw no image and the
+        // goal still completed via the AX-only path (graceful degradation, no crash).
+        #expect(await driver.screenshotsTaken() == 2)
+        #expect(await resolver.seenScreenshots().compactMap { $0 }.isEmpty)
+        #expect(await driver.recordedCalls() == ["scroll"])
+        #expect(isSatisfied(loop.intent))
+        #expect(loop.session?.status == .succeeded)
+    }
+
+    // U10 stale-element guard: a driver error that names an UNKNOWN/STALE element token is a normal
+    // failed observation — the loop re-observes and re-resolves against the fresh snapshot, and a
+    // subsequent fresh-observation action proceeds. Never a terminal goal failure.
+    @Test func staleElementClickErrorReObservesAndRecovers() async {
+        let driver = FakeLoopDriver(
+            windows: [focusedWindow()], windowState: batteryState(),
+            callResults: [
+                "click": .failed(error: "cua-driver: unknown element token s0001:0 (stale snapshot)"),
+                "click@coord": .failed(error: "cua-driver: unknown element token s0001:0 (stale snapshot)"),
+            ])
+        // The stale click fails (both AX and coordinate); the loop re-observes and the resolver issues
+        // a fresh action (scroll) that proceeds, then done.
+        let resolver = ScriptedResolver([
+            act("click", args: clickBatteryArgs),
+            act("scroll"),
+            done(),
+        ])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("open battery then scroll"))
+
+        // AX click + coordinate fallback both failed on the stale token, then the fresh re-resolve ran.
+        #expect(await driver.recordedCalls() == ["click", "click", "scroll"])
+        #expect(isSatisfied(loop.intent))            // recovered — not a terminal failure
+        #expect(loop.session?.status == .succeeded)
+    }
+
+    // U6 + regression (e): a normally-progressing multi-step goal over a thin AX surface still
+    // completes — the per-tick vision capture is additive and never disrupts a working loop (one
+    // capture per thin tick; the goal advances scroll → type → done exactly as before U6).
+    @Test func thinAxVisionDoesNotRegressProgressingMultiStepGoal() async {
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: thinAxState())
+        let resolver = ScriptedResolver([act("scroll"), act("type_text", args: #"{"text":"hi"}"#), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("scroll then type"))
+
+        #expect(await driver.recordedCalls() == ["scroll", "type_text"])
+        #expect(isSatisfied(loop.intent))
+        #expect(loop.session?.status == .succeeded)
+        // Three ticks (scroll, type_text, done) each saw a thin surface → three vision captures, and
+        // the resolver received an image on each — proof the U6 turn ran without blocking progress.
+        #expect(await driver.screenshotsTaken() == 3)
+        #expect(await resolver.seenScreenshots().compactMap { $0 }.count == 3)
     }
 }

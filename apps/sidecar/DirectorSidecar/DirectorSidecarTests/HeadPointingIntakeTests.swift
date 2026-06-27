@@ -297,7 +297,7 @@ struct HeadPointingIntakeTests {
         let resolver = RecordingResolver()
         let loop = VoiceCuaLoop(
             driver: driver,
-            resolve: { input, createdAt, _ in await resolver.resolve(input, createdAt) },
+            resolve: { input, createdAt, _, _ in await resolver.resolve(input, createdAt) },
             intake: HeadPointingIntake(snapshot: snapshot, driver: driver),
             now: { "2026-06-25T12:00:00.000Z" },
             targetResolveDelayMs: 0)
@@ -323,7 +323,10 @@ struct HeadPointingIntakeTests {
 
         let input = await intake.makeInput(for: finalTranscript("click that"), sessionId: "s1")
         let messages = NextToolCallPrompt.buildMessages(input, tools: [])
-        let userMessage = messages.first { $0.role == "user" }?.content ?? ""
+        guard let userContent = messages.first(where: { $0.role == "user" })?.content,
+              case let .text(userMessage) = userContent else {
+            Issue.record("expected a text-content user turn"); return
+        }
 
         #expect(userMessage.contains(#""id":"looked-at""#))   // the looked-at window is a candidate…
         #expect(userMessage.contains(#""source":"head""#))    // …attributed to the head cue, for the model to act on
@@ -354,7 +357,7 @@ struct HeadPointingIntakeTests {
         let resolver = RecordingResolver()
         let loop = VoiceCuaLoop(
             driver: driver,
-            resolve: { input, createdAt, _ in await resolver.resolve(input, createdAt) },
+            resolve: { input, createdAt, _, _ in await resolver.resolve(input, createdAt) },
             intake: HeadPointingIntake(
                 snapshot: HeadPointSnapshot(), driver: driver,
                 gesture: gestureSnapshot(gestureReferent(surfaceId: "pointed-at"))),
@@ -378,7 +381,10 @@ struct HeadPointingIntakeTests {
 
         let input = await intake.makeInput(for: finalTranscript("click that"), sessionId: "s1")
         let messages = NextToolCallPrompt.buildMessages(input, tools: [])
-        let userMessage = messages.first { $0.role == "user" }?.content ?? ""
+        guard let userContent = messages.first(where: { $0.role == "user" })?.content,
+              case let .text(userMessage) = userContent else {
+            Issue.record("expected a text-content user turn"); return
+        }
 
         #expect(userMessage.contains(#""id":"pointed-at""#))   // the pointed-at surface is a candidate…
         #expect(userMessage.contains(#""source":"gesture""#))  // …attributed to the gesture cue
@@ -392,7 +398,7 @@ struct HeadPointingIntakeTests {
         let resolver = RecordingResolver()
         let loop = VoiceCuaLoop(
             driver: driver,
-            resolve: { input, createdAt, _ in await resolver.resolve(input, createdAt) },
+            resolve: { input, createdAt, _, _ in await resolver.resolve(input, createdAt) },
             intake: HeadPointingIntake(snapshot: HeadPointSnapshot(), driver: driver),
             now: { "2026-06-25T12:00:00.000Z" },
             targetResolveDelayMs: 0)
