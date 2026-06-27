@@ -2,7 +2,8 @@ import { z } from "zod";
 
 const forbiddenField = /credential|password|prompt|raw|screenshot|secret|token|transcript/i;
 
-const attributeValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const finiteNumberSchema = z.number().finite();
+const attributeValueSchema = z.union([z.string(), finiteNumberSchema, z.boolean(), z.null()]);
 
 const attributesSchema = z
   .record(z.string().min(1), attributeValueSchema)
@@ -31,13 +32,13 @@ export const observabilityRecordSchema = z.discriminatedUnion("kind", [
   baseRecordSchema.extend({
     kind: z.literal("span"),
     parentSpanId: z.string().min(1).optional(),
-    durationMs: z.number().nonnegative().optional(),
+    durationMs: finiteNumberSchema.nonnegative().optional(),
     status: z.enum(["ok", "error"]).default("ok"),
   }),
   baseRecordSchema.extend({
     kind: z.literal("metric"),
     name: z.string().min(1),
-    value: z.number(),
+    value: finiteNumberSchema,
     unit: z.string().min(1).optional(),
   }),
   baseRecordSchema.extend({

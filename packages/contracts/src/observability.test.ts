@@ -43,6 +43,33 @@ describe("observability record contract", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects non-finite numeric fields before records reach a sink", () => {
+    expect(
+      safeParseObservabilityRecord({
+        ...base,
+        kind: "metric",
+        name: "cua.failure.count",
+        value: Number.NaN,
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParseObservabilityRecord({
+        ...base,
+        kind: "span",
+        status: "ok",
+        durationMs: Number.POSITIVE_INFINITY,
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParseObservabilityRecord({
+        ...base,
+        kind: "log",
+        level: "info",
+        attributes: { latency_ms: Number.NEGATIVE_INFINITY },
+      }).success,
+    ).toBe(false);
+  });
+
   it("fetches exact records from the local test sink", () => {
     const sink = new ObservabilityMemorySink();
     const record: ObservabilityRecord = {
