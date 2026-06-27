@@ -147,11 +147,20 @@ struct AgentReplayBufferSnapshot: Codable, Equatable, Sendable {
 final class AgentReplayStore {
     private let url: URL
     private let fileManager: FileManager
+    private let persistenceQueue: DispatchQueue
     private var cached: AgentReplayBufferSnapshot
 
-    init(url: URL, fileManager: FileManager = .default) {
+    init(
+        url: URL,
+        fileManager: FileManager = .default,
+        persistenceQueue: DispatchQueue = DispatchQueue(
+            label: "com.handsoff.agent-replay.persistence",
+            qos: .utility
+        )
+    ) {
         self.url = url
         self.fileManager = fileManager
+        self.persistenceQueue = persistenceQueue
         guard fileManager.fileExists(atPath: url.path) else {
             cached = AgentReplayBufferSnapshot()
             return
@@ -211,18 +220,31 @@ final class AgentReplayStore {
     }
 
     private func persist() {
-        do {
-            try fileManager.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            let data = try JSONEncoder().encode(cached)
-            try data.write(to: url, options: .atomic)
-        } catch {
-            DirectorDiagnostics.loop.error(
-                "agent replay persist failed error=\(String(reflecting: type(of: error)), privacy: .public)"
-            )
-            assertionFailure("Unable to persist Agent Replay buffer")
+        let snapshot = cached
+        let url = url
+        let fileManager = fileManager
+        persistenceQueue.async {
+            do {
+                try fileManager.createDirectory(
+                    at: url.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                let data = try JSONEncoder().encode(snapshot)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                DirectorDiagnostics.loop.error(
+                    "agent replay persist failed error=\(String(reflecting: type(of: error)), privacy: .public)"
+                )
+                assertionFailure("Unable to persist Agent Replay buffer")
+            }
+        }
+    }
+
+    func flushPersistence() async {
+        await withCheckedContinuation { continuation in
+            persistenceQueue.async {
+                continuation.resume()
+            }
         }
     }
 }

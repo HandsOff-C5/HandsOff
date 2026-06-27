@@ -90,7 +90,7 @@ private func replayInput(_ text: String = "scroll") -> Contracts.IntentInput {
 
 @MainActor
 struct AgentReplayStoreTests {
-    @Test func persistsPendingEventsAndContinuesStableSeqAfterRestart() throws {
+    @Test func persistsPendingEventsAndContinuesStableSeqAfterRestart() async throws {
         let url = tempReplayURL()
         let store = AgentReplayStore(url: url)
         let first = try store.append(
@@ -111,10 +111,13 @@ struct AgentReplayStoreTests {
         #expect(second.seq == 1)
         #expect(second.eventId == "session-1:1:transcript_final")
 
+        await store.flushPersistence()
         let restored = AgentReplayStore(url: url)
         #expect(restored.pendingEvents() == [first, second])
         restored.markAccepted(eventIds: [first.eventId])
         #expect(restored.pendingEvents() == [second])
+        await restored.flushPersistence()
+        #expect(AgentReplayStore(url: url).pendingEvents() == [second])
 
         let third = try restored.append(
             sessionId: "session-1",
