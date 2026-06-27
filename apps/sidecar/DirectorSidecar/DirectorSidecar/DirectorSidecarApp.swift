@@ -115,13 +115,21 @@ struct DirectorSidecarApp: App {
     /// the face + hand plugins). The live face/hand owner — hand drives the `.user` cursor, face
     /// drives the gaze region — replacing the separate `HeadPointerService`/`HandLandmarkerService`
     /// camera path (those stay on disk, unused). Held for the app's whole run.
-    private let perception: PerceptionService
+    private let perception: PerceptionService?
     /// C1 fix: the global fn (Globe) capture trigger — a session-wide CGEventTap, so hold-fn-and-speak
     /// works while ANOTHER app is frontmost (the whole hands-off entry point). Replaces the old local
     /// `NSEvent` monitor that only fired while Director itself was the active app. Held for the run.
     private let fnHotkey: FnHotkeyService
 
     init() {
+        // The unit-test target is HOSTED in this app, so launching to run the tests fires this
+        // init(). On a headless CI runner AVFCore is broken (`_kFigVideoQueueNotification_Failed`
+        // missing → 0xBAD4007), so eagerly constructing the camera (PerceptionService → CameraBus →
+        // AVCaptureSession) crashes the host — which xcodebuild restarts per test, a multi-hour
+        // crash-loop. Under XCTest, skip every live service so the host never touches the camera;
+        // unit tests construct exactly what they need directly.
+        let isRunningUnderTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
         let store = BridgeStore()
         let hud = HUDModel()
         let micro = MicroHUDModel()
@@ -321,11 +329,13 @@ struct DirectorSidecarApp: App {
         //   • face → the gaze region (`gazeFocus` topic)         + the head-point intent snapshot
         // The bridge callbacks arrive on the main thread (PerceptionService marshals them); the two
         // snapshots are lock-protected. Wire all four before sensing turns on.
-        let perception = PerceptionService()
-        perception.onCursorPosition = { payload in dispatch(.cursor(pointers: payload.pointers)) }
-        perception.onGazeFocus = { gaze in dispatch(.gaze(gaze)) }
-        perception.onFaceEvidence = { point in headSnapshot.record(point) }
-        perception.onHandEvidence = { referent in gestureSnapshot.record(referent) }
+        // Skip the camera owner entirely under XCTest — constructing it builds an AVCaptureSession
+        // (CameraBus), which crashes the hosted test host on the headless CI runner (broken AVFCore).
+        let perception: PerceptionService? = isRunningUnderTests ? nil : PerceptionService()
+        perception?.onCursorPosition = { payload in dispatch(.cursor(pointers: payload.pointers)) }
+        perception?.onGazeFocus = { gaze in dispatch(.gaze(gaze)) }
+        perception?.onFaceEvidence = { point in headSnapshot.record(point) }
+        perception?.onHandEvidence = { referent in gestureSnapshot.record(referent) }
 
         // Listening toggle (the "fn" of this build): brings the three active overlays up/down. In
         // mock mode it (re)runs the activation loop on each ON; OFF cancels it and clears them.
@@ -355,12 +365,12 @@ struct DirectorSidecarApp: App {
             } else {
                 if on { engine.refreshReadiness() } // re-probe TCC the moment mic/speech matter
                 coordinator.setSensing(on)  // STT lifecycle
-                perception.setSensing(on)   // the one camera: hand → cursor, face → gaze
+                perception?.setSensing(on)   // the one camera: hand → cursor, face → gaze
             }
             #else
             if on { engine.refreshReadiness() } // re-probe TCC the moment mic/speech matter
             coordinator.setSensing(on)  // STT lifecycle
-            perception.setSensing(on)   // the one camera: hand → cursor, face → gaze
+            perception?.setSensing(on)   // the one camera: hand → cursor, face → gaze
             #endif
         }
 
@@ -426,14 +436,6 @@ struct DirectorSidecarApp: App {
             applyRailEdge: { edge in surfaces.setRailEdge(edge.controllerEdge) }
         ))
 
-        // The unit-test target is HOSTED in this app, so launching to run the tests fires the full
-        // app lifecycle. On a headless CI runner (no camera / accessibility / interactive window
-        // server) the live services — PerceptionService's AVCaptureSession, the fn CGEventTap, the
-        // always-on-top panels — BLOCK, hanging the entire hosted test run (the swift CI job timed
-        // out at ~103m once #157 made PerceptionService the live owner). Skip ALL live startup under
-        // XCTest; unit tests construct exactly what they need directly.
-        let isRunningUnderTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-
         NotificationCenter.default.addObserver(
             forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
         ) { _ in
@@ -464,7 +466,7 @@ struct DirectorSidecarApp: App {
                 // Track F: begin consuming the head-pointer feed for the app's life (camera stays
                 // off until Listening turns sensing on). Deferred to launch alongside the surfaces.
                 coordinator.start()
-                perception.start()  // parity; the camera itself comes up on setSensing(true)
+                perception?.start()  // parity; the camera itself comes up on setSensing(true)
                 // First-run permissions flow: explicitly request speech + microphone + camera so
                 // the OS prompts appear and the app registers in the Speech Recognition pane (which
                 // cannot be pre-granted in System Settings — the app MUST request once). Without
@@ -497,7 +499,7 @@ struct DirectorSidecarApp: App {
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { _ in
-            MainActor.assumeIsolated { coordinator.teardown(); perception.teardown() }
+            MainActor.assumeIsolated { coordinator.teardown(); perception?.teardown() }
         }
 
         #if DEBUG
