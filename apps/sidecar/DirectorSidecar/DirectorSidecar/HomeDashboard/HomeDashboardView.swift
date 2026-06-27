@@ -49,6 +49,11 @@ struct HomeDashboardView: View {
             // it so the gold capsule is the single, intentional container and the waveform floats
             // bare. Pre-26 toolbars don't add that glass, so the plain items are already correct.
             .toolbar {
+                // `.sharedBackgroundVisibility` only exists in the macOS 26 SDK (Xcode 26 / Swift 6.2+),
+                // so it must be gated at COMPILE time, not just with `if #available`. An older toolchain
+                // (CI builds with Xcode 16.4 / Swift 6.1) has no such symbol, so a runtime-only guard
+                // still fails to compile. `#if compiler(>=6.2)` selects the SDK that actually ships it.
+                #if compiler(>=6.2)
                 if #available(macOS 26.0, *) {
                     if store.isListening {
                         ToolbarItem(placement: .primaryAction) {
@@ -61,16 +66,26 @@ struct HomeDashboardView: View {
                     }
                     .sharedBackgroundVisibility(.hidden)
                 } else {
-                    if store.isListening {
-                        ToolbarItem(placement: .primaryAction) {
-                            ListeningWaveform(maxHeight: 13, minHeight: 4)
-                        }
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        ActivateButton(store: store)
-                    }
+                    activationToolbarItems
                 }
+                #else
+                activationToolbarItems
+                #endif
             }
+    }
+
+    /// The Activate control + (while listening) the waveform, as plain toolbar items. Used as-is on
+    /// pre-macOS-26 runtimes and on older SDKs that lack the toolbar glass capsule (and thus
+    /// `.sharedBackgroundVisibility`); the macOS 26 branch above re-states them with the glass dropped.
+    @ToolbarContentBuilder private var activationToolbarItems: some ToolbarContent {
+        if store.isListening {
+            ToolbarItem(placement: .primaryAction) {
+                ListeningWaveform(maxHeight: 13, minHeight: 4)
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            ActivateButton(store: store)
+        }
     }
 
     @ViewBuilder private var tabContent: some View {
