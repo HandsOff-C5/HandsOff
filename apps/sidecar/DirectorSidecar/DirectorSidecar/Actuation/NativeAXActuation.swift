@@ -199,6 +199,19 @@ enum NativeAXActuation {
         }
     }
 
+    /// Synthesizes a Cmd+V (paste) keystroke pair via CGEvent — the Cmd+V dispatch the Clipboard
+    /// layer (FormattedClipboard) relies on for the Beat 1 formatted-drop, kept here in the
+    /// actuation layer per the Clipboard module's contract.
+    static func postPaste() {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let down = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) // 0x09 = 'v'
+        down?.flags = .maskCommand
+        let up   = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+        up?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+    }
+
     private static func label(_ kind: NativeActionKind) -> String {
         switch kind {
         case .click: return "click"
@@ -223,6 +236,7 @@ enum NativeAXActuation {
 enum NativeAXActuation {
     static func perform(_ request: NativeActionRequest) -> NativeActionOutcome { .notResolved }
     static func windowState(pid: Int, windowId: Int, windows: [CuaWindow]) -> CuaWindowState? { nil }
+    static func postPaste() {}
 }
 
 #endif
