@@ -106,7 +106,7 @@ describe("email-capture Worker", () => {
       new Response(JSON.stringify([{ id: "1" }]), { status: 200 }),
     );
     const res = await worker.fetch(
-      new Request("https://x/v1/confirm?token=123e4567-e89b-12d3-a456-426614174000"),
+      new Request("https://x/v1/confirm?token=00000000-0000-4000-8000-000000000000"),
       env,
     );
     expect(res.status).toBe(200);
