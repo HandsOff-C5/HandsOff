@@ -51,8 +51,8 @@ final class VoiceCuaLoop {
 
     // MARK: Engine singletons (the controller's useRef stores)
 
-    private let sessions = SupervisionSessionStore()
-    private let audit = ActionAuditStore()
+    private let sessions: SupervisionSessionStore
+    private let audit: ActionAuditStore
     private var goalRun: GoalRunState?
     /// Armed by the user interrupt; the loop checks it at every await boundary and stops cleanly.
     private var interrupted = false
@@ -68,7 +68,8 @@ final class VoiceCuaLoop {
         intake: any IntentIntake = SpeechOnlyIntake(),
         now: (@Sendable () -> String)? = nil,
         targetResolveDelayMs: Int = VoiceCuaLoop.defaultTargetResolveDelayMs,
-        toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget
+        toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget,
+        replayStore: SupervisionReplayStore? = nil
     ) {
         self.driver = driver
         self.resolve = resolve
@@ -77,6 +78,8 @@ final class VoiceCuaLoop {
         self.nowProvider = now
         self.targetResolveDelayMs = targetResolveDelayMs
         self.defaultToolCallBudget = toolCallBudget
+        self.sessions = SupervisionSessionStore(replay: replayStore)
+        self.audit = ActionAuditStore(replay: replayStore)
     }
 
     // MARK: Public surface (the controller's returned handle)
