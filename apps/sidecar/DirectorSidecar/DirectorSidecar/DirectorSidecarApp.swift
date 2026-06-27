@@ -85,6 +85,11 @@ struct DirectorSidecarApp: App {
     /// binds their start/stop/teardown to the app lifecycle. Held for the app's whole run.
     private let services: DirectorServices
     private let coordinator: ServiceCoordinator
+    /// Face/hand migration: the single app-owned camera service (one `AVCaptureSession`, fanned to
+    /// the face + hand plugins). The live face/hand owner — hand drives the `.user` cursor, face
+    /// drives the gaze region — replacing the separate `HeadPointerService`/`HandLandmarkerService`
+    /// camera path (those stay on disk, unused). Held for the app's whole run.
+    private let perception: PerceptionService
     /// C1 fix: the global fn (Globe) capture trigger — a session-wide CGEventTap, so hold-fn-and-speak
     /// works while ANOTHER app is frontmost (the whole hands-off entry point). Replaces the old local
     /// `NSEvent` monitor that only fired while Director itself was the active app. Held for the run.
@@ -180,19 +185,34 @@ struct DirectorSidecarApp: App {
 
         // The loop's transcript trigger: live STT `.final` events start a goal; partial/final also
         // surface as HUD transcript frames. (Track F bound the mic lifecycle; this is its consumer.)
+        // Face/hand migration: SPEECH-ONLY coordinator. `PerceptionService` (below) is now the live
+        // camera owner for face + hand, so the coordinator no longer drives the legacy head/hand
+        // cameras — it is constructed with an idle head sensor and `hand: nil`, keeping only the STT
+        // lifecycle (`onSpeech` → engine). The ported `gestureLoop`/`gestureSurfaces` are still passed
+        // (inert without a hand sensor) so the old hand-gesture wiring is preserved, not deleted.
         let coordinator = ServiceCoordinator(
-            services: services,
+            head: IdleHeadSensing(),
+            speech: services.speech,
+            hand: nil,
             loop: gestureLoop,
             gestureSurfaces: gestureSurfaces,
-            onHeadPointer: { pointer in dispatch(.cursor(pointers: [pointer])) },
-            onHeadPoint: { point in headSnapshot.record(point) },
+            onHeadPointer: { _ in },
+            onHeadPoint: { _ in },
             onSpeech: { event in engine.ingestSpeech(event) },
-            // The hand's wrist-ray drives the SAME `.user` cursor (the coordinator suppresses the
-            // head cursor while a hand is present), and the locked referent / cursor lands in the
-            // shared snapshot the loop's `HeadPointingIntake` reads at goal start.
-            onGesturePointer: { pointer in dispatch(.cursor(pointers: [pointer])) },
-            onGestureReferent: { referent in gestureSnapshot.record(referent) }
+            onGesturePointer: { _ in },
+            onGestureReferent: { _ in }
         )
+
+        // Face/hand migration: the one camera owner. Fans each frame to the face + hand plugins:
+        //   • hand → the `.user` cursor (`cursorPosition` topic) + the gesture intent snapshot
+        //   • face → the gaze region (`gazeFocus` topic)         + the head-point intent snapshot
+        // The bridge callbacks arrive on the main thread (PerceptionService marshals them); the two
+        // snapshots are lock-protected. Wire all four before sensing turns on.
+        let perception = PerceptionService()
+        perception.onCursorPosition = { payload in dispatch(.cursor(pointers: payload.pointers)) }
+        perception.onGazeFocus = { gaze in dispatch(.gaze(gaze)) }
+        perception.onFaceEvidence = { point in headSnapshot.record(point) }
+        perception.onHandEvidence = { referent in gestureSnapshot.record(referent) }
 
         // Listening toggle (the "fn" of this build): brings the three active overlays up/down. In
         // mock mode it (re)runs the activation loop on each ON; OFF cancels it and clears them.
@@ -221,11 +241,13 @@ struct DirectorSidecarApp: App {
                 }
             } else {
                 if on { engine.refreshReadiness() } // re-probe TCC the moment mic/speech matter
-                coordinator.setSensing(on) // real head pointer + mic drive the Director cursor
+                coordinator.setSensing(on)  // STT lifecycle
+                perception.setSensing(on)   // the one camera: hand → cursor, face → gaze
             }
             #else
             if on { engine.refreshReadiness() } // re-probe TCC the moment mic/speech matter
-            coordinator.setSensing(on) // real head pointer + mic drive the Director cursor
+            coordinator.setSensing(on)  // STT lifecycle
+            perception.setSensing(on)   // the one camera: hand → cursor, face → gaze
             #endif
         }
 
@@ -251,6 +273,7 @@ struct DirectorSidecarApp: App {
         self.rail = rail
         self.services = services
         self.coordinator = coordinator
+        self.perception = perception
 
         // C1 fix: own the global fn capture trigger. Started at launch (its CGEventTap + permission
         // prompts must come up after AppKit finishes wiring event routing), with its phase stream
@@ -283,6 +306,7 @@ struct DirectorSidecarApp: App {
                 // Track F: begin consuming the head-pointer feed for the app's life (camera stays
                 // off until Listening turns sensing on). Deferred to launch alongside the surfaces.
                 coordinator.start()
+                perception.start()  // parity; the camera itself comes up on setSensing(true)
                 // First-run permissions flow: explicitly request speech + microphone + camera so
                 // the OS prompts appear and the app registers in the Speech Recognition pane (which
                 // cannot be pre-granted in System Settings — the app MUST request once). Without
@@ -311,7 +335,7 @@ struct DirectorSidecarApp: App {
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { _ in
-            MainActor.assumeIsolated { coordinator.teardown() }
+            MainActor.assumeIsolated { coordinator.teardown(); perception.teardown() }
         }
 
         #if DEBUG
