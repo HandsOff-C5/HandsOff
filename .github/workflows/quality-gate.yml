@@ -84,6 +84,7 @@ jobs:
     # version, pin it with maxim-lobanov/setup-xcode.
     runs-on: macos-latest
     continue-on-error: true
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: apps/sidecar/DirectorSidecar
@@ -97,4 +98,5 @@ jobs:
             -scheme DirectorSidecar \
             -destination 'platform=macOS' \
             -only-testing:DirectorSidecarTests \
+            -parallel-testing-enabled NO \
             CODE_SIGNING_ALLOWED=NO

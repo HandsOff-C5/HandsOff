@@ -48,11 +48,12 @@ final class VoiceCuaLoop {
     private let nowProvider: (@Sendable () -> String)?
     private let targetResolveDelayMs: Int
     private let defaultToolCallBudget: Int
+    private let observability: ObservabilityClient?
 
     // MARK: Engine singletons (the controller's useRef stores)
 
-    private let sessions = SupervisionSessionStore()
-    private let audit = ActionAuditStore()
+    private let sessions: SupervisionSessionStore
+    private let audit: ActionAuditStore
     private var goalRun: GoalRunState?
     /// Armed by the user interrupt; the loop checks it at every await boundary and stops cleanly.
     private var interrupted = false
@@ -68,7 +69,9 @@ final class VoiceCuaLoop {
         intake: any IntentIntake = SpeechOnlyIntake(),
         now: (@Sendable () -> String)? = nil,
         targetResolveDelayMs: Int = VoiceCuaLoop.defaultTargetResolveDelayMs,
-        toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget
+        toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget,
+        replayStore: SupervisionReplayStore? = nil,
+        observability: ObservabilityClient? = nil
     ) {
         self.driver = driver
         self.resolve = resolve
@@ -77,6 +80,9 @@ final class VoiceCuaLoop {
         self.nowProvider = now
         self.targetResolveDelayMs = targetResolveDelayMs
         self.defaultToolCallBudget = toolCallBudget
+        self.observability = observability
+        self.sessions = SupervisionSessionStore(replay: replayStore)
+        self.audit = ActionAuditStore(replay: replayStore)
     }
 
     // MARK: Public surface (the controller's returned handle)
@@ -123,7 +129,14 @@ final class VoiceCuaLoop {
             failedSignatures: FailedActionMemory())
         goalRun = run
         session = started
+        let startedSessionId = started.id
+        let startedAttributes: [String: ObservabilityAttributeValue] = [
+            "speech_chars": .number(Double(finalTranscript.text.count)),
+            "confidence": .number(finalTranscript.confidence),
+            "latency_ms": .number(Double(finalTranscript.latencyMs)),
+        ]
         await continueGoal(run, createdAt)
+        await recordSessionStartedObservability(sessionId: startedSessionId, attributes: startedAttributes)
     }
 
     // MARK: Observation
@@ -262,7 +275,9 @@ final class VoiceCuaLoop {
         if stopIfInterrupted(run, input, at: timestamp()) { return }
 
         let tools = await catalog.loadedTools()
+        let resolveStartedAt = Date()
         let resolved = await resolve(input, createdAt, tools)
+        let resolveDurationMs = Date().timeIntervalSince(resolveStartedAt) * 1000
         if stopIfInterrupted(run, input, at: timestamp()) { return }
         DirectorDiagnostics.loop.info("resolver returned \(Self.intentSummary(resolved), privacy: .public)")
 
@@ -279,15 +294,33 @@ final class VoiceCuaLoop {
         intent = next
         if !next.isSatisfied { runResult = nil }
         recordIntent(run.sessionId, createdAt, next)
+        let resolverSessionId = run.sessionId
+        let resolverTick = run.nextTick
+        let resolverToolCount = tools.count
+        let resolverStatus = Self.observabilityIntentStatus(next)
 
         if next.isSatisfied {
             DirectorDiagnostics.loop.info("goal satisfied session=\(run.sessionId, privacy: .public)")
             finishGoal(run, .succeeded, createdAt)
+            await recordResolverObservability(
+                sessionId: resolverSessionId,
+                tick: resolverTick,
+                toolCount: resolverToolCount,
+                status: resolverStatus,
+                durationMs: resolveDurationMs
+            )
             return
         }
         guard case let .ready(readyNext) = next else {
             DirectorDiagnostics.loop.warning("goal blocked session=\(run.sessionId, privacy: .public) \(Self.intentSummary(next), privacy: .public)")
             finishGoal(run, .blocked, createdAt)
+            await recordResolverObservability(
+                sessionId: resolverSessionId,
+                tick: resolverTick,
+                toolCount: resolverToolCount,
+                status: resolverStatus,
+                durationMs: resolveDurationMs
+            )
             return
         }
 
@@ -308,9 +341,23 @@ final class VoiceCuaLoop {
         // held by returning here with the ready intent set — `approve()` resumes, `reject()` ends.
         if readyNext.riskLevel.requiresApproval {
             DirectorDiagnostics.loop.notice("approval required session=\(run.sessionId, privacy: .public) risk=\(readyNext.riskLevel.rawValue, privacy: .public)")
+            await recordResolverObservability(
+                sessionId: resolverSessionId,
+                tick: resolverTick,
+                toolCount: resolverToolCount,
+                status: resolverStatus,
+                durationMs: resolveDurationMs
+            )
             return
         }
         await runGoalAction(nextRun, readyNext, observation)
+        await recordResolverObservability(
+            sessionId: resolverSessionId,
+            tick: resolverTick,
+            toolCount: resolverToolCount,
+            status: resolverStatus,
+            durationMs: resolveDurationMs
+        )
     }
 
     private func runGoalAction(
@@ -333,6 +380,15 @@ final class VoiceCuaLoop {
             recordToolCalls(run, readyIntent, observation, approvalState, result, runningAt)
             runResult = PlanRunResult(status: .blocked, result: result)
             finishGoal(run, .blocked, runningAt)
+            await recordActionObservability(
+                sessionId: run.sessionId,
+                actionCount: readyIntent.actionPlan.actionPlan.count,
+                risk: readyIntent.riskLevel.rawValue,
+                actionResult: result,
+                approval: approved ? "approved" : "auto",
+                status: "blocked",
+                errorClass: "RepeatedActionBlocked"
+            )
             return
         }
 
@@ -345,6 +401,15 @@ final class VoiceCuaLoop {
             recordToolCalls(run, readyIntent, observation, approvalState, blocked, runningAt)
             runResult = PlanRunResult(status: .blocked, result: blocked)
             finishGoal(run, .blocked, runningAt)
+            await recordActionObservability(
+                sessionId: run.sessionId,
+                actionCount: readyIntent.actionPlan.actionPlan.count,
+                risk: readyIntent.riskLevel.rawValue,
+                actionResult: blocked,
+                approval: approved ? "approved" : "auto",
+                status: "blocked",
+                errorClass: "CuaActionBlocked"
+            )
             return
         }
 
@@ -368,6 +433,15 @@ final class VoiceCuaLoop {
             // Remember a failed (tool,args) so the dedup guard won't re-dispatch it next turn.
             failedSignatures: run.failedSignatures.recording(failedSignature))
         goalRun = ranRun
+        await recordActionObservability(
+            sessionId: run.sessionId,
+            actionCount: readyIntent.actionPlan.actionPlan.count,
+            risk: readyIntent.riskLevel.rawValue,
+            actionResult: actionResult,
+            approval: approved ? "approved" : "auto",
+            status: Self.observabilityActionStatus(actionResult),
+            errorClass: Self.observabilityActionErrorClass(actionResult)
+        )
 
         if stopIfInterrupted(ranRun, readyIntent.input, at: timestamp()) { return }
 
@@ -405,12 +479,31 @@ final class VoiceCuaLoop {
     func approve() async {
         guard case let .ready(ready) = intent, session != nil, let run = goalRun else { return }
         DirectorDiagnostics.loop.notice("approval accepted session=\(run.sessionId, privacy: .public)")
+        let sessionId = run.sessionId
+        let attributes: [String: ObservabilityAttributeValue] = [
+            "risk": .string(ready.riskLevel.rawValue),
+            "action_count": .number(Double(ready.actionPlan.actionPlan.count)),
+        ]
         await runGoalAction(run, ready, run.observations.last, approved: true)
+        await recordObservability { client in
+            try await client.analytics(
+                stage: .planApproved,
+                event: "plan.approved",
+                sessionId: sessionId,
+                correlationId: sessionId,
+                attributes: attributes
+            )
+        }
     }
 
     func reject() async {
         guard case let .ready(ready) = intent, let currentSession = session else { return }
         let decidedAt = timestamp()
+        let sessionId = currentSession.id
+        let attributes: [String: ObservabilityAttributeValue] = [
+            "risk": .string(ready.riskLevel.rawValue),
+            "action_count": .number(Double(ready.actionPlan.actionPlan.count)),
+        ]
         // Rejection runs NOTHING: no tool call is dispatched. Record the rejected call(s) for the
         // audit trail and end the session rejected.
         let rejected = Contracts.CuaActionResult.blocked(reason: "Rejected before execution", state: nil)
@@ -425,6 +518,15 @@ final class VoiceCuaLoop {
         goalRun = nil
         runResult = PlanRunResult(status: .rejected)
         auditEvents = audit.forSession(currentSession.id)
+        await recordObservability { client in
+            try await client.analytics(
+                stage: .planRejected,
+                event: "plan.rejected",
+                sessionId: sessionId,
+                correlationId: sessionId,
+                attributes: attributes
+            )
+        }
     }
 
     /// Always-available interrupt (KD6): cancel the in-flight loop, clear the pending-approval
@@ -469,6 +571,139 @@ final class VoiceCuaLoop {
         try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
     }
 
+    private func recordSessionStartedObservability(
+        sessionId: String,
+        attributes: [String: ObservabilityAttributeValue]
+    ) async {
+        await recordObservability { client in
+            try await client.log(
+                .info,
+                event: "goal.session_started",
+                sessionId: sessionId,
+                correlationId: sessionId,
+                attributes: attributes
+            )
+            try await client.analytics(
+                stage: .sessionStarted,
+                event: "session.started",
+                sessionId: sessionId,
+                correlationId: sessionId,
+                attributes: attributes
+            )
+        }
+    }
+
+    private func recordResolverObservability(
+        sessionId: String,
+        tick: Int,
+        toolCount: Int,
+        status: String,
+        durationMs: Double
+    ) async {
+        await recordObservability { client in
+            let attributes: [String: ObservabilityAttributeValue] = [
+                "tick": .number(Double(tick)),
+                "tool_catalog_size": .number(Double(toolCount)),
+                "status": .string(status),
+            ]
+            try await client.span(
+                event: "resolver.resolve",
+                sessionId: sessionId,
+                correlationId: sessionId,
+                traceId: "goal-\(sessionId)",
+                spanId: "resolve-\(tick)",
+                durationMs: durationMs,
+                status: .ok,
+                attributes: attributes
+            )
+            try await client.metric(
+                name: "command_to_plan_ms",
+                value: durationMs,
+                unit: "ms",
+                event: "resolver.latency",
+                sessionId: sessionId,
+                correlationId: sessionId,
+                attributes: attributes
+            )
+        }
+    }
+
+    private func recordActionObservability(
+        sessionId: String,
+        actionCount: Int,
+        risk: String,
+        actionResult: Contracts.CuaActionResult,
+        approval: String,
+        status: String,
+        errorClass: String?
+    ) async {
+        await recordObservability { client in
+            let attributes: [String: ObservabilityAttributeValue] = [
+                "approval": .string(approval),
+                "risk": .string(risk),
+                "status": .string(status),
+            ]
+            try await client.metric(
+                name: "cua_action_count",
+                value: Double(actionCount),
+                unit: "count",
+                event: "action.count",
+                sessionId: sessionId,
+                correlationId: sessionId,
+                attributes: attributes
+            )
+            switch actionResult {
+            case .succeeded:
+                try await client.analytics(
+                    stage: .actionCompleted,
+                    event: "action.completed",
+                    sessionId: sessionId,
+                    correlationId: sessionId,
+                    attributes: attributes
+                )
+            case .blocked, .failed:
+                try await client.metric(
+                    name: "cua_failure_count",
+                    value: 1,
+                    unit: "count",
+                    event: "action.failure",
+                    sessionId: sessionId,
+                    correlationId: sessionId,
+                    attributes: attributes
+                )
+                try await client.analytics(
+                    stage: .actionFailed,
+                    event: "action.failed",
+                    sessionId: sessionId,
+                    correlationId: sessionId,
+                    attributes: attributes
+                )
+                if let errorClass {
+                    let event = status == "blocked" ? "driver.call.blocked" : "driver.call.failed"
+                    try await client.error(
+                        event: event,
+                        errorClass: errorClass,
+                        handled: true,
+                        sessionId: sessionId,
+                        correlationId: sessionId,
+                        attributes: attributes
+                    )
+                }
+            }
+        }
+    }
+
+    private func recordObservability(
+        _ emit: (ObservabilityClient) async throws -> Void
+    ) async {
+        guard let observability else { return }
+        do {
+            try await emit(observability)
+        } catch {
+            DirectorDiagnostics.loop.error("observability emit failed type=\(String(reflecting: type(of: error)), privacy: .public)")
+        }
+    }
+
     private static func intentSummary(_ intent: Contracts.ResolvedIntent) -> String {
         switch intent {
         case let .ready(ready):
@@ -488,6 +723,31 @@ final class VoiceCuaLoop {
         case let .succeeded(summary, _): return "succeeded \(DirectorDiagnostics.clipped(summary, max: 160))"
         case let .failed(error, _): return "failed \(DirectorDiagnostics.clipped(error, max: 160))"
         case let .blocked(reason, _): return "blocked \(DirectorDiagnostics.clipped(reason, max: 160))"
+        }
+    }
+
+    private static func observabilityIntentStatus(_ intent: Contracts.ResolvedIntent) -> String {
+        switch intent {
+        case .ready: return "ready"
+        case .needsClarification: return "clarification_required"
+        case .blocked: return "blocked"
+        case .satisfied: return "satisfied"
+        }
+    }
+
+    private static func observabilityActionStatus(_ result: Contracts.CuaActionResult) -> String {
+        switch result {
+        case .succeeded: return "succeeded"
+        case .failed: return "failed"
+        case .blocked: return "blocked"
+        }
+    }
+
+    private static func observabilityActionErrorClass(_ result: Contracts.CuaActionResult) -> String? {
+        switch result {
+        case .succeeded: return nil
+        case .failed: return "CuaActionFailure"
+        case .blocked: return "CuaActionBlocked"
         }
     }
 }
