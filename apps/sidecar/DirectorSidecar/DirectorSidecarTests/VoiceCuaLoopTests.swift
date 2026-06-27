@@ -122,14 +122,16 @@ private let launchFooBarArgs = #"{"app_name":"FooBar"}"#
 private func makeLoop(
     driver: FakeLoopDriver,
     resolver: ScriptedResolver,
-    toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget
+    toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget,
+    observability: ObservabilityClient? = nil
 ) -> VoiceCuaLoop {
     VoiceCuaLoop(
         driver: driver,
         resolve: { input, createdAt, _ in await resolver.resolve(input, createdAt) },
         now: { "2026-06-22T12:00:00.000Z" },
         targetResolveDelayMs: 0,
-        toolCallBudget: toolCallBudget)
+        toolCallBudget: toolCallBudget,
+        observability: observability)
 }
 
 // MARK: - Assertion helpers
@@ -170,6 +172,12 @@ private func toolCallCount(_ events: [Contracts.SupervisionAuditEvent], tool: Co
         if case let .toolCall(_, payload) = event { return payload.tool == tool }
         return false
     }.count
+}
+
+private func forbiddenObservabilityKey(_ records: [ObservabilityRecord]) -> String? {
+    records
+        .flatMap { $0.attributes.keys }
+        .first(where: ObservabilityPrivacy.isForbiddenAttributeKey)
 }
 
 // MARK: - Tests
@@ -280,6 +288,82 @@ struct VoiceCuaLoopTests {
             return false
         }
         #expect(intentCreated.count == 2)
+    }
+
+    // Observability: the Swift goal loop emits local, sanitized records for remote-debuggable
+    // session traces without raw transcript, prompt, app-title, or window-content fields.
+    @Test func emitsSanitizedObservabilityRecordsForGoalLoop() async {
+        let sink = ObservabilityMemorySink()
+        let observability = ObservabilityClient(
+            component: "director.loop",
+            sink: sink,
+            clock: { "2026-06-27T12:00:00.000Z" }
+        )
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState())
+        let resolver = ScriptedResolver([act("scroll"), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver, observability: observability)
+
+        await loop.handleFinalTranscript(finalTranscript("scroll the page"))
+
+        let records = await sink.records()
+        let started = records.first { $0.event == "goal.session_started" }
+        #expect(started?.kind == .log)
+        #expect(started?.sessionId == "session-1")
+        #expect(started?.correlationId == "session-1")
+        #expect(started?.platform == "macos")
+        #expect(started?.attributes["speech_chars"] == .number(15))
+        #expect(started?.attributes["confidence"] == .number(0.95))
+        #expect(started?.attributes["latency_ms"] == .number(100))
+
+        let firstResolve = records.first { $0.event == "resolver.resolve" && $0.spanId == "resolve-0" }
+        #expect(firstResolve?.kind == .span)
+        #expect(firstResolve?.traceId == "goal-session-1")
+        #expect(firstResolve?.durationMs?.isFinite == true)
+        #expect(firstResolve?.attributes["tick"] == .number(0))
+        #expect(firstResolve?.attributes["tool_catalog_size"] == .number(0))
+        #expect(firstResolve?.attributes["status"] == .string("ready"))
+
+        let actionCount = records.first { $0.name == "cua_action_count" }
+        #expect(actionCount?.kind == .metric)
+        #expect(actionCount?.value == 1)
+        #expect(actionCount?.unit == "count")
+        #expect(actionCount?.attributes["status"] == .string("succeeded"))
+        #expect(records.contains { $0.event == "action.completed" && $0.stage == .actionCompleted })
+        #expect(forbiddenObservabilityKey(records) == nil)
+    }
+
+    // Observability: handled driver failures produce a failure metric and error envelope while the
+    // normal recovery loop still tries the resolver's next alternative.
+    @Test func emitsHandledFailureObservabilityForDriverFailures() async {
+        let sink = ObservabilityMemorySink()
+        let observability = ObservabilityClient(
+            component: "director.loop",
+            sink: sink,
+            clock: { "2026-06-27T12:00:00.000Z" }
+        )
+        let driver = FakeLoopDriver(
+            windows: [focusedWindow()], windowState: windowState(),
+            callResults: ["launch_app": .failed(error: "FooBar.app not found")])
+        let resolver = ScriptedResolver([act("launch_app", args: launchFooBarArgs), act("scroll"), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver, observability: observability)
+
+        await loop.handleFinalTranscript(finalTranscript("open foobar then scroll"))
+
+        let records = await sink.records()
+        let failureCount = records.first { $0.name == "cua_failure_count" }
+        #expect(failureCount?.kind == .metric)
+        #expect(failureCount?.value == 1)
+        #expect(failureCount?.attributes["status"] == .string("failed"))
+
+        let failure = records.first { $0.event == "driver.call.failed" }
+        #expect(failure?.kind == .error)
+        #expect(failure?.errorClass == "CuaActionFailure")
+        #expect(failure?.handled == true)
+        #expect(failure?.platform == "macos")
+        #expect(failure?.attributes["risk"] == .string("reversible"))
+        #expect(records.contains { $0.event == "action.failed" && $0.stage == .actionFailed })
+        #expect(records.contains { $0.event == "action.completed" && $0.stage == .actionCompleted })
+        #expect(forbiddenObservabilityKey(records) == nil)
     }
 
     // U3 autonomous loop: interrupt() stops the loop and finishes the session blocked.

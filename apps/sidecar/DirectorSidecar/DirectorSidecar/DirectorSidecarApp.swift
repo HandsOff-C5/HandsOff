@@ -192,7 +192,12 @@ struct DirectorSidecarApp: App {
             driver: services.cua,
             resolve: IntentWorkerConfig.resolver(),
             intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot),
-            replayStore: replayStore
+            replayStore: replayStore,
+            observability: ObservabilityClient(
+                component: "director.loop",
+                sink: ObservabilityOSLogSink(),
+                release: ObservabilityClient.bundleRelease()
+            )
         )
         // Probe the cua-driver DAEMON's own TCC (accessibility/screen-recording) so readiness reflects
         // the process a task runs through — its missing grants would otherwise only surface mid-task as
