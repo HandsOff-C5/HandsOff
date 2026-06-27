@@ -129,8 +129,15 @@ private func makeEngine(loop: VoiceCuaLoop, readiness: @escaping @Sendable () ->
 }
 
 /// Poll the main actor until `condition` holds (Observation emits frames on a later main-actor turn).
+///
+/// Budget is generous (5s) because these tests drive the loop through the fire-and-forget `goalTask`
+/// and wait on its Observation-driven frames — all of which serialize onto the single main actor. On
+/// the coverage-instrumented, heavily-parallel CI runner the goal needs many more wall-clock ms to win
+/// enough main-actor turns than it does on a fast dev machine; a tight budget makes the wait flaky
+/// (CI timed out at ~2–3s) without indicating any real failure. A genuinely stuck goal still fails —
+/// it just takes up to `timeoutMs` to do so.
 @MainActor
-private func waitUntil(timeoutMs: Int = 1000, _ condition: () -> Bool) async {
+private func waitUntil(timeoutMs: Int = 5000, _ condition: () -> Bool) async {
     let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
     while !condition() && Date() < deadline {
         await Task.yield()
