@@ -17,13 +17,10 @@ reviews:
   # Skip generated / vendored / binary noise so reviews focus on real source.
   path_filters:
     - "!**/*.wasm"
-    - "!**/*.pbxproj"
     - "!**/*.xcuserstate"
     - "!apps/desktop/public/models/**"
     - "!apps/desktop/public/wasm/**"
     - "!apps/desktop/src-tauri/binaries/**"
-    - "!**/pnpm-lock.yaml"
-    - "!**/Cargo.lock"
     - "!**/*.golden.json"
   path_instructions:
     - path: "apps/sidecar/DirectorSidecar/**/*.swift"
