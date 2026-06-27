@@ -426,10 +426,19 @@ struct DirectorSidecarApp: App {
             applyRailEdge: { edge in surfaces.setRailEdge(edge.controllerEdge) }
         ))
 
+        // The unit-test target is HOSTED in this app, so launching to run the tests fires the full
+        // app lifecycle. On a headless CI runner (no camera / accessibility / interactive window
+        // server) the live services — PerceptionService's AVCaptureSession, the fn CGEventTap, the
+        // always-on-top panels — BLOCK, hanging the entire hosted test run (the swift CI job timed
+        // out at ~103m once #157 made PerceptionService the live owner). Skip ALL live startup under
+        // XCTest; unit tests construct exactly what they need directly.
+        let isRunningUnderTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
         NotificationCenter.default.addObserver(
             forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
         ) { _ in
             MainActor.assumeIsolated {
+                guard !isRunningUnderTests else { return }
                 surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze, rail: rail,
                                store: store, railEdge: AppPreferences.railEdge.controllerEdge,
                                onOpenHome: { store.send(.openHome) })
@@ -506,11 +515,11 @@ struct DirectorSidecarApp: App {
                 )
                 home.seedIntentions(DevMockFleet.intentionFeed(now: Date()))
             }
-        } else {
+        } else if !isRunningUnderTests {
             engine.start()
         }
         #else
-        engine.start()
+        if !isRunningUnderTests { engine.start() }
         #endif
     }
 

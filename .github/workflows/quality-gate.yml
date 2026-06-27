@@ -84,6 +84,10 @@ jobs:
     # version, pin it with maxim-lobanov/setup-xcode.
     runs-on: macos-latest
     continue-on-error: true
+    # Backstop: the unit suite builds+runs in a couple of minutes; a run that exceeds this is a hang,
+    # not slowness (e.g. the hosted host launching live services on the headless runner). Fail fast
+    # instead of burning the full default job budget.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/sidecar/DirectorSidecar
