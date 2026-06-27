@@ -84,33 +84,12 @@ private struct ReticleFollower: View {
     }
 }
 
-/// The gold Director arrowhead — gold fill + white keyline + soft shadow. Always gold.
+/// The following cursor draws the shared `DirectorCursorGlyph` — the ONE brand cursor (gold
+/// arrowhead, white keyline, soft shadow) the rail pips, dashboard cards, and app icon all use.
+/// Always gold, never a tinted system pointer.
 private struct CursorArrow: View {
-    @Environment(\.theme) private var theme
-
     var body: some View {
-        ArrowShape()
-            .fill(theme.accent)
-            .overlay(ArrowShape().stroke(.white, lineWidth: 1.33))
-            .frame(width: 18, height: 24)
-            .shadow(color: .black.opacity(0.4), radius: 0.84, y: 1.17)
-    }
-}
-
-/// A classic pointer arrowhead, tip at the top-left.
-private struct ArrowShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        let w = rect.width, h = rect.height
-        var p = Path()
-        p.move(to: CGPoint(x: 0, y: 0))                    // tip
-        p.addLine(to: CGPoint(x: 0, y: h * 0.78))
-        p.addLine(to: CGPoint(x: w * 0.30, y: h * 0.60))
-        p.addLine(to: CGPoint(x: w * 0.52, y: h))         // tail notch
-        p.addLine(to: CGPoint(x: w * 0.70, y: h * 0.92))
-        p.addLine(to: CGPoint(x: w * 0.46, y: h * 0.52))
-        p.addLine(to: CGPoint(x: w * 0.82, y: h * 0.50))
-        p.closeSubpath()
-        return p
+        DirectorCursorGlyph(height: 23)
     }
 }
 

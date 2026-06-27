@@ -9,12 +9,17 @@
 
 import SwiftUI
 
-/// The brand agent mark — a status-tinted ring with the Director arrowhead. Gold = running (soft
-/// pulsing halo), amber = needs greenlight, green + ✓ = complete. Scales from the rail's 36pt up.
+/// The brand agent mark — the ONE gold Director cursor (`DirectorCursorGlyph`, the same glyph the G5
+/// following cursor draws) inside a status frame. The cursor is ALWAYS gold; the ring + motion carry
+/// state, the way the app icon's brackets frame the same gold cursor, so the cursor reads identically
+/// on every surface:
+///   • running         → gold ring + a pulsing gold halo (radar ping); the cursor stays static
+///   • needs greenlight → ring breathes white ↔ gray (waiting on a human in the loop, like a hold)
+///   • complete         → gold ring + gold ✓ badge (done is gold, not green)
+///   • paused           → the Open-Director gray ring + a dimmed cursor, no motion (held)
+/// Scales from the rail's 36pt up.
 struct DirectorMark: View {
     let status: ExecutionStatus
-    /// Paused agents keep the static ring + arrowhead but drop the pulsing halo — the halo means
-    /// "actively working".
     var paused: Bool = false
     var size: CGFloat = 36
     var animated: Bool = true
@@ -25,40 +30,94 @@ struct DirectorMark: View {
     private var isRunning: Bool { status == .running || status == .queued }
     private var isDone: Bool { status == .succeeded || status == .failed || status == .rejected }
     private var needsGreenlight: Bool { status == .blocked }
-    private var color: Color {
-        if isDone { return theme.success }
-        if needsGreenlight { return theme.warning }
-        return theme.accent
+
+    private enum Mode { case running, needsGreenlight, done, paused, idle }
+    private var mode: Mode {
+        if paused { return .paused }
+        if isDone { return .done }
+        if needsGreenlight { return .needsGreenlight }
+        if isRunning { return .running }
+        return .idle
     }
+
+    /// Whether the running cursor sways + the greenlight ring breathes.
+    private var motionOn: Bool { animated && !reduceMotion }
+    private var ringWidth: CGFloat { size * 0.042 }
+    /// The arrowhead's visual mass sits low-right of its frame; nudge it down-right to read centered.
+    private var glyphBase: CGSize { CGSize(width: size * 0.0248, height: size * 0.0405) }
 
     var body: some View {
         ZStack {
-            // Running (and not paused) → a soft pulsing halo (radar-ping). TimelineView-driven so a
-            // parent .animation transaction (e.g. the rail's hover widen) can't capture/freeze it.
-            if isRunning, !paused, animated, !reduceMotion {
+            frame
+            glyph
+            if mode == .done { doneBadge }
+        }
+        .frame(width: size, height: size)
+    }
+
+    // MARK: frame (disc + ring) — carries status; never recolors the cursor
+
+    @ViewBuilder private var frame: some View {
+        switch mode {
+        case .done:
+            disc(theme.accent.opacity(0.14), ring: theme.accent)
+        case .paused:
+            // The Open-Director control's gray ring, for continuity with that affordance.
+            disc(theme.controlBg, ring: theme.border)
+        case .needsGreenlight:
+            // The ring breathes white ↔ the Open-Director gray: an agent waiting on a human.
+            disc(theme.textPrimary.opacity(0.05), ring: .clear)
+            if motionOn {
+                // TimelineView-driven (continuous sin → opacity) so the rail's hover-widen
+                // transaction can't capture/freeze the breathe, and the loop is seamless.
+                TimelineView(.animation) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate
+                    let p = (sin(t / 1.4 * 2 * .pi) + 1) / 2          // 0…1, seamless
+                    Circle().strokeBorder(theme.textPrimary, lineWidth: ringWidth)
+                        .frame(width: size, height: size)
+                        .opacity(0.12 + (1.0 - 0.12) * p)             // gray ↔ white
+                }
+            } else {
+                Circle().strokeBorder(theme.textPrimary, lineWidth: ringWidth)
+                    .frame(width: size, height: size).opacity(0.5)
+            }
+        case .running:
+            // Gold ring + a pulsing gold halo (the radar-ping). TimelineView-driven so the rail's
+            // hover-widen transaction can't capture/freeze it.
+            if motionOn {
                 TimelineView(.animation) { context in
                     let p = (context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6)) / 1.6
-                    Circle().stroke(theme.accent, lineWidth: size * 0.042)
+                    Circle().stroke(theme.accent, lineWidth: ringWidth)
                         .frame(width: size, height: size)
                         .scaleEffect(1 + 0.5 * p)
                         .opacity(0.6 * (1 - p))
                 }
             }
-            Circle().fill(color.opacity(0.14))
-                .overlay(Circle().strokeBorder(color, lineWidth: size * 0.042))
-                .frame(width: size, height: size)
-            // Brand arrowhead — white keyline under a status-colored fill.
-            DirectorArrow().stroke(.white, lineWidth: size * 0.055)
-                .background(DirectorArrow().fill(color))
-                .frame(width: size * 0.42, height: size * 0.45)
-            if isDone {
-                Circle().fill(theme.success)
-                    .frame(width: size * 0.36, height: size * 0.36)
-                    .overlay(Image(systemName: "checkmark").font(.system(size: size * 0.2, weight: .bold)).foregroundStyle(.white))
-                    .offset(x: size * 0.34, y: size * 0.34)
-            }
+            disc(theme.accent.opacity(0.14), ring: theme.accent)
+        case .idle:
+            disc(theme.accent.opacity(0.14), ring: theme.accent)
         }
-        .frame(width: size, height: size)
+    }
+
+    private func disc(_ fill: Color, ring: Color) -> some View {
+        Circle().fill(fill)
+            .overlay(Circle().strokeBorder(ring, lineWidth: ringWidth))
+            .frame(width: size, height: size)
+    }
+
+    // MARK: glyph — the one gold cursor, always static; dims while paused
+
+    private var glyph: some View {
+        DirectorCursorGlyph(height: size * 0.45)
+            .offset(x: glyphBase.width, y: glyphBase.height)
+            .opacity(mode == .paused ? 0.5 : 1)
+    }
+
+    private var doneBadge: some View {
+        Circle().fill(theme.accent)
+            .frame(width: size * 0.36, height: size * 0.36)
+            .overlay(Image(systemName: "checkmark").font(.system(size: size * 0.2, weight: .bold)).foregroundStyle(.white))
+            .offset(x: size * 0.34, y: size * 0.34)
     }
 }
 
@@ -100,8 +159,31 @@ struct ListeningWaveform: View {
     }
 }
 
-/// The Director arrowhead from the design system (Menu-Icon / agent cursor), normalized from its
-/// 51×54 viewBox so it scales to any frame.
+/// The brand cursor glyph — the ONE Director cursor, styled once and reused everywhere: the gold
+/// `DirectorArrow` with a white keyline and a soft drop shadow. ALWAYS gold — never recolored per
+/// status; surfaces that show agent state (rail pips, dashboard cards) frame this glyph with a
+/// status ring/halo/badge, exactly as the app icon frames the same gold cursor with brackets. Used
+/// by `DirectorMark` (rail + dashboard) and the G5 following + agent cursors
+/// (`ReticleOverlayView`). This is the single definition of the cursor's look — do not restyle it
+/// per surface. `height` is the glyph height; width follows the canonical 51:54 ratio.
+struct DirectorCursorGlyph: View {
+    var height: CGFloat = 23
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        DirectorArrow()
+            .fill(theme.accent)
+            .overlay(DirectorArrow().stroke(.white, lineWidth: height * 0.055))
+            .frame(width: height * 51 / 54, height: height)
+            .shadow(color: .black.opacity(0.4), radius: height * 0.0365, y: height * 0.051)
+    }
+}
+
+/// The Director arrowhead geometry — the SINGLE source of truth for the brand cursor shape.
+/// Geometrically identical to the app icon, `Menu-Icon.svg`, and `Agent-Cursor.svg` (same
+/// four-vertex kite, no system-pointer tail). Draw it through `DirectorCursorGlyph` so the styling
+/// stays consistent; do not add a second arrowhead shape. Normalized from its 51×54 viewBox so it
+/// scales to any frame.
 struct DirectorArrow: Shape {
     func path(in rect: CGRect) -> Path {
         func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
