@@ -2,185 +2,208 @@
 //  RailView.swift
 //  DirectorSidecar
 //
-//  The Right-edge rail capsule (design: right-edge-rail-spec.md). Super-native: a real
-//  NSVisualEffectView `.hudWindow` glass behind a SwiftUI `Capsule`, SF Symbols + standard
-//  controls, gold the only brand color. Custom only where macOS has no equivalent: the LIVE
-//  waveform bars and the brand cursor arrowhead. Top→bottom: LIVE pip (listening) · hairline ·
-//  agent cursor-marks · hairline · Open-Home button.
+//  The Right-edge rail. Collapsed it's an icon column; on hover it widens LEFTWARD to a fixed width
+//  (the right edge never moves) and the row labels fade in behind it. Each row is interactive with a
+//  macOS-menu-style hover highlight: clicking the text or the icon runs the same action. Agent rows
+//  are the exception — hovering the mark swaps it to a Pause button (pause that agent), while the
+//  rest of the row opens the dashboard to that agent. Rows: Activated · agent marks · Open Director.
 //
 
 import SwiftUI
 
 struct RailView: View {
     let model: RailModel
-    var onExpand: () -> Void
+    let store: BridgeStore
 
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
+    private var expanded: Bool { model.isHovering }
+    private static let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+    /// A friendly, slightly slower ease for the widen/collapse so it doesn't feel snappy/jarring.
+    static let ease = Animation.smooth(duration: 0.34)
+    /// FIXED inner widths — the rail never measures the text, so the right edge can't jump.
+    private var contentWidth: CGFloat { expanded ? 156 : 48 }
+
     var body: some View {
-        VStack(spacing: theme.elementGap) {
+        VStack(alignment: .leading, spacing: 4) {
             if model.isListening {
-                LivePip()
-                hairline
+                ActivatedRow(expanded: expanded) { store.send(.stopListening) }
+                divider
             }
             if !model.marks.isEmpty {
-                VStack(spacing: theme.elementGap) {
-                    ForEach(model.marks) { AgentMark(session: $0) }
+                ForEach(model.marks) { mark in
+                    AgentRow(
+                        mark: mark, paused: store.isPaused(mark.id), expanded: expanded,
+                        onView: { store.send(.selectSession(mark.id)); store.send(.openHome) },
+                        onToggle: { store.togglePaused(mark.id) }
+                    )
                 }
-                hairline
+                divider
             }
-            ExpandButton(action: onExpand)
+            OpenRow(expanded: expanded) { store.send(.openHome) }
         }
-        .padding(.vertical, theme.elementGap)
-        .padding(.horizontal, theme.stackGap)
-        .frame(minWidth: 52)
+        .frame(width: contentWidth, alignment: .leading)
+        .padding(.vertical, 11)
+        .padding(.horizontal, 6)
         .background {
             if reduceTransparency {
-                Capsule().fill(theme.opaqueSurface)
+                Self.shape.fill(theme.opaqueSurface)
             } else {
-                VisualEffectBlur(.hudWindow, blending: .behindWindow).clipShape(Capsule())
+                VisualEffectBlur(.hudWindow, blending: .behindWindow)
             }
         }
-        .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
-        .fixedSize()
+        .clipShape(Self.shape)
+        .overlay(Self.shape.strokeBorder(theme.border, lineWidth: 1))
+        .animation(Self.ease, value: model.isHovering)
         .animation(theme.standardMotion, value: model.isListening)
         .animation(theme.standardMotion, value: model.marks)
+        .onHover { model.setHovering($0) } // on the capsule only — the transparent area passes clicks
+        .frame(maxWidth: .infinity, alignment: .trailing) // right-align in the fixed-width panel
     }
 
-    private var hairline: some View {
-        Rectangle().fill(theme.separator).frame(width: 20, height: 1)
-    }
-}
-
-// MARK: - LIVE pip (waveform + label)
-
-/// Shown only while listening — the minimal echo of the wide Listening HUD's "LISTENING" treatment.
-private struct LivePip: View {
-    var body: some View {
-        Waveform()
-            .accessibilityElement()
-            .accessibilityLabel("Listening")
+    private var divider: some View {
+        Divider().overlay(theme.separator).padding(.horizontal, 2).padding(.vertical, 3)
     }
 }
 
-/// Four gold bars pulsing like an audio equalizer. No native waveform exists → custom (minimal).
-private struct Waveform: View {
+// MARK: - Row layout + hover highlight (the macOS-menu-style selection)
+
+private struct RowShell<Icon: View>: View {
+    let expanded: Bool
+    let hovering: Bool
+    let label: String
+    var labelColor: Color? = nil
+    @ViewBuilder var icon: () -> Icon
+
     @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var animating = false
-
-    private static let barCount = 4
 
     var body: some View {
-        HStack(alignment: .center, spacing: 2.5) {
-            ForEach(0..<Self.barCount, id: \.self) { i in
-                Capsule()
-                    .fill(theme.accent)
-                    .frame(width: 3, height: animating && !reduceMotion ? 18 : 8)
-                    .animation(
-                        reduceMotion ? nil
-                        : .easeInOut(duration: 0.45).repeatForever(autoreverses: true).delay(Double(i) * 0.13),
-                        value: animating
-                    )
+        HStack(spacing: 12) {
+            // Fixed 36×36 icon box so every row (waveform, glyph, agent mark) is the same height —
+            // the icon's intrinsic height no longer drives the row.
+            icon().frame(width: 36, height: 36, alignment: .center)
+            Text(label)
+                .font(theme.body)
+                .foregroundStyle(labelColor ?? theme.textPrimary)
+                .lineLimit(1)
+                .frame(width: 96, alignment: .leading)
+                .opacity(expanded ? 1 : 0)
+        }
+        .padding(.horizontal, 6).padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(hovering && expanded ? theme.controlBg : .clear)) // same hover token as the dashboard
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Activated / Deactivate (the listening row)
+
+private struct ActivatedRow: View {
+    let expanded: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            RowShell(expanded: expanded, hovering: hovering,
+                     label: hovering ? "Deactivate" : "Activated") {
+                ListeningWaveform()
             }
         }
-        .frame(width: 20, height: 18)
-        .onAppear { animating = true }
-        .accessibilityHidden(true)
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Deactivate Director")
+        .accessibilityLabel(expanded && hovering ? "Deactivate Director" : "Activated")
     }
 }
 
-// MARK: - Agent cursor-mark
+// MARK: - Open Director
 
-/// One running agent as the brand cursor in a status-tinted ring: gold (running, pulsing),
-/// amber (needs greenlight), green + ✓ (complete).
-private struct AgentMark: View {
-    let session: SessionVM
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulse = false
-
-    private var color: Color {
-        if session.isDone { return theme.success }
-        if session.needsGreenlight { return theme.warning }
-        return theme.accent
-    }
-
-    var body: some View {
-        ZStack {
-            // Running → a soft pulsing halo (radar-ping, kept subtle so it stays inside the capsule).
-            if session.isRunning && !reduceMotion {
-                Circle()
-                    .stroke(theme.accent, lineWidth: 1.5)
-                    .frame(width: 36, height: 36)
-                    .scaleEffect(pulse ? 1.5 : 1)
-                    .opacity(pulse ? 0 : 0.6)
-                    .animation(.easeOut(duration: 1.6).repeatForever(autoreverses: false), value: pulse)
-                    .onAppear { pulse = true }
-            }
-            Circle()
-                .fill(color.opacity(0.14))
-                .overlay(Circle().strokeBorder(color, lineWidth: 1.5))
-                .frame(width: 36, height: 36)
-            // Brand cursor arrowhead — white keyline under a status-colored fill.
-            DirectorArrow()
-                .stroke(.white, lineWidth: 2)
-                .background(DirectorArrow().fill(color))
-                .frame(width: 15, height: 16)
-            if session.isDone {
-                Circle()
-                    .fill(theme.success)
-                    .frame(width: 14, height: 14)
-                    .overlay(Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)).foregroundStyle(.white))
-                    .offset(x: 14, y: 14)
-            }
-        }
-        .frame(width: 36, height: 36)
-        .help("\(session.agent): \(session.title)")
-        .accessibilityLabel("\(session.agent): \(session.title)")
-        .accessibilityValue(session.isDone ? "complete" : session.needsGreenlight ? "needs greenlight" : "running")
-    }
-}
-
-// MARK: - Open Home
-
-private struct ExpandButton: View {
-    var action: () -> Void
+private struct OpenRow: View {
+    let expanded: Bool
+    let action: () -> Void
     @Environment(\.theme) private var theme
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(theme.textSecondary)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(hovering ? theme.separator : theme.controlBg))
-                .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
+            RowShell(expanded: expanded, hovering: hovering, label: "Open Director") {
+                // Circle to echo the agent marks (the user preferred this over a bare glyph).
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(theme.controlBg))
+                    .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
+            }
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help("Open Home")
-        .accessibilityLabel("Open Home")
+        .help("Open Director")
+        .accessibilityLabel("Open Director")
     }
 }
 
-// MARK: - Brand cursor arrowhead (the one custom shape — canonical design path)
+// MARK: - Agent row (row → View Activity; icon hover → Pause)
 
-/// The Director arrowhead from the design system (Menu-Icon / agent cursor), normalized from its
-/// 51×54 viewBox so it scales to any frame.
-struct DirectorArrow: Shape {
-    func path(in rect: CGRect) -> Path {
-        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + x / 51 * rect.width, y: rect.minY + y / 54 * rect.height)
+private struct AgentRow: View {
+    let mark: SessionVM
+    let paused: Bool
+    let expanded: Bool
+    let onView: () -> Void
+    let onToggle: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var rowHover = false
+    @State private var iconHover = false
+
+    // Active agents (running or paused) can be paused/resumed; done agents can't.
+    private var canControl: Bool { mark.isRunning || paused }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // The mark — hover swaps it to Pause (running) or Play (paused).
+            Button(action: { canControl ? onToggle() : onView() }) {
+                ZStack {
+                    DirectorMark(status: mark.status, paused: paused, size: 36)
+                        .opacity(iconHover && canControl ? 0 : 1)
+                    if canControl {
+                        Image(systemName: paused ? "play.fill" : "pause.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(theme.goldInk)
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(theme.accent))
+                            .opacity(iconHover ? 1 : 0)
+                    }
+                }
+                .frame(width: 36, height: 36)
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { iconHover = $0 }
+            .help(iconHover && canControl ? (paused ? "Resume agent" : "Pause agent") : "\(mark.agent): \(mark.title)")
+
+            // The rest of the row → View Activity.
+            Button(action: onView) {
+                HStack(spacing: 0) {
+                    Text(mark.agent)
+                        .font(theme.body).foregroundStyle(theme.textPrimary)
+                        .lineLimit(1).frame(width: 96, alignment: .leading)
+                    Spacer(minLength: 0)
+                }
+                .opacity(expanded ? 1 : 0)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        var path = Path()
-        path.move(to: p(4, 2))
-        path.addLine(to: p(14.7986, 47.2052))
-        path.addLine(to: p(23.5954, 25.3528))
-        path.addLine(to: p(46.6433, 20.4843))
-        path.closeSubpath()
-        return path
+        .padding(.horizontal, 6).padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(rowHover && expanded ? theme.controlBg : .clear)) // same hover token as the dashboard
+        .onHover { rowHover = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(mark.agent): \(mark.title)")
     }
 }

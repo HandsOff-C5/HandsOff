@@ -162,7 +162,7 @@ enum DevMockFleet {
         dispatch(.sessions(fleet(now: now)))
         select("session-1") // bind the Inspector to the running agent (G4b)
         dispatch(.intent(intent(for: "session-1")))
-        dispatch(.audit(auditLog(now: now))) // H4: populate the Agent Logs view
+        dispatch(.audit(auditLog(now: now))) // H4: keep audit data flowing (Agent Logs surface deferred)
     }
 
     /// Activation loop — PARKED behind `runsScriptedActivation` (off). When replayed: the eye-gaze

@@ -48,6 +48,17 @@ final class BridgeStore {
     private(set) var isListening = false
     private(set) var canListen = false
 
+    /// Per-agent paused state — the single source of truth for the whole app (rail, menu, dashboard
+    /// all read it). A paused agent stops "working" (its mark's halo/waveform), and every surface
+    /// offers Resume instead of Pause. Optimistic + sent to the engine.
+    private(set) var pausedSessionIds: Set<String> = []
+    func isPaused(_ id: String) -> Bool { pausedSessionIds.contains(id) }
+    func togglePaused(_ id: String) {
+        let pause = !isPaused(id)
+        if pause { pausedSessionIds.insert(id) } else { pausedSessionIds.remove(id) }
+        send(pause ? .pauseSession(id) : .resumeSession(id))
+    }
+
     var runningCount: Int { counts.running }
     var needsGreenlightCount: Int { counts.needsGreenlight }
     var doneCount: Int { counts.done }
@@ -68,6 +79,10 @@ final class BridgeStore {
     /// agent + its own engine `selectSession` send). Local so the inspector binds immediately,
     /// rather than waiting on an engine round-trip that never comes in mock mode.
     @ObservationIgnored var onSelectSession: ((String) -> Void)?
+
+    /// Opens the dashboard on its Settings tab (the menu "Settings…"). Local UI action.
+    @ObservationIgnored var onOpenSettings: (() -> Void)?
+    func openSettings() { onOpenSettings?() }
 
     /// Send a command; some are local UI actions (listening flag, open Home, select) applied
     /// optimistically and NOT re-forwarded here (the owning model forwards its own).
@@ -94,6 +109,7 @@ final class BridgeStore {
         case let .sessions(payload):
             sessions = payload.sessions.map(MenuSession.init)
             counts = payload.resolvedCounts
+            pausedSessionIds.formIntersection(Set(sessions.map(\.id))) // drop agents that are gone
         case let .runResult(result):
             applyRunResult(result)
         case .cursor, .transcript, .referents, .intent, .audit, .gaze, .error, .unknown:

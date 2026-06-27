@@ -147,7 +147,9 @@ final class LoopEngine: CommandSink {
             // `handleFinalTranscript` resets the interrupt flag before it runs, so stopping the mic
             // never kills the goal that the just-spoken transcript is about to start.
             loop.interrupt()
-        case .startListening, .commit, .openHome, .selectSession:
+        case .startListening, .commit, .openHome, .selectSession, .resumeSession:
+            // resumeSession: per-agent pause/resume is client-side UI state today; there's no loop
+            // counterpart to the interrupt yet (engine-side resume is deferred), so this is a no-op.
             break
         }
     }
