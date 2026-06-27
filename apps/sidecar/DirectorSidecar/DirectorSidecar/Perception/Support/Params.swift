@@ -38,7 +38,7 @@ public enum Params {
             let fallback = 50.0
             guard let raw = ProcessInfo.processInfo.environment["HANDSOFF_LATENCY_BUDGET_MS"],
                   let parsed = Double(raw),
-                  parsed.isFinite
+                  parsed.isFinite, parsed >= 0  // a negative budget makes the gate always-fail
             else { return fallback }
             return parsed
         }
@@ -52,7 +52,7 @@ public enum Params {
             let fallback = 25.0
             guard let raw = ProcessInfo.processInfo.environment["HANDSOFF_VARIANCE_BUDGET_MS2"],
                   let parsed = Double(raw),
-                  parsed.isFinite
+                  parsed.isFinite, parsed >= 0  // a negative variance budget is nonsensical
             else { return fallback }
             return parsed
         }

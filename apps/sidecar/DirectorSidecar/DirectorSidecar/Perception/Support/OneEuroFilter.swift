@@ -68,9 +68,10 @@ public final class PerceptionOneEuroFilter {
             return x
         }
         let te = (tMs - prev) / 1000
-        tPrevMs = tMs
-        // A non-advancing (or backwards) timestamp can't smooth meaningfully — hold.
+        // A non-advancing (or backwards) timestamp can't smooth meaningfully — hold, and do NOT
+        // shift the baseline, so the next valid frame still measures `te` from `prev`.
         if te <= 0 { return xHat }
+        tPrevMs = tMs
 
         // Low-pass the derivative, then set the adaptive cutoff from its magnitude.
         let dx = (x - xHat) / te

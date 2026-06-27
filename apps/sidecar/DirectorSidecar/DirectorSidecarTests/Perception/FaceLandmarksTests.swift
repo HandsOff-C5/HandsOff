@@ -1,6 +1,7 @@
 import Testing
 import CoreVideo
 import Foundation
+import Vision
 @testable import DirectorSidecar
 
 // SL-1b Vision face-landmark lift (acceptance, §4.1 + NFR-3). `FaceLandmarks` wraps a

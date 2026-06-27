@@ -41,10 +41,12 @@ final class PointingEventRing {
     /// The events within `window` ms before `now`, ordered by source time ascending. Defaults to
     /// the 300ms fusion window.
     func within(
-        window millis: Double = PointingEventRing.fusionWindowMillis,
+        window millis: Double? = nil,
         now: MonotonicInstant
     ) -> [PointingEvent] {
-        let windowNanos = UInt64(millis * 1_000_000)
+        // Default to the ring's OWN configured window, not the global constant, so a ring built
+        // with a custom window queries against the same span it evicts on.
+        let windowNanos = millis.map { UInt64($0 * 1_000_000) } ?? self.windowNanos
         let cutoff = now.nanoseconds >= windowNanos ? now.nanoseconds - windowNanos : 0
         lock.lock()
         defer { lock.unlock() }

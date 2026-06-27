@@ -42,7 +42,9 @@ public struct FreezeTracker<T> {
     private let lostFrameLimit: Int
 
     public init(lostFrameLimit: Int = Params.capture.lostFrameLimit) {
-        self.lostFrameLimit = lostFrameLimit
+        // A negative limit would freeze on the first `.lost`; clamp so the documented
+        // `losses > limit` contract only operates on non-negative tolerances.
+        self.lostFrameLimit = max(0, lostFrameLimit)
     }
 
     /// Feed one frame. Updates `value`/`state` per the freeze contract.

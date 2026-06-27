@@ -148,15 +148,36 @@ final class CameraBus: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     // when the chosen format only supports 30 (Fix 3 / RESEARCH.md Q2).
     var onCapability: ((Double) -> Void)?
 
+    /// Whether sensing is currently desired (set on `start`, cleared on `stop`). Touched ONLY on
+    /// `videoQueue`, so a late `requestAccess` grant that lands after `stop` is ignored rather than
+    /// starting the session behind sensing's back.
+    private var sensingDesired = false
+    /// The session is configured (inputs/outputs added) exactly once; later start/stop toggles only
+    /// flip running, so repeated `setSensing` never re-adds inputs or accumulates duplicate outputs.
+    private var isConfigured = false
+
+    /// Bring the camera up. All session mutation is serialized onto `videoQueue` (incl. the async
+    /// permission callback), so configuration, `startRunning`, and `stopRunning` never race.
     func start() {
+        videoQueue.async { [weak self] in self?.startOnQueue() }
+    }
+
+    /// Always on `videoQueue`.
+    private func startOnQueue() {
+        sensingDesired = true
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             configureAndRun()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 guard let self else { return }
-                if granted { self.configureAndRun() }
-                else { self.emitStatus("camera DENIED — grant Camera permission to the app/Terminal") }
+                self.videoQueue.async {
+                    guard granted, self.sensingDesired else {
+                        if !granted { self.emitStatus("camera DENIED — grant Camera permission to the app/Terminal") }
+                        return  // denied, or sensing was turned off while we waited — don't start
+                    }
+                    self.configureAndRun()
+                }
             }
         case .denied, .restricted:
             emitStatus("camera DENIED — grant Camera permission to the app/Terminal")
@@ -165,15 +186,23 @@ final class CameraBus: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         }
     }
 
-    /// Stop the capture session (idempotent). Runs the teardown on the video queue, matching
-    /// `start()`'s `startRunning()` hop, so it never blocks the main thread.
+    /// Stop the capture session (idempotent). Serialized on `videoQueue` with `start`, and clears
+    /// `sensingDesired` so an in-flight permission grant can't start the session after this returns.
     func stop() {
-        videoQueue.async { [session] in
-            if session.isRunning { session.stopRunning() }
+        videoQueue.async { [weak self] in
+            guard let self else { return }
+            self.sensingDesired = false
+            if self.session.isRunning { self.session.stopRunning() }
         }
     }
 
+    /// Always on `videoQueue`. Configures the session ONCE; subsequent calls only resume running.
     private func configureAndRun() {
+        guard sensingDesired else { return }
+        if isConfigured {
+            if !session.isRunning { session.startRunning() }
+            return
+        }
         session.beginConfiguration()
 
         // Discover EVERY candidate camera (the built-in FaceTime HD caps at 30 fps; a
@@ -296,7 +325,8 @@ final class CameraBus: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             // so it's obvious at a glance which camera is feeding the lock.
             self?.emitStatus("\(deviceName) running")
         }
-        videoQueue.async { [session] in session.startRunning() }
+        isConfigured = true
+        if sensingDesired { session.startRunning() }  // already on videoQueue
     }
 
     /// Render an `OSType` FourCC (e.g. `420v`) as a printable string for logging.
