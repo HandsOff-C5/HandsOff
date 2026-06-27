@@ -170,6 +170,11 @@ struct DirectorSidecarApp: App {
         let calibrationRepo = CalibrationProfileRepository()
         let perception = PerceptionService(
             windowSource: { [services] in
+                // #150/#148: read the window list NATIVELY (CGWindowList) from our own process so
+                // targeting works without the cua-driver / its separate TCC identity. Fall back to
+                // the driver only if the native list is empty.
+                let native = NativeWindowSource.onScreenWindows()
+                if !native.isEmpty { return native }
                 if case let .succeeded(windows) = await services.cua.listWindows() { return windows }
                 return []
             },
