@@ -224,6 +224,13 @@ function eventKey(eventId: string): string {
 interface PendingEvents {
   readonly eventsToWrite: readonly AgentReplayEvent[];
   readonly duplicateEventIds: readonly string[];
+  readonly errors: readonly ReplaySessionError[];
+}
+
+interface ReplaySessionError {
+  readonly sessionId: string;
+  readonly status: number;
+  readonly body: unknown;
 }
 
 interface ReplaySessionRequestBody {
@@ -272,7 +279,8 @@ export class AgentReplaySession {
     const eventsToWrite: AgentReplayEvent[] = [];
     const duplicateEventIds: string[] = [];
     const seenEventIds = new Set<string>();
-    let previousSeq = (await this.state.storage.get<number>(LAST_SEQ_KEY)) ?? -1;
+    const storedPreviousSeq = await this.state.storage.get<number>(LAST_SEQ_KEY);
+    let previousSeq = storedPreviousSeq ?? -1;
     if (!Number.isFinite(previousSeq)) previousSeq = -1;
 
     for (const event of events) {
@@ -295,19 +303,48 @@ export class AgentReplaySession {
       eventsToWrite.push(event);
     }
 
-    const writeFailure = await writeReplay(eventsToWrite, this.env);
-    if (writeFailure !== null) return writeFailure;
-
     if (eventsToWrite.length > 0) {
-      const writes: Record<string, string | number> = { [LAST_SEQ_KEY]: previousSeq };
-      for (const event of eventsToWrite) {
-        writes[eventKey(event.eventId)] = event.sessionId;
+      try {
+        await this.rememberAcceptedEvents(eventsToWrite, previousSeq);
+      } catch {
+        return json({ error: "agent_replay_state_commit_failed" }, 500);
       }
-      await this.state.storage.put(writes);
-      await this.state.storage.setAlarm(retentionExpiresAt());
     }
 
-    return json({ eventsToWrite, duplicateEventIds });
+    const writeFailure = await writeReplay(eventsToWrite, this.env);
+    if (writeFailure !== null) {
+      if (eventsToWrite.length > 0) {
+        await this.forgetAcceptedEvents(eventsToWrite, storedPreviousSeq);
+      }
+      return writeFailure;
+    }
+
+    return json({ eventsToWrite, duplicateEventIds, errors: [] });
+  }
+
+  private async rememberAcceptedEvents(
+    events: readonly AgentReplayEvent[],
+    lastSeq: number,
+  ): Promise<void> {
+    const writes: Record<string, string | number> = { [LAST_SEQ_KEY]: lastSeq };
+    for (const event of events) {
+      writes[eventKey(event.eventId)] = event.sessionId;
+    }
+    await this.state.storage.put(writes);
+    await this.state.storage.setAlarm(retentionExpiresAt());
+  }
+
+  private async forgetAcceptedEvents(
+    events: readonly AgentReplayEvent[],
+    previousSeq: number | undefined,
+  ): Promise<void> {
+    const eventKeys = events.map((event) => eventKey(event.eventId));
+    await this.state.storage.delete(eventKeys);
+    if (previousSeq === undefined) {
+      await this.state.storage.delete(LAST_SEQ_KEY);
+    } else {
+      await this.state.storage.put({ [LAST_SEQ_KEY]: previousSeq });
+    }
   }
 
   async alarm(): Promise<void> {
@@ -333,6 +370,7 @@ async function selectPendingEvents(
 ): Promise<PendingEvents | Response> {
   const eventsToWrite: AgentReplayEvent[] = [];
   const duplicateEventIds: string[] = [];
+  const errors: ReplaySessionError[] = [];
   const seenEventIds = new Set<string>();
   const uniqueEvents: AgentReplayEvent[] = [];
 
@@ -354,14 +392,25 @@ async function selectPendingEvents(
         body: JSON.stringify({ events: sessionEvents }),
       }),
     );
-    if (!response.ok) return response;
+    if (!response.ok) {
+      errors.push({ sessionId, status: response.status, body: await readResponseBody(response) });
+      continue;
+    }
 
     const pending = (await response.json()) as PendingEvents;
     eventsToWrite.push(...pending.eventsToWrite);
     duplicateEventIds.push(...pending.duplicateEventIds);
   }
 
-  return { eventsToWrite, duplicateEventIds };
+  return { eventsToWrite, duplicateEventIds, errors };
+}
+
+async function readResponseBody(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return { error: "agent_replay_session_failed" };
+  }
 }
 
 function traceIdForSession(sessionId: string): string {
@@ -514,14 +563,28 @@ async function handleReplayRequest(request: Request, env: Env): Promise<Response
   const pending = await selectPendingEvents(events, sessions);
   if (pending instanceof Response) return pending;
 
-  return json({
-    accepted: pending.eventsToWrite.map((event) => ({
-      eventId: event.eventId,
-      sessionId: event.sessionId,
-      seq: event.seq,
-    })),
-    duplicateEventIds: pending.duplicateEventIds,
-  });
+  const accepted = pending.eventsToWrite.map((event) => ({
+    eventId: event.eventId,
+    sessionId: event.sessionId,
+    seq: event.seq,
+  }));
+  if (
+    pending.errors.length > 0 &&
+    accepted.length === 0 &&
+    pending.duplicateEventIds.length === 0
+  ) {
+    const first = pending.errors[0]!;
+    return json(first.body, first.status);
+  }
+
+  return json(
+    {
+      accepted,
+      duplicateEventIds: pending.duplicateEventIds,
+      ...(pending.errors.length > 0 ? { errors: pending.errors } : {}),
+    },
+    pending.errors.length > 0 ? 207 : 200,
+  );
 }
 
 async function handleTestSinkRequest(

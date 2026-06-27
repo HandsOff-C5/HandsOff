@@ -23,12 +23,19 @@ class MemoryDurableObjectStorage {
   private values = new Map<string, unknown>();
   private alarm: number | null = null;
 
+  constructor(private readonly failPut = false) {}
+
   async get<T>(key: string): Promise<T | undefined> {
     return this.values.get(key) as T | undefined;
   }
 
   async put(entries: Record<string, unknown>): Promise<void> {
+    if (this.failPut) throw new Error("put failed");
     for (const [key, value] of Object.entries(entries)) this.values.set(key, value);
+  }
+
+  async delete(keys: string | string[]): Promise<void> {
+    for (const key of Array.isArray(keys) ? keys : [keys]) this.values.delete(key);
   }
 
   async setAlarm(scheduledTime: number | Date): Promise<void> {
@@ -44,7 +51,10 @@ class MemoryDurableObjectStorage {
 class MemoryReplaySessionNamespace {
   private readonly sessions = new Map<string, AgentReplaySession>();
 
-  constructor(private readonly replayEnv: Env) {}
+  constructor(
+    private readonly replayEnv: Env,
+    private readonly options: { failPut?: boolean } = {},
+  ) {}
 
   idFromName(name: string): DurableObjectId {
     return { name, equals: (other) => other.name === name, toString: () => name };
@@ -55,7 +65,9 @@ class MemoryReplaySessionNamespace {
     let session = this.sessions.get(sessionId);
     if (session === undefined) {
       session = new AgentReplaySession(
-        { storage: new MemoryDurableObjectStorage() } as unknown as DurableObjectState,
+        {
+          storage: new MemoryDurableObjectStorage(this.options.failPut),
+        } as unknown as DurableObjectState,
         this.replayEnv,
       );
       this.sessions.set(sessionId, session);
@@ -108,15 +120,21 @@ type ReplayResponseBody = {
     readonly seq: number;
   }[];
   readonly duplicateEventIds: readonly string[];
+  readonly errors?: readonly unknown[];
 };
 
 const timestamp = "2026-06-27T15:00:00.000Z";
 
-function event(seq: number, type: AgentReplayEvent["type"], payload: unknown): AgentReplayEvent {
+function event(
+  seq: number,
+  type: AgentReplayEvent["type"],
+  payload: unknown,
+  sessionId = "session-1",
+): AgentReplayEvent {
   return {
-    sessionId: "session-1",
+    sessionId,
     seq,
-    eventId: `session-1:${seq}:${type}`,
+    eventId: `${sessionId}:${seq}:${type}`,
     type,
     timestamp,
     payload,
@@ -298,6 +316,64 @@ describe("agent replay Worker", () => {
       duplicateEventIds: [],
     });
     expect(upstreamFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send downstream when replay state cannot be committed", async () => {
+    const sink = new MemoryReplaySink();
+    const replayEnv = env({ AGENT_REPLAY_TEST_SINK: sink });
+    (replayEnv as { AGENT_REPLAY_SESSIONS: DurableObjectNamespace }).AGENT_REPLAY_SESSIONS =
+      new MemoryReplaySessionNamespace(replayEnv, {
+        failPut: true,
+      }) as unknown as DurableObjectNamespace;
+    const first = representativeEvents[0]!;
+
+    const response = await worker.fetch(replayRequest({ events: [first] }), replayEnv);
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "agent_replay_state_commit_failed" });
+    await expect(sink.records("session-1")).resolves.toEqual([]);
+  });
+
+  it("returns committed session acks when a mixed-session batch has a bad session", async () => {
+    const replayEnv = env();
+    const accepted = event(0, "session_started", { goal: "ok" }, "session-1");
+    const badFirst = event(0, "session_started", { goal: "bad" }, "session-2");
+    const badSecond = {
+      ...event(0, "prompt_built", { messages: [] }, "session-2"),
+      eventId: "session-2:0:prompt_built-different",
+    };
+
+    const response = await worker.fetch(
+      replayRequest({ events: [accepted, badFirst, badSecond] }),
+      replayEnv,
+    );
+    const body = (await response.json()) as ReplayResponseBody;
+
+    expect(response.status).toBe(207);
+    expect(body.accepted).toEqual([
+      { eventId: accepted.eventId, sessionId: accepted.sessionId, seq: accepted.seq },
+    ]);
+    expect(body.duplicateEventIds).toEqual([]);
+    expect(body.errors).toEqual([
+      {
+        sessionId: "session-2",
+        status: 409,
+        body: {
+          error: "non_monotonic_agent_replay_seq",
+          eventId: "session-2:0:prompt_built-different",
+        },
+      },
+    ]);
+    await expect(
+      (await worker.fetch(testSinkRequest("session-1"), replayEnv)).json(),
+    ).resolves.toEqual({
+      records: [accepted],
+    });
+    await expect(
+      (await worker.fetch(testSinkRequest("session-2"), replayEnv)).json(),
+    ).resolves.toEqual({
+      records: [],
+    });
   });
 
   it("writes replay records to Langfuse ingestion with stable trace and event ids", async () => {

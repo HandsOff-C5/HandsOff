@@ -292,7 +292,7 @@ struct AgentReplayPayloadTests {
             "target_agent":"cua-driver",
             "action_plan":[
               {"id":"s1","label":"Type code","kind":"type_text","target":{"surface":\#(surface),"elementIndex":7},"text":"hunter2-code"},
-              {"id":"s2","label":"Set card","kind":"set_value","target":{"surface":\#(surface),"elementIndex":8},"value":"4111111111111111"}
+              {"id":"s2","label":"Set card","kind":"set_value","target":{"surface":\#(surface),"elementIndex":8},"value":"sensitive-value!"}
             ]
           },
           "createdAt":"\#(replayTimestamp)"
@@ -325,7 +325,7 @@ struct AgentReplayPayloadTests {
 
         let finished = AgentReplayPayloads.toolCallFinished(
             tool: "set_value",
-            args: ["element_index": .number(8), "value": .string("4111111111111111")],
+            args: ["element_index": .number(8), "value": .string("sensitive-value!")],
             result: .succeeded(
                 summary: "Called set_value",
                 state: Contracts.CuaWindowState(
@@ -346,7 +346,7 @@ struct AgentReplayPayloadTests {
                             index: 8,
                             role: "AXTextField",
                             label: "Card",
-                            value: "4111111111111111"
+                            value: "sensitive-value!"
                         ),
                     ]
                 )
@@ -370,7 +370,7 @@ struct AgentReplayPayloadTests {
             finished,
         ].map(replayPayloadJSONString).joined(separator: "\n")
         #expect(!replayJSON.contains("hunter2-code"))
-        #expect(!replayJSON.contains("4111111111111111"))
+        #expect(!replayJSON.contains("sensitive-value!"))
     }
 }
 
