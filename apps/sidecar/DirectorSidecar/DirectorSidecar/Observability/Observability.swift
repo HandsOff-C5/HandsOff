@@ -169,7 +169,8 @@ struct ObservabilityRecord: Equatable, Sendable, Codable {
             sessionId: sessionId,
             correlationId: correlationId,
             traceId: traceId,
-            spanId: spanId
+            spanId: spanId,
+            parentSpanId: parentSpanId
         )
         try ObservabilityPrivacy.validateAttributes(attributes)
         if let durationMs, !durationMs.isFinite { throw ObservabilityPrivacyError.nonFiniteNumber("durationMs") }
@@ -247,7 +248,8 @@ struct ObservabilityRecord: Equatable, Sendable, Codable {
         sessionId: String?,
         correlationId: String?,
         traceId: String?,
-        spanId: String?
+        spanId: String?,
+        parentSpanId: String?
     ) throws {
         guard isISODateTime(timestamp) else { throw ObservabilityPrivacyError.invalidTimestamp(timestamp) }
         try validateRequired(component, "component")
@@ -258,6 +260,7 @@ struct ObservabilityRecord: Equatable, Sendable, Codable {
         try validateOptional(correlationId, "correlationId")
         try validateOptional(traceId, "traceId")
         try validateOptional(spanId, "spanId")
+        try validateOptional(parentSpanId, "parentSpanId")
     }
 
     private static func validateRequired(_ value: String?, _ field: String) throws {

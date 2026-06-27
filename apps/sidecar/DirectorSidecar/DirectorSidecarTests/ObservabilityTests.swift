@@ -168,6 +168,24 @@ private let fixedObservabilityTime = "2026-06-27T12:00:00.000Z"
     }
 }
 
+struct ObservabilityValidationTests {
+    @Test func rejectsEmptyParentSpanId() {
+        #expect(throws: ObservabilityPrivacyError.emptyField("parentSpanId")) {
+            _ = try ObservabilityRecord(
+                kind: .span,
+                timestamp: fixedObservabilityTime,
+                component: "director.loop",
+                event: "resolver.resolve",
+                traceId: "trace-1",
+                spanId: "span-1",
+                parentSpanId: "",
+                durationMs: 12,
+                status: .ok
+            )
+        }
+    }
+}
+
 @Test func exportPolicyDefaultsToLocalOnlyAndRequiresConsentForRemote() throws {
     let record = try ObservabilityRecord(
         kind: .metric,
