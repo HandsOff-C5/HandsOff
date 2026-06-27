@@ -219,7 +219,10 @@ final class AgentReplayStore {
             let data = try JSONEncoder().encode(cached)
             try data.write(to: url, options: .atomic)
         } catch {
-            preconditionFailure("Unable to persist Agent Replay buffer: \(error)")
+            DirectorDiagnostics.loop.error(
+                "agent replay persist failed error=\(String(reflecting: type(of: error)), privacy: .public)"
+            )
+            assertionFailure("Unable to persist Agent Replay buffer")
         }
     }
 }
