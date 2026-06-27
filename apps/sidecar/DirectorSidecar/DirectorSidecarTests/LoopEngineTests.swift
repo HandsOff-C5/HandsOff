@@ -94,7 +94,11 @@ private func done(_ summary: String = "Goal satisfied") -> NextToolCall {
 private let clickSendArgs = #"{"element_index":0}"#
 
 @MainActor
-private func makeLoop(driver: FakeLoopDriver, resolver: ScriptedResolver) -> VoiceCuaLoop {
+private func makeLoop(
+    driver: FakeLoopDriver,
+    resolver: ScriptedResolver,
+    replayStore: SupervisionReplayStore? = nil
+) -> VoiceCuaLoop {
     // `defaultToolCallBudget` is referenced in this @MainActor body (not a default-arg expression),
     // so it stays main-actor-isolated — the nonisolated-default-arg quirk DirectorServices documents.
     VoiceCuaLoop(
@@ -102,7 +106,8 @@ private func makeLoop(driver: FakeLoopDriver, resolver: ScriptedResolver) -> Voi
         resolve: { input, createdAt, _ in await resolver.resolve(input, createdAt) },
         now: { "2026-06-22T12:00:00.000Z" },
         targetResolveDelayMs: 0,
-        toolCallBudget: VoiceCuaLoop.defaultToolCallBudget)
+        toolCallBudget: VoiceCuaLoop.defaultToolCallBudget,
+        replayStore: replayStore)
 }
 
 private func fakeReadiness(mic: String = "granted", speech: String = "granted") -> ReadinessPayload {
@@ -120,17 +125,28 @@ private func fakeReadiness(mic: String = "granted", speech: String = "granted") 
 }
 
 @MainActor
-private func makeEngine(loop: VoiceCuaLoop, readiness: @escaping @Sendable () -> ReadinessPayload = { fakeReadiness() }) -> (LoopEngine, Captured) {
+private func makeEngine(
+    loop: VoiceCuaLoop,
+    readiness: @escaping @Sendable () -> ReadinessPayload = { fakeReadiness() },
+    replayStore: SupervisionReplayStore? = nil
+) -> (LoopEngine, Captured) {
     let captured = Captured()
-    let engine = LoopEngine(loop: loop, readinessProbe: readiness)
+    let engine = LoopEngine(loop: loop, readinessProbe: readiness, replayStore: replayStore)
     engine.onFrame = { captured.frames.append($0) }
     engine.onState = { captured.states.append($0) }
     return (engine, captured)
 }
 
 /// Poll the main actor until `condition` holds (Observation emits frames on a later main-actor turn).
+///
+/// Budget is generous (5s) because these tests drive the loop through the fire-and-forget `goalTask`
+/// and wait on its Observation-driven frames — all of which serialize onto the single main actor. On
+/// the coverage-instrumented, heavily-parallel CI runner the goal needs many more wall-clock ms to win
+/// enough main-actor turns than it does on a fast dev machine; a tight budget makes the wait flaky
+/// (CI timed out at ~2–3s) without indicating any real failure. A genuinely stuck goal still fails —
+/// it just takes up to `timeoutMs` to do so.
 @MainActor
-private func waitUntil(timeoutMs: Int = 1000, _ condition: () -> Bool) async {
+private func waitUntil(timeoutMs: Int = 5000, _ condition: () -> Bool) async {
     let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
     while !condition() && Date() < deadline {
         await Task.yield()
@@ -498,5 +514,69 @@ struct LoopEngineProjectionTests {
         #expect(toolCalls.allSatisfy { $0.risk != nil })       // every tool_call row carries derived risk
         #expect(toolCalls.allSatisfy { $0.approval == .auto })  // read-only auto-ran, no human gate
         #expect(toolCalls.contains { $0.result == .succeeded })
+    }
+
+    @Test func persistedReplaySurvivesStoreRecreationAndPublishesOnStart() async {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("director-replay-\(UUID().uuidString)")
+            .appendingPathExtension("json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let replayStore = SupervisionReplayStore(url: url)
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState())
+        let resolver = ScriptedResolver([act("scroll"), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver, replayStore: replayStore)
+        let (engine, _) = makeEngine(loop: loop, replayStore: replayStore)
+        engine.start()
+
+        engine.ingestSpeech(.final(text: "scroll the page", confidence: 0.9, latencyMs: 1, receivedAt: 1))
+        await waitUntil { loop.session?.status == .succeeded }
+        await waitUntil { !replayStore.snapshot().auditRecords.isEmpty }
+
+        let snapshot = SupervisionReplayStore(url: url).snapshot()
+        #expect(snapshot.sessions.map(\.id) == ["session-1"])
+        #expect(snapshot.sessions.first?.status == .succeeded)
+        #expect(snapshot.sessionTitles["session-1"] == "scroll the page")
+
+        let fetchedToolCall = snapshot.auditRecords.first { $0.entry.kind == .toolCall }
+        #expect(fetchedToolCall?.transcript == "scroll the page")
+        #expect(fetchedToolCall?.entry.tool == "scroll")
+        #expect(fetchedToolCall?.entry.risk == .readOnly)
+        #expect(fetchedToolCall?.entry.approval == .auto)
+        #expect(fetchedToolCall?.entry.result == .succeeded)
+        #expect(fetchedToolCall?.resultSummary == "Called scroll")
+
+        let fetchedPlan = snapshot.auditRecords.first { $0.entry.kind == .intentCreated }
+        #expect(fetchedPlan?.transcript == "scroll the page")
+        #expect(fetchedPlan?.planSummary == "do scroll")
+
+        let restoredStore = SupervisionReplayStore(url: url)
+        let restoredLoop = makeLoop(
+            driver: FakeLoopDriver(windows: [focusedWindow()], windowState: windowState()),
+            resolver: ScriptedResolver([done()]),
+            replayStore: restoredStore
+        )
+        let (restoredEngine, restored) = makeEngine(loop: restoredLoop, replayStore: restoredStore)
+        restoredEngine.start()
+
+        #expect(sessionsFrames(restored.frames).last?.sessions.map(\.id) == ["session-1"])
+        #expect(auditFrames(restored.frames).last?.entries.contains { $0.tool == "scroll" } == true)
+    }
+
+    @Test func corruptReplayFileIsMovedAsideBeforeFreshWrites() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("director-replay-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent("supervision-replay.json")
+        try Data("not-json".utf8).write(to: url)
+
+        let replayStore = SupervisionReplayStore(url: url)
+        #expect(replayStore.snapshot().sessions.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+
+        let backups = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(backups.contains { $0.hasPrefix("supervision-replay.corrupt-") })
     }
 }

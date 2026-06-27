@@ -21,16 +21,23 @@ final class RailController {
     enum Edge { case leading, trailing }
 
     private let model: RailModel
-    private let onOpenHome: () -> Void
-    private let edge: Edge
+    private let store: BridgeStore
+    /// Mutable so the onboarding `listenEdge` choice can flip left/right at runtime; `setEdge`
+    /// re-anchors the live panel immediately.
+    private var edge: Edge
     private let inset: CGFloat = 12
+    /// The panel is a FIXED width, anchored by its right edge — it never resizes on hover, so the
+    /// window can't move and the right edge physically cannot shift. The capsule hugs its content
+    /// and animates LEFTWARD inside this fixed window (right-aligned). The collapsed icon column
+    /// sits at the right; the transparent area to its left is non-interactive (clicks pass through).
+    private let panelWidth: CGFloat = 172
     private var panel: RailPanel?
 
-    init(model: RailModel, edge: Edge = .trailing, onOpenHome: @escaping () -> Void) {
+    init(model: RailModel, edge: Edge = .trailing, store: BridgeStore) {
         self.model = model
         self.edge = edge
-        self.onOpenHome = onOpenHome
-        observeVisibility()
+        self.store = store
+        observe()
         applyVisibility()
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
@@ -40,20 +47,30 @@ final class RailController {
 
     // MARK: observation
 
-    private func observeVisibility() {
+    /// Re-evaluate on visibility + content changes (height: listening/marks). Hover is separate.
+    private func observe() {
         withObservationTracking {
             _ = model.isVisible
+            _ = model.isListening
+            _ = model.marks
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
                 self.applyVisibility()
-                self.observeVisibility()
+                self.observe()
             }
         }
     }
 
     private func applyVisibility() {
         if model.isVisible { show() } else { hide() }
+    }
+
+    /// Flip the rail to the left or right screen edge and re-anchor the live panel. Idempotent.
+    func setEdge(_ edge: Edge) {
+        guard edge != self.edge else { return }
+        self.edge = edge
+        anchor() // no-op if the panel isn't built/visible yet; the new edge sticks for next show()
     }
 
     @objc private func screensChanged() {
@@ -65,8 +82,9 @@ final class RailController {
     private func show() {
         let panel = panel ?? makePanel()
         self.panel = panel
-        anchor()
-        panel.orderFrontRegardless() // never makeKey/activate — must not steal focus
+        let firstShow = !panel.isVisible
+        anchor()                          // fixed width; only height (content) can change here
+        if firstShow { panel.orderFrontRegardless() } // never makeKey/activate — must not steal focus
     }
 
     private func hide() { panel?.orderOut(nil) }
@@ -85,7 +103,7 @@ final class RailController {
         panel.isOpaque = false
         panel.hasShadow = true // OS draws the capsule's rounded shadow from the content's alpha shape
         let host = NSHostingView(rootView: ThemedRoot {
-            RailView(model: model, onExpand: onOpenHome)
+            RailView(model: model, store: store)
         })
         panel.contentView = host
         return panel
@@ -94,12 +112,14 @@ final class RailController {
     private func anchor() {
         guard let panel, let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
-        let size = panel.contentView?.fittingSize ?? NSSize(width: 64, height: 240)
-        panel.setContentSize(size)
+        // FIXED width — never hover-dependent. Only the height follows the content (mark count).
+        // Because the width and right edge never change, the window never moves on hover.
+        let width = panelWidth
+        let height = panel.contentView?.fittingSize.height ?? 240
         let x: CGFloat = edge == .trailing
-            ? visible.maxX - size.width - inset
+            ? visible.maxX - width - inset
             : visible.minX + inset
-        let y = visible.midY - size.height / 2
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        let y = visible.midY - height / 2
+        panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
     }
 }

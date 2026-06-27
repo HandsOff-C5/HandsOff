@@ -17,7 +17,8 @@ private let testScreen = CGRect(x: 0, y: 0, width: 1440, height: 900)
     #expect(plugin.id == .face)
 }
 
-@Test func testProcessPreservesTCapture() {
+@Test(.enabled(if: !PerceptionTestEnv.isHeadlessCI, "real Vision face request hangs on headless CI"))
+func testProcessPreservesTCapture() {
     // process() runs the Vision path on a synthetic (blank) frame — no face — and returns the
     // frame UNCHANGED so the latency tap still pairs tCapture<->tPhoton (SL-0 contract).
     var pb: CVPixelBuffer?

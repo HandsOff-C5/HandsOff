@@ -26,6 +26,10 @@ final class OverlayController {
     private var windows: [OverlayWindow] = []
     private var cursorPoll: Timer?
 
+    /// One step above the rail (`.floating`) but still below the menu-bar / status / pop-up levels, so
+    /// the active Director cursor is the topmost Director surface without ever covering system menus.
+    private static let aboveRail = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
+
     init(model: OverlayModel, gaze: GazeBracketModel) {
         self.model = model
         self.gaze = gaze
@@ -44,6 +48,7 @@ final class OverlayController {
         withObservationTracking {
             _ = model.isVisible
             _ = gaze.isVisible
+            _ = model.hasUserCursor // re-level when the user cursor appears/leaves
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -55,6 +60,15 @@ final class OverlayController {
 
     private func applyVisibility() {
         if shouldShow { show() } else { hide() }
+        applyLevel()
+    }
+
+    /// Raise the overlay above the rail while the user-driven Director cursor is active; otherwise
+    /// sit at the normal floating level. Window level is what orders one passthrough window against
+    /// the rail panel (both are separate NSWindows), so this is where the z-order is decided.
+    private func applyLevel() {
+        let level: NSWindow.Level = model.hasUserCursor ? Self.aboveRail : .floating
+        for window in windows where window.level != level { window.level = level }
     }
 
     // The Director cursor hugs the OS pointer. A global .mouseMoved monitor only fires while the
@@ -132,7 +146,8 @@ final class OverlayController {
         window.backgroundColor = .clear
         window.hasShadow = false
         // .floating sits above other apps' normal windows (so the cursor/brackets draw over them)
-        // but BELOW menus + the menu-bar dropdown, so activating Director never hides the menu.
+        // but BELOW menus + the menu-bar dropdown, so activating Director never hides the menu. The
+        // starting level; `applyLevel()` bumps it one step above the rail while the user cursor is active.
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         window.ignoresMouseEvents = true

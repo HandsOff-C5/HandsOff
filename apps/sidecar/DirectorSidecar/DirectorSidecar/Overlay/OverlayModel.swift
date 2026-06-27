@@ -41,6 +41,12 @@ final class OverlayModel {
 
     var isVisible: Bool { !cursors.isEmpty }
 
+    /// True while the user-driven Director cursor (kind:user) is present — the one that hugs the
+    /// system cursor or travels on pointing/gesture. The overlay floats ABOVE the rail in this state
+    /// so the active cursor is the topmost Director surface; with only agent cursors (autonomously
+    /// working) it stays at the normal level, free to sit under the rail.
+    var hasUserCursor: Bool { cursors.contains { $0.kind == .user } }
+
     static let userId = "user"
     /// The Director cursor trails below-right of the OS pointer with a clear gap (it reads as a
     /// friendly *companion following*, not the pointer itself). View space is y-down, so a positive

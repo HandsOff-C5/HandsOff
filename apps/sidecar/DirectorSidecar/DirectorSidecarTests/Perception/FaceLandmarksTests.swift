@@ -11,7 +11,8 @@ import Vision
 // assert the contract: it consumes a FrameSample, reads the pixel buffer, retains no sample
 // buffer, and runs off-main.
 
-@Test func testResolvesSignalFromFrameSample() {
+@Test(.enabled(if: !PerceptionTestEnv.isHeadlessCI, "real Vision face request hangs on headless CI"))
+func testResolvesSignalFromFrameSample() {
     // A FrameSample built the only way the capture path builds one: from a pixel buffer +
     // a timestamp. By construction it carries NO CMSampleBuffer (NFR-3) — the type cannot
     // hold one. A synthetic (blank) buffer won't contain a real face, so detection returns
@@ -32,7 +33,8 @@ import Vision
     #expect(frame.pixelBuffer === pb)
 }
 
-@Test func testResolveRunsOffMain() {
+@Test(.enabled(if: !PerceptionTestEnv.isHeadlessCI, "real Vision face request (sync) deadlocks on headless CI"))
+func testResolveRunsOffMain() {
     // The resolve must be safe to call off the main thread (it runs on the camera video
     // queue in production). Drive it on a dedicated serial queue — mirroring the camera
     // videoQueue — and confirm it completed off the main thread without requiring the

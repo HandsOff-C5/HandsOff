@@ -15,6 +15,128 @@
 
 import Foundation
 
+struct SupervisionReplaySnapshot: Codable, Sendable, Equatable {
+    var nextSessionId = 1
+    var sessions: [Contracts.SupervisionSession] = []
+    var sessionTitles: [String: String] = [:]
+    var auditRecords: [SupervisionReplayRecord] = []
+}
+
+struct SupervisionReplayRecord: Codable, Sendable, Equatable, Identifiable {
+    let id: String
+    let entry: AuditLogEntry
+    let transcript: String?
+    let referent: Contracts.SelectedReferent?
+    let planSummary: String?
+    let resultSummary: String?
+
+    init(event: Contracts.SupervisionAuditEvent, ordinal: Int) {
+        entry = LoopFrameMapping.auditEntry(event, ordinal: ordinal)
+        id = entry.id
+
+        switch event {
+        case let .intentCreated(_, intent):
+            let replay = Self.intentReplay(intent)
+            transcript = replay.transcript
+            referent = replay.referent
+            planSummary = replay.planSummary
+            resultSummary = nil
+        case let .toolCall(_, call):
+            transcript = call.transcript
+            referent = call.referent
+            planSummary = nil
+            resultSummary = LoopFrameMapping.actionResultSummary(call.result)
+        case let .cuaCall(_, _, _, result), let .executionFinished(_, _, .some(result)):
+            transcript = nil
+            referent = nil
+            planSummary = nil
+            resultSummary = LoopFrameMapping.actionResultSummary(result)
+        case .approvalDecided, .cuaStateCaptured, .executionFinished:
+            transcript = nil
+            referent = nil
+            planSummary = nil
+            resultSummary = nil
+        }
+    }
+
+    private static func intentReplay(
+        _ intent: Contracts.ResolvedIntent
+    ) -> (transcript: String?, referent: Contracts.SelectedReferent?, planSummary: String?) {
+        switch intent {
+        case let .ready(ready):
+            return (ready.input.finalTranscript.text, ready.referent, ready.actionPlan.summary)
+        case let .needsClarification(pending), let .blocked(pending):
+            return (pending.input.finalTranscript.text, nil, nil)
+        case let .satisfied(satisfied):
+            return (satisfied.input.finalTranscript.text, nil, satisfied.summary)
+        }
+    }
+}
+
+@MainActor
+final class SupervisionReplayStore {
+    private let url: URL
+    private var cached: SupervisionReplaySnapshot
+
+    init(url: URL, fileManager: FileManager = .default) {
+        self.url = url
+        guard fileManager.fileExists(atPath: url.path) else {
+            cached = SupervisionReplaySnapshot()
+            return
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            cached = try JSONDecoder().decode(SupervisionReplaySnapshot.self, from: data)
+        } catch {
+            let backup = url.deletingPathExtension()
+                .appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970)).json")
+            try? fileManager.moveItem(at: url, to: backup)
+            cached = SupervisionReplaySnapshot()
+        }
+    }
+
+    static func applicationSupport(fileManager: FileManager = .default) -> SupervisionReplayStore {
+        let directory = try! fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ).appendingPathComponent("Director", isDirectory: true)
+        return SupervisionReplayStore(url: directory.appendingPathComponent("supervision-replay.json"))
+    }
+
+    func snapshot() -> SupervisionReplaySnapshot { cached }
+
+    func saveSessions(_ sessions: [Contracts.SupervisionSession], nextSessionId: Int) {
+        cached.sessions = sessions
+        cached.nextSessionId = nextSessionId
+        persist()
+    }
+
+    func saveTitle(_ title: String, for sessionId: String) {
+        cached.sessionTitles[sessionId] = title
+        persist()
+    }
+
+    func record(_ event: Contracts.SupervisionAuditEvent, ordinal: Int) {
+        cached.auditRecords.append(SupervisionReplayRecord(event: event, ordinal: ordinal))
+        persist()
+    }
+
+    private func persist(fileManager: FileManager = .default) {
+        do {
+            try fileManager.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try JSONEncoder().encode(cached)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            preconditionFailure("Unable to persist supervision replay: \(error)")
+        }
+    }
+}
+
 /// `TerminalSessionStatus` = `ExecutionStatus` minus the live `queued`/`running` (session-store.ts).
 /// The loop only finishes a session as one of these; `Contracts.terminalSessionStatuses` lists them.
 typealias TerminalSessionStatus = ExecutionStatus
@@ -22,8 +144,16 @@ typealias TerminalSessionStatus = ExecutionStatus
 /// `createSupervisionSessionStore`: an in-memory list of supervised runs with stable `session-N` ids.
 @MainActor
 final class SupervisionSessionStore {
-    private var nextId = 1
-    private var sessions: [Contracts.SupervisionSession] = []
+    private var nextId: Int
+    private var sessions: [Contracts.SupervisionSession]
+    private let replay: SupervisionReplayStore?
+
+    init(replay: SupervisionReplayStore? = nil) {
+        self.replay = replay
+        let snapshot = replay?.snapshot()
+        nextId = snapshot?.nextSessionId ?? 1
+        sessions = snapshot?.sessions ?? []
+    }
 
     /// `start`: a new `queued` session stamped at `startedAt`.
     func start(_ startedAt: String) -> Contracts.SupervisionSession {
@@ -32,6 +162,7 @@ final class SupervisionSessionStore {
             startedAt: startedAt, updatedAt: startedAt, finishedAt: nil)
         nextId += 1
         sessions.append(session)
+        replay?.saveSessions(sessions, nextSessionId: nextId)
         return session
     }
 
@@ -69,6 +200,7 @@ final class SupervisionSessionStore {
         }
         let updated = change(sessions[index])
         sessions[index] = updated
+        replay?.saveSessions(sessions, nextSessionId: nextId)
         return updated
     }
 }
@@ -77,10 +209,17 @@ final class SupervisionSessionStore {
 @MainActor
 final class ActionAuditStore {
     private var records: [Contracts.SupervisionAuditEvent] = []
+    private let replay: SupervisionReplayStore?
+
+    init(replay: SupervisionReplayStore? = nil) {
+        self.replay = replay
+    }
 
     @discardableResult
     func record(_ event: Contracts.SupervisionAuditEvent) -> Contracts.SupervisionAuditEvent {
+        let ordinal = records.count
         records.append(event)
+        replay?.record(event, ordinal: ordinal)
         return event
     }
 

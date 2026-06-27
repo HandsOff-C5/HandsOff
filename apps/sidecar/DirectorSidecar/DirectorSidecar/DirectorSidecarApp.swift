@@ -32,6 +32,9 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeDashboardKey() {
+        // While the onboarding window is up, don't yank Home to the front over it — onboarding is the
+        // intended front surface at first run.
+        if NSApp.windows.contains(where: { $0.title == "Welcome to Director" && $0.isVisible }) { return }
         let dashboard = NSApp.windows.first { $0.title == "Director" }
             ?? NSApp.windows.first { $0.canBecomeKey && !($0 is NSPanel) && !$0.className.contains("StatusBar") }
         dashboard?.makeKeyAndOrderFront(nil)
@@ -47,6 +50,14 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     /// it in the end-user experience. Flip to `true` to bring it (and its idle edge-reveal) back.
     static let showsMicroHUD = false
 
+    /// The full Listening HUD (G2 floating "LISTENING / Intent / esc" panel) is parked — it surfaced
+    /// on active-agent selection where it served no purpose, so it's archived out of every visible
+    /// flow. `HUDModel`, `HUDPanel`, and `ListeningHUDView` stay in the tree (still fanned frames,
+    /// still under test); only the panel controller is withheld. Flip to `true` to bring it back.
+    static let showsFullHUD = false
+
+    private var started = false
+
     private var hud: HUDPanelController?
     private var micro: MicroHUDController?
     private var overlay: OverlayController?
@@ -55,16 +66,27 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
 
     func start(hud hudModel: HUDModel, micro microModel: MicroHUDModel,
                overlay overlayModel: OverlayModel, gaze: GazeBracketModel,
-               rail railModel: RailModel,
+               rail railModel: RailModel, store: BridgeStore,
+               railEdge: RailController.Edge,
                onOpenHome: @escaping () -> Void) {
-        guard hud == nil else { return }   // once only
-        hud = HUDPanelController(model: hudModel, edge: .trailing)
+        guard !started else { return }   // once only
+        started = true
+        if Self.showsFullHUD {
+            hud = HUDPanelController(model: hudModel, edge: .trailing)
+        }
         if Self.showsMicroHUD {
             micro = MicroHUDController(model: microModel, fullHUD: hudModel, onOpenHome: onOpenHome)
         }
         overlay = OverlayController(model: overlayModel, gaze: gaze)
-        // The Right-edge rail — the always-on ambient edge surface (replaces the parked micro-HUD).
-        railController = RailController(model: railModel, edge: .trailing, onOpenHome: onOpenHome)
+        // The rail — the always-on ambient edge surface (replaces the parked micro-HUD). It drives
+        // its own actions (deactivate / view activity / pause / open) through the store. Starts on the
+        // persisted onboarding edge (right by default).
+        railController = RailController(model: railModel, edge: railEdge, store: store)
+    }
+
+    /// Flip the live rail to the left/right edge — wired to the onboarding listening-edge picker.
+    func setRailEdge(_ edge: RailController.Edge) {
+        railController?.setEdge(edge)
     }
 }
 
@@ -78,6 +100,9 @@ struct DirectorSidecarApp: App {
     let gaze: GazeBracketModel
     let home: HomeDashboardModel
     let rail: RailModel
+    /// Flow to First Run — the after-download onboarding journey (welcome → primer → permissions →
+    /// ready). Owns its own state; wired to the real permission + rail systems via injected actions.
+    let onboarding: OnboardingModel
     /// ADR 0005 Track D: the in-process engine (the ported `VoiceCuaLoop`) that replaces the
     /// loopback socket as the app's engine of record. Held for the app's whole run.
     private let engine: LoopEngine
@@ -160,49 +185,21 @@ struct DirectorSidecarApp: App {
             calibrationQuality: .poor,
             dwell: DwellDebounceParams(enter: 0.6, exit: 0.4, dwellMs: 600, cooldownMs: 1000)))
 
-        // Face/hand migration: the one camera owner (constructed here, before the loop, so its live
-        // perception NBest consumer can ground the intake). Fans each frame to the face + hand plugins:
-        //   • hand → the `.user` cursor (`cursorPosition` topic) + the gesture intent snapshot
-        //   • face → the gaze region (`gazeFocus` topic)         + the head-point intent snapshot
-        // #150/#148: read the on-screen window list NATIVELY (CGWindowList) from our OWN process so
-        // point→window targeting works WITHOUT the cua-driver / its separate `com.trycua.driver` TCC
-        // identity (the driver returns empty in the bundled app — the root of the "Display 3 / empty
-        // candidates" symptom). Fall back to the driver only if the native list is empty. The SAME
-        // source feeds BOTH rankers — the perception NBest bus AND the intake's AttentionRanking.
-        let nativeWindowList: () async -> [CuaWindow] = { [services] in
-            let native = NativeWindowSource.onScreenWindows()
-            if !native.isEmpty { return native }
-            if case let .succeeded(windows) = await services.cua.listWindows() { return windows }
-            return []
-        }
-
-        // Face/hand migration: the one camera owner (constructed here, before the loop, so its live
-        // perception NBest consumer can ground the intake). #150: the bus ranks each hit against the
-        // native window list and `PointingAligner` fuses the result; the intake folds the fused top
-        // window as a leading point-to-window referent. Per-display hand calibration (RB-3) is loaded
-        // for the main display from the persisted profile (uncalibrated when none is stored — the
-        // capture flow is deferred).
-        let calibrationRepo = CalibrationProfileRepository()
-        let perception = PerceptionService(
-            windowSource: nativeWindowList,
-            calibration: calibrationRepo.load(forDisplayID: CGMainDisplayID())?.calibrationFit()
-        )
-
         // ADR 0005 Track D — no bridge: run the ported supervision loop IN-PROCESS and make it the
         // app's engine. The loop drives the SAME frames the socket used to deliver (engine.onFrame →
         // dispatch) and the UI's commands route to the loop (the models' command sink IS the engine).
-        // The intake reads the NATIVE window list (#150) — NOT driver.listWindows() — for its ranking.
+        let replayStore = SupervisionReplayStore.applicationSupport()
         // #148: dispatch through the HYBRID actuator — IN-PROCESS native AX (the app's own Accessibility
         // grant) is the DEFAULT for click/type/set_value + window reads; the `cua-driver` is the
-        // fallback only for AX-opaque surfaces. The native window source feeds both this and the intake.
+        // fallback only for AX-opaque surfaces. The native window source (#150) decouples point→window
+        // targeting from the driver's empty bundled list.
         let actionDriver = HybridActuator(
             inner: services.cua, nativeWindows: { NativeWindowSource.onScreenWindows() })
         let loop = VoiceCuaLoop(
             driver: actionDriver,
             resolve: IntentWorkerConfig.resolver(),
-            intake: HeadPointingIntake(
-                snapshot: headSnapshot, driver: services.cua, windowSource: nativeWindowList,
-                gesture: gestureSnapshot, aligner: perception.aligner, screen: perception.screen)
+            intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot),
+            replayStore: replayStore
         )
         // Probe the cua-driver DAEMON's own TCC (accessibility/screen-recording) so readiness reflects
         // the process a task runs through — its missing grants would otherwise only surface mid-task as
@@ -210,7 +207,7 @@ struct DirectorSidecarApp: App {
         let engine = LoopEngine(loop: loop, cuaPermissionProbe: { [services] in
             if case let .succeeded(report) = await services.cua.checkPermissions() { return report }
             return nil
-        })
+        }, replayStore: replayStore)
         engine.onFrame = { frame in dispatch(frame) }
         engine.onState = { state in
             store.setConnection(state); hud.setConnection(state); micro.setConnection(state)
@@ -286,9 +283,12 @@ struct DirectorSidecarApp: App {
             onGestureReferent: { _ in }
         )
 
-        // Wire the one camera owner's four callbacks (constructed above, before the loop). The bridge
-        // callbacks arrive on the main thread (PerceptionService marshals them); the two intent
+        // Face/hand migration: the one camera owner. Fans each frame to the face + hand plugins:
+        //   • hand → the `.user` cursor (`cursorPosition` topic) + the gesture intent snapshot
+        //   • face → the gaze region (`gazeFocus` topic)         + the head-point intent snapshot
+        // The bridge callbacks arrive on the main thread (PerceptionService marshals them); the two
         // snapshots are lock-protected. Wire all four before sensing turns on.
+        let perception = PerceptionService()
         perception.onCursorPosition = { payload in dispatch(.cursor(pointers: payload.pointers)) }
         perception.onGazeFocus = { gaze in dispatch(.gaze(gaze)) }
         perception.onFaceEvidence = { point in headSnapshot.record(point) }
@@ -341,6 +341,9 @@ struct DirectorSidecarApp: App {
             #endif
         }
 
+        // Menu "Settings…" → open the dashboard on its Settings tab.
+        store.onOpenSettings = { home.tab = .settings; store.onOpenHome?() }
+
         // `store.onOpenHome` (rail ⤢ + menu "Open Home") is wired to SwiftUI's openWindow in the
         // dashboard scene (HomeOpenWiring) so it re-creates the window even after the red-X close.
         self.engine = engine
@@ -366,23 +369,56 @@ struct DirectorSidecarApp: App {
         // silently kills input to the WHOLE app (Dashboard AND menu bar go dead). Defer to launch.
         let surfaces = SurfaceHost()
         self.surfaces = surfaces
+
+        // Flow to First Run model — wired to the REAL systems: the CUA driver check, the live rail
+        // controller (edge flip), and Home. Permissions are read/triggered directly via
+        // PermissionsService inside the model.
+        self.onboarding = OnboardingModel(actions: OnboardingModel.Actions(
+            checkCua: {
+                switch await services.cua.checkPermissions() {
+                case let .succeeded(report):
+                    let ready = report.driver == .running
+                        && report.accessibility == .granted
+                        && report.screenRecording == .granted
+                    let detail = ready
+                        ? "Daemon running · screen + accessibility ready."
+                        : "Daemon \(report.driver.rawValue) · grants pending."
+                    return (ready, detail)
+                case let .failed(error):
+                    return (false, "Engine check failed: \(error)")
+                case let .blocked(reason):
+                    return (false, "Engine blocked: \(reason)")
+                }
+            },
+            applyRailEdge: { edge in surfaces.setRailEdge(edge.controllerEdge) }
+        ))
+
         NotificationCenter.default.addObserver(
             forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
         ) { _ in
             MainActor.assumeIsolated {
                 surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze, rail: rail,
+                               store: store, railEdge: AppPreferences.railEdge.controllerEdge,
                                onOpenHome: { store.send(.openHome) })
-                // C1 fix: install the global fn capture tap and route its phases to the listening
-                // commands — press-hold → start/stop, double-tap → toggle. Session-wide, so this fires
-                // while another app is frontmost (the entire hands-off entry point), unlike the old
-                // local monitor. Falls back gracefully (logs to stderr) if Accessibility/Input
-                // Monitoring aren't granted yet.
-                fnHotkey.start()
-                Task { @MainActor in
-                    for await phase in fnHotkey.phases {
-                        store.send(listeningCommand(for: phase, isListening: store.isListening))
+                // The global fn capture tap needs Accessibility + Input Monitoring, so installing it
+                // PROMPTS the user. DEFER it until they've actually entered the app (Home appeared,
+                // i.e. onboarding finished or was skipped) — so first launch shows ONLY the Welcome
+                // window, never a system permission dialog over it. Permissions during onboarding come
+                // exclusively from its own Allow buttons. Idempotent; one consumer of the phase stream.
+                var fnStarted = false
+                let startFnCapture = {
+                    guard !fnStarted else { return }
+                    fnStarted = true
+                    fnHotkey.start()
+                    Task { @MainActor in
+                        for await phase in fnHotkey.phases {
+                            store.send(listeningCommand(for: phase, isListening: store.isListening))
+                        }
                     }
                 }
+                NotificationCenter.default.addObserver(
+                    forName: .directorEnterApp, object: nil, queue: .main
+                ) { _ in MainActor.assumeIsolated { startFnCapture() } }
                 // Track F: begin consuming the head-pointer feed for the app's life (camera stays
                 // off until Listening turns sensing on). Deferred to launch alongside the surfaces.
                 coordinator.start()
@@ -392,6 +428,9 @@ struct DirectorSidecarApp: App {
                 // cannot be pre-granted in System Settings — the app MUST request once). Without
                 // this the STT path only ever reads `notDetermined` and fails every listen with
                 // "speech recognition not authorized"; the request APIs are no-ops once decided.
+                // Onboarding (when shown) drives permissions via its own buttons, so only auto-prompt
+                // at launch when the onboarding window is NOT showing — avoids a double prompt.
+                if !OnboardingGate.shouldShowAtLaunch {
                 Task {
                     let granted = await PermissionsService.requestMediaPermissions()
                     DirectorDiagnostics.services.info(
@@ -406,6 +445,7 @@ struct DirectorSidecarApp: App {
                     let accessibility = PermissionsService.promptAccessibility()
                     DirectorDiagnostics.services.info(
                         "cua permissions screen_recording=\(screenRecording ? "granted" : "denied", privacy: .public) accessibility=\(accessibility ? "granted" : "denied", privacy: .public)")
+                }
                 }
             }
         }
@@ -447,10 +487,23 @@ struct DirectorSidecarApp: App {
     }
 
     var body: some Scene {
+        // Flow to First Run — the after-download onboarding window. Declared FIRST so it is the only
+        // window that auto-opens at launch (Home stays closed until onboarding completes). Content-
+        // sized, hidden titlebar (macOS still draws the traffic lights), centered. It opens Home and
+        // closes itself on finish; if onboarding isn't wanted (completed + always-show off) it bounces
+        // straight to Home on appear.
+        Window("Welcome to Director", id: OnboardingScene.id) {
+            ThemedRoot { OnboardingView(model: onboarding) }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
         // G4 Home Dashboard — the product window. Single-instance `Window` (not `WindowGroup`) so the
-        // red-X close + "Open Home" re-open cleanly via openWindow(id:) and never duplicate.
+        // red-X close + "Open Home" re-open cleanly via openWindow(id:) and never duplicate. Opens
+        // only after onboarding finishes (or directly when onboarding is disabled).
         Window("Director", id: "home") {
-            ThemedRoot { HomeDashboardView(model: home) }
+            ThemedRoot { HomeDashboardView(model: home, store: store) }
                 .modifier(HomeOpenWiring(store: store, rail: rail))
         }
         .commands {
@@ -478,6 +531,13 @@ struct DirectorSidecarApp: App {
     }
 }
 
+extension Notification.Name {
+    /// Posted when the user enters the app proper (the Home window appears, post-onboarding). Gates
+    /// the deferred startup of permission-prompting services (the fn capture tap) so first launch is
+    /// only the Welcome window.
+    static let directorEnterApp = Notification.Name("DirectorEnterApp")
+}
+
 /// Wires `store.onOpenHome` (rail ⤢ + menu "Open Home") to SwiftUI's `openWindow`, captured from an
 /// in-scene view so it re-creates the single-instance Home window even after the red-X destroys it.
 private struct HomeOpenWiring: ViewModifier {
@@ -493,8 +553,13 @@ private struct HomeOpenWiring: ViewModifier {
                         NSApp.activate()
                     }
                 }
-                // Home is showing → its minimized echo (the rail) hides.
+                // Home is showing → its minimized echo (the rail) hides. (Home only ever appears once
+                // onboarding has finished and opened it, so no onboarding coordination is needed here.)
                 rail.setHomeOpen(true)
+                // Entering the app proper — now it's appropriate to install the fn capture tap (which
+                // prompts for Accessibility/Input Monitoring). Deferred from launch so onboarding owns
+                // the permission UX. Idempotent on the listener side.
+                NotificationCenter.default.post(name: .directorEnterApp, object: nil)
             }
             .onDisappear {
                 // Home closed (red-X) → the rail returns as the ambient edge summary.

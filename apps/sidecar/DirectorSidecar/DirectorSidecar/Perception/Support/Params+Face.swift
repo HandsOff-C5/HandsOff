@@ -24,6 +24,14 @@ extension Params {
         /// START 0.15 (kept in 0.10–0.20).
         public static let correctionWeight: Double = 0.15
 
+        /// Asymmetric vertical gain (`I3`, on-Mac measured 2026-06-26). Tilting the head DOWN
+        /// yields far LESS nose-offset travel than tilting UP (the projected nose swings a lot
+        /// downward but little upward), so a single symmetric gain saturates the cursor to the
+        /// TOP while it can never reach the BOTTOM (the "stuck halfway" report). This multiplies
+        /// the vertical gain for the cursor-DOWNWARD direction only (`vector.y < 0`), continuous
+        /// at neutral. `1.0` = symmetric (old behavior). START 1.8 (kept ~1.6–2.2).
+        public static let verticalDownGain: Double = 1.8
+
         /// Gain/accel curve exponent applied to the normalized drive magnitude (`FR-10`).
         /// `gain = pow(normalized, gainExponent)`. Salvaged value 1.35. START 1.35.
         public static let gainExponent: Double = 1.35
@@ -32,14 +40,6 @@ extension Params {
         /// (`FR-10`). Salvaged `180 + speed·90`. At speed 5 → 630 px/s. START 180 / 90.
         public static let gainBase: Double = 180
         public static let gainSpeedScale: Double = 90
-
-        /// Asymmetric vertical gain (`I3`, on-Mac measured 2026-06-26). Tilting the head DOWN
-        /// yields far LESS nose-offset travel than tilting UP (the projected nose swings a lot
-        /// downward but little upward), so a single symmetric gain saturates the cursor to the
-        /// TOP while it can never reach the BOTTOM (the "stuck halfway" report). This multiplies
-        /// the vertical gain for the cursor-DOWNWARD direction only (`vector.y < 0`), continuous
-        /// at neutral. `1.0` = symmetric (old behavior). START 1.8 (kept ~1.6–2.2).
-        public static let verticalDownGain: Double = 1.8
 
         /// Dead-zone (the salvaged `distanceToEdge`): control-vector magnitude below this is
         /// suppressed — no cursor motion at rest (`FR-9`). START 0.12.

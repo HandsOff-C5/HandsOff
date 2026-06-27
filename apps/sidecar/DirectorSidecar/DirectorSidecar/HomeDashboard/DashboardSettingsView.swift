@@ -24,7 +24,6 @@ struct DashboardSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("Settings")
     }
 
     private var appVersion: String {
