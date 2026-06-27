@@ -312,8 +312,7 @@ struct DirectorSidecarApp: App {
                     return (false, "Engine blocked: \(reason)")
                 }
             },
-            applyRailEdge: { edge in surfaces.setRailEdge(edge.controllerEdge) },
-            openHome: { store.send(.openHome) }
+            applyRailEdge: { edge in surfaces.setRailEdge(edge.controllerEdge) }
         ))
 
         NotificationCenter.default.addObserver(
@@ -401,8 +400,21 @@ struct DirectorSidecarApp: App {
     }
 
     var body: some Scene {
+        // Flow to First Run — the after-download onboarding window. Declared FIRST so it is the only
+        // window that auto-opens at launch (Home stays closed until onboarding completes). Content-
+        // sized, hidden titlebar (macOS still draws the traffic lights), centered. It opens Home and
+        // closes itself on finish; if onboarding isn't wanted (completed + always-show off) it bounces
+        // straight to Home on appear.
+        Window("Welcome to Director", id: OnboardingScene.id) {
+            ThemedRoot { OnboardingView(model: onboarding) }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
         // G4 Home Dashboard — the product window. Single-instance `Window` (not `WindowGroup`) so the
-        // red-X close + "Open Home" re-open cleanly via openWindow(id:) and never duplicate.
+        // red-X close + "Open Home" re-open cleanly via openWindow(id:) and never duplicate. Opens
+        // only after onboarding finishes (or directly when onboarding is disabled).
         Window("Director", id: "home") {
             ThemedRoot { HomeDashboardView(model: home, store: store) }
                 .modifier(HomeOpenWiring(store: store, rail: rail))
@@ -418,16 +430,6 @@ struct DirectorSidecarApp: App {
         Window("Engine Readiness", id: "readiness") {
             ThemedRoot { ContentView() }
         }
-
-        // Flow to First Run — the after-download onboarding window. Content-sized with a hidden
-        // titlebar (macOS still draws the traffic lights), centered. Opened at launch by
-        // HomeOpenWiring when OnboardingGate says so; it closes itself via dismissWindow on finish.
-        Window("Welcome to Director", id: OnboardingScene.id) {
-            ThemedRoot { OnboardingView(model: onboarding) }
-        }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
-        .defaultPosition(.center)
 
         // G1 product entry: menu-bar status item + NATIVE pull-down menu. The `.menu` style renders
         // a real NSMenu (system liquid-glass material + native selection highlight), so MenuContent
@@ -457,13 +459,9 @@ private struct HomeOpenWiring: ViewModifier {
                         NSApp.activate()
                     }
                 }
-                // Home is showing → its minimized echo (the rail) hides.
+                // Home is showing → its minimized echo (the rail) hides. (Home only ever appears once
+                // onboarding has finished and opened it, so no onboarding coordination is needed here.)
                 rail.setHomeOpen(true)
-                // Flow to First Run: open the onboarding window over Home at launch (every relaunch
-                // while OnboardingGate.alwaysShow is on; otherwise only until completed once).
-                if OnboardingGate.shouldShowAtLaunch {
-                    openWindow(id: OnboardingScene.id)
-                }
             }
             .onDisappear {
                 // Home closed (red-X) → the rail returns as the ambient edge summary.

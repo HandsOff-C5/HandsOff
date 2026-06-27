@@ -12,6 +12,7 @@
 
 import SwiftUI
 import AppKit
+import Combine
 
 /// The onboarding window scene identifier — shared by the App scene declaration and the in-view
 /// `dismissWindow` that closes it on finish.
@@ -21,6 +22,7 @@ struct OnboardingView: View {
     let model: OnboardingModel
     @Environment(\.theme) private var theme
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,6 +37,18 @@ struct OnboardingView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refreshPermissions()
         }
+        // Onboarding is the first scene, so it always auto-opens at launch. If it isn't actually
+        // wanted (already completed and the always-show test flag is off), bounce straight to Home.
+        .onAppear {
+            if !OnboardingGate.shouldShowAtLaunch { goHome() }
+        }
+    }
+
+    /// Finish the journey: open the Home dashboard window and close onboarding. Home only ever opens
+    /// here, so the dashboard never appears until onboarding is done.
+    private func goHome() {
+        openWindow(id: "home")
+        dismissWindow(id: OnboardingScene.id)
     }
 
     @ViewBuilder private var stepContent: some View {
@@ -42,7 +56,7 @@ struct OnboardingView: View {
         case .welcome: WelcomeStep(model: model)
         case .primer: PrimerStep(model: model)
         case .permissions: PermissionsStep(model: model)
-        case .ready: ReadyStep(model: model) { model.finish(); dismissWindow(id: OnboardingScene.id) }
+        case .ready: ReadyStep(model: model) { model.finish(); goHome() }
         }
     }
 }
@@ -273,14 +287,25 @@ private struct PermissionsStep: View {
             .padding(.bottom, 14)
 
             CuaHealthRow(phase: model.cua, detail: model.cuaDetail) { Task { await model.runCuaCheck() } }
-                .padding(.bottom, 18)
+                .padding(.bottom, 10)
+
+            Text("Enabled something in System Settings but still shown as needed? macOS ties Screen Recording (and rebuilt-app grants) to a relaunch — quit and reopen Director to apply.")
+                .font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                .multilineTextAlignment(.center).frame(maxWidth: 440).padding(.bottom, 16)
 
             NavRow(onBack: { model.goBack() }, continueLabel: "Continue",
-                   continueEnabled: model.canContinue, bump: model.continueBump) { model.tryContinue() }
+                   continueEnabled: model.canContinue, bump: model.continueBump,
+                   onSkip: { model.skip() }) { model.tryContinue() }
         }
         .padding(.horizontal, 36)
         .padding(.top, 6)
         .padding(.bottom, 28)
+        // Poll live TCC status while this step is up, so an Accessibility grant (which flips live
+        // in-process) reflects in the UI within ~1.5s without needing an app refocus.
+        .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
+            model.refreshPermissions()
+        }
+        .onAppear { model.refreshPermissions() }
     }
 }
 
@@ -512,20 +537,27 @@ private struct PrimaryCTA: View {
     }
 }
 
-/// Back (plain) + Continue (gold, dims + shakes when disabled).
+/// Back (plain) + optional Skip + Continue (gold, dims + shakes when disabled).
 private struct NavRow: View {
     let onBack: () -> Void
     let continueLabel: String
     let continueEnabled: Bool
     let bump: Int
+    var onSkip: (() -> Void)? = nil
     let onContinue: () -> Void
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack {
+        HStack(spacing: 16) {
             Button("Back", action: onBack).buttonStyle(.plain)
                 .font(theme.body).foregroundStyle(theme.textSecondary)
             Spacer()
+            // Escape hatch when something can't be granted live (or a backend isn't built yet) — only
+            // shown while Continue is still gated, so a fully-granted flow stays clean.
+            if let onSkip, !continueEnabled {
+                Button("Skip for now", action: onSkip).buttonStyle(.plain)
+                    .font(theme.body).foregroundStyle(theme.textTertiary)
+            }
             Button(action: onContinue) {
                 Text(continueLabel).font(.system(size: 14, weight: .medium))
                     .foregroundStyle(theme.goldInk)

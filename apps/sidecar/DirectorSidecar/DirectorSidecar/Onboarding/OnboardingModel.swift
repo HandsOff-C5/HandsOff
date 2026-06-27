@@ -28,8 +28,6 @@ final class OnboardingModel {
         var checkCua: () async -> (ready: Bool, detail: String)
         /// Apply the chosen edge to the live rail panel (re-anchors immediately).
         var applyRailEdge: (RailEdge) -> Void
-        /// Bring the Home dashboard window forward.
-        var openHome: () -> Void
     }
 
     private let actions: Actions
@@ -141,9 +139,14 @@ final class OnboardingModel {
     }
 
     func tryContinue() {
-        if canContinue { advance(by: 1); if step == .ready { /* land */ } }
+        if canContinue { advance(by: 1) }
         else { continueBump += 1 }
     }
+
+    /// Escape hatch: jump to the Ready step regardless of grant state. For iterating on the rest of
+    /// the journey + getting into the app when a permission can't read live (signature reset, the
+    /// screen-recording relaunch quirk) or a backend like the CUA daemon isn't built yet.
+    func skip() { step = .ready }
 
     func isGranted(_ state: PermissionState) -> Bool { state == .granted }
 
@@ -158,12 +161,11 @@ final class OnboardingModel {
 
     // MARK: finish
 
-    /// Persist completion + edge, apply the edge live, and bring Home forward. The view closes the
-    /// onboarding window itself (it owns `dismissWindow`).
+    /// Persist completion + edge and apply the edge live. The view drives the window transition
+    /// (open Home, close onboarding) since it owns openWindow/dismissWindow.
     func finish() {
         AppPreferences.onboardingCompleted = true
         AppPreferences.railEdge = railEdge
         actions.applyRailEdge(railEdge)
-        actions.openHome()
     }
 }
