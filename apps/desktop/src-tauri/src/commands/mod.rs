@@ -6,6 +6,7 @@ pub mod head_track;
 pub mod hotkey;
 pub mod intent;
 pub mod lifecycle;
+pub mod observability;
 pub mod overlay;
 pub mod permissions;
 pub mod readiness;
