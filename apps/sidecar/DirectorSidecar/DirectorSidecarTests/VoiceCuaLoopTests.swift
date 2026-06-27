@@ -416,8 +416,11 @@ struct VoiceCuaLoopTests {
         #expect(killEntry?.taint == .attacker_influenceable)
         #expect(killEntry?.args.contains { $0.name == "pid" && $0.taint == .attacker_influenceable } == true)
         #expect(killEntry?.verified == true)
-        // The chain stays internally consistent (tamper-evident link unbroken).
-        #expect(loop.committedAuditChain.first?.prevHash == "")
+        // The chain stays internally consistent (tamper-evident link unbroken): the genesis entry
+        // starts the chain AND the second entry links to the first entry's hash.
+        #expect(scrollEntry?.prevHash == "")
+        #expect(killEntry?.prevHash == scrollEntry?.hash)
+        #expect(scrollEntry?.hash != killEntry?.hash)
     }
 
     // FINDING 2 (audit prefix): a failed dispatch commits only the steps that actually ran, each with
@@ -443,5 +446,8 @@ struct VoiceCuaLoopTests {
         #expect(loop.committedAuditChain.first?.verified == false)
         #expect(loop.committedAuditChain.last?.action == "scroll")
         #expect(loop.committedAuditChain.last?.verified == true)
+        // The committed entries mirror EXACTLY what the driver actually dispatched (no phantom
+        // committed step the driver never ran): committed actions == recorded driver calls, in order.
+        #expect(loop.committedAuditChain.map(\.action) == (await driver.recordedCalls()))
     }
 }
