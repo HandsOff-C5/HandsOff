@@ -102,10 +102,15 @@ jobs:
       # The shared `DirectorSidecar` scheme builds only the app + the unit-test target — the
       # XCUITest target (which hangs unattended) is excluded, so it is never compiled here.
       - name: Build + run unit tests (no signing; unit target only)
+        # Per-test time allowances turn a hung test into a named failure (instead of wedging the
+        # whole job): any test exceeding the allowance fails by name and the run continues.
         run: |
           xcodebuild test \
             -project DirectorSidecar.xcodeproj \
             -scheme DirectorSidecar \
             -destination 'platform=macOS' \
             -only-testing:DirectorSidecarTests \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 60 \
+            -maximum-test-execution-time-allowance 120 \
             CODE_SIGNING_ALLOWED=NO
