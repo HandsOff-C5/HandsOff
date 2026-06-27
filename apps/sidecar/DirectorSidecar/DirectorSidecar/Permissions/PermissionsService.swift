@@ -119,9 +119,35 @@ enum PermissionsService {
         AXIsProcessTrusted() ? .granted : .denied
     }
 
-    /// Screen Recording read without prompting (`CGPreflightScreenCaptureAccess`).
+    /// Screen Recording read without prompting. `CGPreflightScreenCaptureAccess()` CACHES its first
+    /// result for the life of the process, so once it answers false at launch it keeps answering
+    /// false even after the user grants access mid-session — only a relaunch clears it. To reflect a
+    /// live grant, cross-check the window list: with Screen Recording access, other apps' on-screen
+    /// windows expose `kCGWindowName`; without it macOS withholds those titles. This is a passive
+    /// read (it never triggers the prompt) and is not subject to the preflight cache.
     static func screenRecordingState() -> PermissionState {
-        CGPreflightScreenCaptureAccess() ? .granted : .denied
+        if CGPreflightScreenCaptureAccess() { return .granted }
+        return windowTitlesVisible() ? .granted : .denied
+    }
+
+    /// True when at least one other app's normal (layer-0) on-screen window exposes a non-empty
+    /// title — only possible when this process holds Screen Recording access.
+    private static func windowTitlesVisible() -> Bool {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let infos = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        let myPid = ProcessInfo.processInfo.processIdentifier
+        for info in infos {
+            let pid = (info[kCGWindowOwnerPID as String] as? pid_t) ?? -1
+            guard pid != myPid else { continue }
+            let layer = (info[kCGWindowLayer as String] as? Int) ?? 0
+            guard layer == 0 else { continue } // skip dock/menubar/overlay layers
+            if let name = info[kCGWindowName as String] as? String, !name.isEmpty {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: Grant/manage actions (trigger the OS prompt or deep-link Settings)

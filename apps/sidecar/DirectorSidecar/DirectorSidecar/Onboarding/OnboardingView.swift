@@ -289,9 +289,24 @@ private struct PermissionsStep: View {
             CuaHealthRow(phase: model.cua, detail: model.cuaDetail) { Task { await model.runCuaCheck() } }
                 .padding(.bottom, 10)
 
-            Text("Enabled something in System Settings but still shown as needed? macOS ties Screen Recording (and rebuilt-app grants) to a relaunch — quit and reopen Director to apply.")
-                .font(.system(size: 10)).foregroundStyle(theme.textTertiary)
-                .multilineTextAlignment(.center).frame(maxWidth: 440).padding(.bottom, 16)
+            if model.accessibility != .granted || model.screen != .granted {
+                VStack(spacing: 8) {
+                    Text("Enabled in System Settings but still shown as needed? macOS often needs a relaunch to apply Accessibility / Screen Recording — and a rebuilt-and-resigned app gets a new identity, so its old grant no longer matches (remove stale “Director” rows in Settings, then re-grant).")
+                        .font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                        .multilineTextAlignment(.center).lineSpacing(1).frame(maxWidth: 460)
+                    HStack(spacing: 18) {
+                        Button("Recheck now") { model.refreshPermissions() }
+                            .buttonStyle(.plain).font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.accentOnSurface)
+                        Button("Relaunch Director") { relaunchDirector() }
+                            .buttonStyle(.plain).font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.accentOnSurface)
+                    }
+                }
+                .padding(.bottom, 14)
+            } else {
+                Color.clear.frame(height: 6)
+            }
 
             NavRow(onBack: { model.goBack() }, continueLabel: "Continue",
                    continueEnabled: model.canContinue, bump: model.continueBump,
@@ -599,6 +614,17 @@ private struct DividerLabel: View {
                 .foregroundStyle(theme.textTertiary).fixedSize()
             Rectangle().fill(theme.separator).frame(height: 1)
         }
+    }
+}
+
+/// Quit and reopen Director — the reliable way to apply a Screen Recording / Accessibility grant
+/// macOS won't surface to the running process (the preflight cache + signature re-validation both
+/// clear on a fresh launch). Launches a new instance via LaunchServices, then terminates this one.
+private func relaunchDirector() {
+    let config = NSWorkspace.OpenConfiguration()
+    config.createsNewApplicationInstance = true
+    NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { _, _ in
+        Task { @MainActor in NSApp.terminate(nil) }
     }
 }
 
