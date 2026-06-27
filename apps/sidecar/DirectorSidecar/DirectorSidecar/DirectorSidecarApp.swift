@@ -12,6 +12,7 @@
 import SwiftUI
 import AppKit
 import OSLog
+import ApplicationServices
 
 /// The overlay/HUD panels order-front *without* activating (by design), so nothing brings the app
 /// forward at launch and the Dashboard window never becomes key — leaving its content unclickable
@@ -114,13 +115,21 @@ struct DirectorSidecarApp: App {
     /// the face + hand plugins). The live face/hand owner — hand drives the `.user` cursor, face
     /// drives the gaze region — replacing the separate `HeadPointerService`/`HandLandmarkerService`
     /// camera path (those stay on disk, unused). Held for the app's whole run.
-    private let perception: PerceptionService
+    private let perception: PerceptionService?
     /// C1 fix: the global fn (Globe) capture trigger — a session-wide CGEventTap, so hold-fn-and-speak
     /// works while ANOTHER app is frontmost (the whole hands-off entry point). Replaces the old local
     /// `NSEvent` monitor that only fired while Director itself was the active app. Held for the run.
     private let fnHotkey: FnHotkeyService
 
     init() {
+        // The unit-test target is HOSTED in this app, so launching to run the tests fires this
+        // init(). On a headless CI runner AVFCore is broken (`_kFigVideoQueueNotification_Failed`
+        // missing → 0xBAD4007), so eagerly constructing the camera (PerceptionService → CameraBus →
+        // AVCaptureSession) crashes the host — which xcodebuild restarts per test, a multi-hour
+        // crash-loop. Under XCTest, skip every live service so the host never touches the camera;
+        // unit tests construct exactly what they need directly.
+        let isRunningUnderTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
         let store = BridgeStore()
         let hud = HUDModel()
         let micro = MicroHUDModel()
@@ -188,8 +197,14 @@ struct DirectorSidecarApp: App {
         // app's engine. The loop drives the SAME frames the socket used to deliver (engine.onFrame →
         // dispatch) and the UI's commands route to the loop (the models' command sink IS the engine).
         let replayStore = SupervisionReplayStore.applicationSupport()
+        // #148: dispatch through the HYBRID actuator — IN-PROCESS native AX (the app's own Accessibility
+        // grant) is the DEFAULT for click/type/set_value + window reads; the `cua-driver` is the
+        // fallback only for AX-opaque surfaces. The native window source (#150) decouples point→window
+        // targeting from the driver's empty bundled list.
+        let actionDriver = HybridActuator(
+            inner: services.cua, nativeWindows: { NativeWindowSource.onScreenWindows() })
         let loop = VoiceCuaLoop(
-            driver: services.cua,
+            driver: actionDriver,
             resolve: IntentWorkerConfig.resolver(),
             intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot),
             replayStore: replayStore
@@ -209,6 +224,85 @@ struct DirectorSidecarApp: App {
         store.bridge = engine
         home.bridge = engine
         hud.connection = engine
+
+        // Beat 1 — the look+voice formatted-drop flow ("Hey Director, copy this" → "…drop it here").
+        // Wire the pure `VoiceActionCoordinator` to the real subsystems: the gaze point comes from the
+        // shared head snapshot, text/frame from the in-process AX resolver (#148, the Director's own
+        // grant), the clipboard from `FormattedClipboard`, the paste from `NativeAXActuation`, and the
+        // element brackets ride the same `gazeFocus` fan-out the gaze CV uses.
+        //
+        // Owner gate: `.auditedBypass` for the live demo — there is no voiceprint source yet, so every
+        // verify returns `.bypassed` (LOGGED, never a silent admit). Swapping to `.enforce` plus a real
+        // embedding source (a speaker-encoder over the STT audio) is the remaining live-backend
+        // dependency before this gates on the owner's voice.
+        let beat1OwnerGate = OwnerGate(mode: .auditedBypass)
+        // The tamper-evident sink for owner-gate decisions: an `.auditedBypass` (or a denial) is
+        // appended to the SHA-256 hash-chained AuditLog in ADDITION to OSLog, so the bypass is
+        // discoverable in an immutable chain — not only in a forgeable log stream.
+        let beat1AuditLog = AuditLog()
+        let voiceCoordinator = VoiceActionCoordinator(environment: VoiceActionEnvironment(
+            currentPoint: {
+                guard let p = headSnapshot.current else { return nil }
+                return CGPoint(x: p.x, y: p.y)
+            },
+            readText: { point in
+                guard let element = AXElementResolver.element(at: point) else { return nil }
+                return AXElementResolver.readString(element, kAXSelectedTextAttribute as String)
+                    ?? AXElementResolver.readString(element, kAXValueAttribute as String)
+            },
+            elementFrame: { point in
+                guard let element = AXElementResolver.element(at: point) else { return nil }
+                return AXElementResolver.frame(of: element)
+            },
+            writeClipboard: { content in FormattedClipboard.write(content) },
+            focusElement: { point in
+                // Shift keyboard focus to the gazed element so Cmd+V lands in it. Prefer AX focus
+                // (places the caret in a text field); fall back to the element's native press, then to
+                // a synthesized left-click at the point (mirrors NativeAXActuation's CGEvent style).
+                // Best-effort — a `false` is logged by the coordinator but never aborts the paste.
+                guard let element = AXElementResolver.element(at: point) else {
+                    return postFocusClick(at: point)
+                }
+                if AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success {
+                    return true
+                }
+                if AXElementResolver.press(element) { return true }
+                return postFocusClick(at: point)
+            },
+            paste: { NativeAXActuation.postPaste() },
+            showBrackets: { rect, _ in
+                // Render element-sized gaze brackets over the captured/targeted region. AX frames are
+                // CG-global top-left and `GazeRegion` is virtual-desktop px top-left — the same space.
+                let focus = GazeFocus(
+                    bounds: GazeRegion(x: rect.origin.x, y: rect.origin.y, w: rect.width, h: rect.height),
+                    confidence: 1.0,
+                    sizeClass: "element",
+                    ts: Date().timeIntervalSince1970 * 1000)
+                dispatch(.gaze(focus))
+            },
+            ownerVerify: { beat1OwnerGate.verify([]) },
+            log: { message in DirectorDiagnostics.loop.info("\(message, privacy: .public)") },
+            audit: { action in
+                // Append a tamper-evident record of the owner-gate decision. The id is a deterministic
+                // sequence (the current chain length) — NOT a clock/random value — so it's stable and
+                // unique per commit. `append` stamps prevHash/hash, so "" placeholders are fine here.
+                let seq = beat1AuditLog.count
+                beat1AuditLog.append(AuditEntry(
+                    action: action,
+                    args: [],
+                    taint: .trusted,
+                    conf: 0,
+                    verified: false,
+                    undoToken: UndoToken(id: "owner-gate-\(seq)", action: "owner-gate"),
+                    prevHash: "",
+                    hash: ""))
+            }
+        ))
+        // A consumed Beat 1 command does not also start a goal (see LoopEngine.ingestSpeech). The hook
+        // is invoked from the main-actor speech intake; the coordinator is @MainActor.
+        engine.voiceAction = { [voiceCoordinator] text in
+            voiceCoordinator.handle(transcript: text)
+        }
 
         // The loop's transcript trigger: live STT `.final` events start a goal; partial/final also
         // surface as HUD transcript frames. (Track F bound the mic lifecycle; this is its consumer.)
@@ -235,11 +329,13 @@ struct DirectorSidecarApp: App {
         //   • face → the gaze region (`gazeFocus` topic)         + the head-point intent snapshot
         // The bridge callbacks arrive on the main thread (PerceptionService marshals them); the two
         // snapshots are lock-protected. Wire all four before sensing turns on.
-        let perception = PerceptionService()
-        perception.onCursorPosition = { payload in dispatch(.cursor(pointers: payload.pointers)) }
-        perception.onGazeFocus = { gaze in dispatch(.gaze(gaze)) }
-        perception.onFaceEvidence = { point in headSnapshot.record(point) }
-        perception.onHandEvidence = { referent in gestureSnapshot.record(referent) }
+        // Skip the camera owner entirely under XCTest — constructing it builds an AVCaptureSession
+        // (CameraBus), which crashes the hosted test host on the headless CI runner (broken AVFCore).
+        let perception: PerceptionService? = isRunningUnderTests ? nil : PerceptionService()
+        perception?.onCursorPosition = { payload in dispatch(.cursor(pointers: payload.pointers)) }
+        perception?.onGazeFocus = { gaze in dispatch(.gaze(gaze)) }
+        perception?.onFaceEvidence = { point in headSnapshot.record(point) }
+        perception?.onHandEvidence = { referent in gestureSnapshot.record(referent) }
 
         // Listening toggle (the "fn" of this build): brings the three active overlays up/down. In
         // mock mode it (re)runs the activation loop on each ON; OFF cancels it and clears them.
@@ -269,12 +365,12 @@ struct DirectorSidecarApp: App {
             } else {
                 if on { engine.refreshReadiness() } // re-probe TCC the moment mic/speech matter
                 coordinator.setSensing(on)  // STT lifecycle
-                perception.setSensing(on)   // the one camera: hand → cursor, face → gaze
+                perception?.setSensing(on)   // the one camera: hand → cursor, face → gaze
             }
             #else
             if on { engine.refreshReadiness() } // re-probe TCC the moment mic/speech matter
             coordinator.setSensing(on)  // STT lifecycle
-            perception.setSensing(on)   // the one camera: hand → cursor, face → gaze
+            perception?.setSensing(on)   // the one camera: hand → cursor, face → gaze
             #endif
         }
 
@@ -344,6 +440,7 @@ struct DirectorSidecarApp: App {
             forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
         ) { _ in
             MainActor.assumeIsolated {
+                guard !isRunningUnderTests else { return }
                 surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze, rail: rail,
                                store: store, railEdge: AppPreferences.railEdge.controllerEdge,
                                onOpenHome: { store.send(.openHome) })
@@ -369,7 +466,7 @@ struct DirectorSidecarApp: App {
                 // Track F: begin consuming the head-pointer feed for the app's life (camera stays
                 // off until Listening turns sensing on). Deferred to launch alongside the surfaces.
                 coordinator.start()
-                perception.start()  // parity; the camera itself comes up on setSensing(true)
+                perception?.start()  // parity; the camera itself comes up on setSensing(true)
                 // First-run permissions flow: explicitly request speech + microphone + camera so
                 // the OS prompts appear and the app registers in the Speech Recognition pane (which
                 // cannot be pre-granted in System Settings — the app MUST request once). Without
@@ -402,7 +499,7 @@ struct DirectorSidecarApp: App {
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { _ in
-            MainActor.assumeIsolated { coordinator.teardown(); perception.teardown() }
+            MainActor.assumeIsolated { coordinator.teardown(); perception?.teardown() }
         }
 
         #if DEBUG
@@ -420,11 +517,11 @@ struct DirectorSidecarApp: App {
                 )
                 home.seedIntentions(DevMockFleet.intentionFeed(now: Date()))
             }
-        } else {
+        } else if !isRunningUnderTests {
             engine.start()
         }
         #else
-        engine.start()
+        if !isRunningUnderTests { engine.start() }
         #endif
     }
 
@@ -483,6 +580,21 @@ extension Notification.Name {
     /// the deferred startup of permission-prompting services (the fn capture tap) so first launch is
     /// only the Welcome window.
     static let directorEnterApp = Notification.Name("DirectorEnterApp")
+}
+
+/// Best-effort focus click — a synthesized left-click at a CG-global point to place the keyboard caret
+/// when AX focus/press is unavailable (mirrors `NativeAXActuation`'s CGEvent style). Returns whether
+/// the events were posted; the Beat 1 paste path treats a `false` as non-fatal (logged, not aborting).
+private func postFocusClick(at point: CGPoint) -> Bool {
+    guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
+                             mouseCursorPosition: point, mouseButton: .left),
+          let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
+                           mouseCursorPosition: point, mouseButton: .left) else {
+        return false
+    }
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+    return true
 }
 
 /// Wires `store.onOpenHome` (rail ⤢ + menu "Open Home") to SwiftUI's `openWindow`, captured from an

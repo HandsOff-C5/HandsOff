@@ -53,9 +53,20 @@ final class VoiceCuaLoop {
 
     private let sessions: SupervisionSessionStore
     private let audit: ActionAuditStore
+    /// Phase 4 safety: the ported raise-never-lower risk policy (I9). An ADDITIONAL invariant on
+    /// top of the per-call ToolCallGate — it can only RAISE the gate to approval, never relax it.
+    private let riskGate = RiskGate()
+    /// Phase 4 safety: the ported SHA-256 hash-chained, append-only audit log (NFR-8). Mirrors each
+    /// committed step alongside the existing `audit` ActionAuditStore so commits are tamper-evident.
+    private let auditChain = AuditLog()
     private var goalRun: GoalRunState?
     /// Armed by the user interrupt; the loop checks it at every await boundary and stops cleanly.
     private var interrupted = false
+
+    /// Verification seam (NFR-8): the committed entries of the tamper-evident hash chain, read-only.
+    /// Lets the audit/UI layer and tests confirm WHAT was committed (action, taint-tagged args, and
+    /// each step's verify outcome) without widening the AuditLog's append-only writer surface.
+    var committedAuditChain: [AuditEntry] { auditChain.entries }
 
     /// Per-goal autonomous-loop ceiling on EXECUTED tool calls (U3 / KD6). Perception ticks are free.
     static let defaultToolCallBudget = 30
@@ -172,11 +183,23 @@ final class VoiceCuaLoop {
         }
         let latest = observations.last
         let surface = latest?.state?.surface ?? latest?.windows.first
-        let pointing: [Contracts.PointingEvidence] = surface.map {
+        var pointing: [Contracts.PointingEvidence] = surface.map {
             [Contracts.PointingEvidence(
                 source: .activeWindow, confidence: 1, strategy: "goal-loop-live-observation",
                 surface: $0, cursor: nil)]
         } ?? run.baseInput.pointingEvidence
+        // #147: re-inject the carried referent as pointing evidence so the resolver re-sees the
+        // previously bound deictic target across ticks — the live-observation rebuild above would
+        // otherwise drop it, losing the binding. No coordinates are fabricated: the referent's own
+        // source + confidence carry it forward and its id rides in `strategy`; surface/cursor stay
+        // nil (a SelectedReferent has no bounds to invent).
+        if let referent = run.referent {
+            pointing.append(Contracts.PointingEvidence(
+                source: referent.source.asPointingSource,
+                confidence: referent.confidence,
+                strategy: "goal-loop-carried-referent:\(referent.id)",
+                surface: nil, cursor: nil))
+        }
         let candidates = (latest?.windows.isEmpty == false) ? latest!.windows : run.baseInput.surfaceCandidates
         return run.baseInput.with(
             pointingEvidence: pointing, surfaceCandidates: candidates, goalSession: goalSession)
@@ -325,6 +348,11 @@ final class VoiceCuaLoop {
         if stopIfInterrupted(run, readyIntent.input, at: timestamp()) { return }
         let runningAt = timestamp()
         let approvalState: Contracts.SupervisionAuditEvent.ToolCallApproval = approved ? .approved : .auto
+        // Phase 4 safety (FINDING 1): the provenance taint for THIS action's args, derived from how
+        // the tick was grounded — a screen-scraped `active_window` observation is attacker-controllable,
+        // on-device perception is trusted. Feeds both the RiskGate (a tainted arg escalates to approval)
+        // and the hash-chained audit (the committed evidence carries the real, taint-tagged inputs).
+        let inputTaint = Self.inputTaint(readyIntent.input)
 
         // Loop-dedup guard (KD2 recovery floor): refuse to re-dispatch a (tool,args) that already
         // failed this goal — stop with a clear blocked reason instead of looping the dead action to
@@ -337,6 +365,32 @@ final class VoiceCuaLoop {
             runResult = PlanRunResult(status: .blocked, result: result)
             finishGoal(run, .blocked, runningAt)
             return
+        }
+
+        // Phase 4 safety: the ported RiskGate (I9) — an ADDITIONAL raise-never-lower invariant on
+        // top of the per-call gate below (NOT a replacement; the StepDispatch guard still runs). It
+        // re-derives each step's risk floor from the verb alone (the model may only RAISE it), so an
+        // unapproved step whose blast radius needs a greenlight blocks the whole tick here before any
+        // dispatch. Gating only applies when there is no approval; an approved run skips it, exactly
+        // like the per-call gate — so RiskGate can only ever raise the gate, never lower it.
+        if !approved {
+            for step in readyIntent.actionPlan.actionPlan {
+                let verb = riskGateVerb(for: step)
+                let call = ToolCall(
+                    verb: verb,
+                    args: actionArgs(for: step, taint: inputTaint),
+                    modelClaimedRisk: readyIntent.actionPlan.riskLevel)
+                if riskGate.gateToolCall(call).decision == .requiresApproval {
+                    let blocked = Contracts.CuaActionResult.blocked(
+                        reason: "RiskGate requires approval for \(verb)", state: nil)
+                    DirectorDiagnostics.loop.notice("riskgate blocked action session=\(run.sessionId, privacy: .public) verb=\(verb, privacy: .public)")
+                    session = sessions.run(run.sessionId, runningAt)
+                    recordToolCalls(run, readyIntent, observation, approvalState, blocked, runningAt)
+                    runResult = PlanRunResult(status: .blocked, result: blocked)
+                    finishGoal(run, .blocked, runningAt)
+                    return
+                }
+            }
         }
 
         // Per-call gate (U2): ask the gate for EVERY step before dispatch, deriving the gate from
@@ -355,10 +409,27 @@ final class VoiceCuaLoop {
         runResult = PlanRunResult(status: .running)
         // Dispatch every step through the GENERIC driver passthrough (`driver.call`, U1) so the full
         // 36-tool surface is reachable. Stop at the first failure and feed it forward for recovery.
-        let (actionResult, failedSignature) = await dispatchPlan(readyIntent.actionPlan.actionPlan)
+        let (actionResult, failedSignature, outcomes) = await dispatchPlan(readyIntent.actionPlan.actionPlan)
         recordToolCalls(run, readyIntent, observation, approvalState, actionResult, runningAt)
         runResult = PlanRunResult.fromActionResult(actionResult)
         auditEvents = audit.forSession(run.sessionId)
+
+        // FINDING 2 / Phase 4 safety: mirror ONLY the steps that ACTUALLY executed into the
+        // hash-chained, append-only AuditLog (NFR-8 tamper-evidence) — never the unexecuted tail of
+        // a plan that stopped at a failed step. Each entry's `verified` is THAT step's real dispatch
+        // outcome, not one shared batch flag, so a partial dispatch never logs an unrun step as a
+        // committed success. `append` stamps the chain link, so we pass empty prevHash/hash and let
+        // it fill them; `conf` carries the bound referent's confidence (else 1.0).
+        let conf = readyIntent.referent?.confidence ?? run.referent?.confidence ?? 1.0
+        for outcome in outcomes {
+            let verb = riskGateVerb(for: outcome.step)
+            let args = actionArgs(for: outcome.step, taint: inputTaint)
+            let taint: Taint = args.contains { $0.taint == .attacker_influenceable } ? .attacker_influenceable : .trusted
+            auditChain.append(AuditEntry(
+                action: verb, args: args, taint: taint, conf: conf, verified: outcome.succeeded,
+                undoToken: UndoToken(id: run.sessionId + outcome.step.id, action: verb),
+                prevHash: "", hash: ""))
+        }
 
         let ranRun = GoalRunState(
             sessionId: run.sessionId,
@@ -381,26 +452,41 @@ final class VoiceCuaLoop {
             actionId: readyIntent.actionPlan.id, result: actionResult))
     }
 
+    /// The per-step result of a dispatch — the step and the typed result it produced. The audit
+    /// mirror appends one entry per executed outcome (FINDING 2), so a partial dispatch never logs
+    /// the unrun tail of a plan as committed.
+    private struct StepOutcome {
+        let step: Contracts.ActionStep
+        let result: Contracts.CuaActionResult
+        var succeeded: Bool {
+            if case .succeeded = result { return true }
+            return false
+        }
+    }
+
     /// Execute a tick's steps in order through `driver.call`, normalizing each driver result. Stops
     /// at the first non-success so a failed step is surfaced for recovery; the last step's result
-    /// represents the tick. The contract `tool_call.args` are bridged onto the driver-passthrough
-    /// `JSONValue` family at the boundary (PORTING.md notes 4/6).
+    /// represents the tick. Returns the executed-prefix `outcomes` (one per step actually dispatched,
+    /// ending at the failed step) so the caller audits only what ran. The contract `tool_call.args`
+    /// are bridged onto the driver-passthrough `JSONValue` family at the boundary (PORTING.md notes 4/6).
     private func dispatchPlan(
         _ steps: [Contracts.ActionStep]
-    ) async -> (result: Contracts.CuaActionResult, failedSignature: String?) {
+    ) async -> (result: Contracts.CuaActionResult, failedSignature: String?, outcomes: [StepOutcome]) {
+        var outcomes: [StepOutcome] = []
         var last = Contracts.CuaActionResult.succeeded(summary: "No action", state: nil)
         for step in steps {
             let (tool, args) = StepDispatch.driverCallForStep(step)
             DirectorDiagnostics.loop.info("dispatch tool=\(tool, privacy: .public) arg_keys=\(args.keys.sorted().joined(separator: ","), privacy: .public)")
             let callResult = await driver.call(tool: tool, input: .object(args.mapValues(\.asDriverValue)))
             last = cuaResultToActionResult(callResult, summary: "Called \(tool)")
+            outcomes.append(StepOutcome(step: step, result: last))
             guard case .succeeded = last else {
                 DirectorDiagnostics.loop.error("dispatch failed tool=\(tool, privacy: .public) result=\(Self.actionResultSummary(last), privacy: .public)")
-                return (last, ActionDedup.callSignature(step))
+                return (last, ActionDedup.callSignature(step), outcomes)
             }
             DirectorDiagnostics.loop.info("dispatch succeeded tool=\(tool, privacy: .public)")
         }
-        return (last, nil)
+        return (last, nil, outcomes)
     }
 
     // MARK: Approval surface
@@ -451,6 +537,72 @@ final class VoiceCuaLoop {
 
     // MARK: Helpers
 
+    /// Phase 4 safety: the verb the RiskGate keys its blast-radius floor off. The typed kinds map to
+    /// their own wire verb; a `tool_call` uses its validated driver tool's wire name. (Distinct from
+    /// StepDispatch.toolNameForStep, which folds inspect/screenshot onto get_window_state — RiskGate
+    /// classifies them as their own read-only verbs.)
+    private func riskGateVerb(for step: Contracts.ActionStep) -> String {
+        switch step {
+        case let .toolCall(_, _, tool, _): return tool.rawValue
+        case .clickElement: return "click"
+        case .typeText: return "type_text"
+        case .setValue: return "set_value"
+        case .inspectWindowState: return "inspect_window_state"
+        case .captureScreenshot: return "capture_screenshot"
+        case .launchApp: return "launch_app"
+        }
+    }
+
+    /// Phase 4 safety (FINDING 1): the provenance taint for an action's args, derived from how the
+    /// tick was grounded. On-device perception (voice ASR, gesture/gaze/head body tracking) is
+    /// `.trusted`; a live `active_window` AX/OCR scrape is content an attacker can place on screen,
+    /// so any arg the resolver derived from a screen-grounded tick is `.attacker_influenceable`.
+    /// Over-tainting only ever gates MORE — the safe direction (mirrors RiskGate's destructive-token
+    /// policy). No screen grounding → the args trace only to on-device perception → `.trusted`.
+    private static func inputTaint(_ input: Contracts.IntentInput) -> Taint {
+        input.pointingEvidence.contains { $0.source == .activeWindow }
+            ? .attacker_influenceable : .trusted
+    }
+
+    /// Phase 4 safety (FINDING 1): the gate/audit args for one step, each tagged with the action's
+    /// provenance `taint`. The generic `tool_call` carries flat snake_case args; the typed kinds
+    /// expose their value-bearing payload (`text`/`value`/`app_name`/`bundle_id`). Pure target
+    /// references (click/inspect/screenshot element indices) carry no attacker payload, so they
+    /// commit with no arg list ([] is acceptable per NFR-8's evidence shape). Feeds BOTH
+    /// `RiskGate.gateToolCall` (so a tainted arg escalates to approval) and the hash-chained audit
+    /// (so committed evidence records the real, taint-tagged inputs) — never an empty / hardcoded
+    /// `.trusted` stand-in.
+    private func actionArgs(for step: Contracts.ActionStep, taint: Taint) -> [ActionArg] {
+        switch step {
+        case let .toolCall(_, _, _, args):
+            return args.keys.sorted().map { key in
+                ActionArg(name: key, value: Self.auditArgValue(args[key]!), taint: taint)
+            }
+        case let .typeText(_, _, _, text):
+            return [ActionArg(name: "text", value: text, taint: taint)]
+        case let .setValue(_, _, _, value):
+            return [ActionArg(name: "value", value: value, taint: taint)]
+        case let .launchApp(_, _, appName, bundleId):
+            var args = [ActionArg(name: "app_name", value: appName, taint: taint)]
+            if let bundleId { args.append(ActionArg(name: "bundle_id", value: bundleId, taint: taint)) }
+            return args
+        case .clickElement, .inspectWindowState, .captureScreenshot:
+            return []
+        }
+    }
+
+    /// A flat string form of a `tool_call` arg value for the audit fingerprint.
+    private static func auditArgValue(_ value: Contracts.JSONValue) -> String {
+        switch value {
+        case .null: return "null"
+        case let .bool(b): return String(b)
+        case let .number(n): return String(n)
+        case let .string(s): return s
+        case let .array(a): return "[\(a.count)]"
+        case let .object(o): return "{\(o.count)}"
+        }
+    }
+
     /// The controller's local `blockedIntent` (always status "blocked"): a terminal non-ready intent
     /// with no gate and no agent.
     private func blockedIntent(
@@ -491,6 +643,19 @@ final class VoiceCuaLoop {
         case let .succeeded(summary, _): return "succeeded \(DirectorDiagnostics.clipped(summary, max: 160))"
         case let .failed(error, _): return "failed \(DirectorDiagnostics.clipped(error, max: 160))"
         case let .blocked(reason, _): return "blocked \(DirectorDiagnostics.clipped(reason, max: 160))"
+        }
+    }
+}
+
+// #147: map a persisted referent's modality onto the resolver's pointing-evidence source so a
+// carried referent re-enters the resolver as the same deictic source it was originally bound from.
+private extension Contracts.ReferentSource {
+    var asPointingSource: Contracts.PointingEvidence.Source {
+        switch self {
+        case .gesture: return .gesture
+        case .gaze: return .gaze
+        case .head: return .head
+        case .fusion: return .fusion
         }
     }
 }

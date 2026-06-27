@@ -84,17 +84,33 @@ jobs:
     # version, pin it with maxim-lobanov/setup-xcode.
     runs-on: macos-latest
     continue-on-error: true
+    # Backstop: the unit suite builds+runs in a couple of minutes; a run that exceeds this is a hang,
+    # not slowness (e.g. the hosted host launching live services on the headless runner). Fail fast
+    # instead of burning the full default job budget.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/sidecar/DirectorSidecar
     steps:
       - uses: actions/checkout@v4
+      # Pin to the runner's latest installed stable Xcode (xcode-select only — no download) so the
+      # build doesn't fall back to an older default toolchain.
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
+        with:
+          xcode-version: latest-stable
       - run: xcodebuild -version
+      # The shared `DirectorSidecar` scheme builds only the app + the unit-test target — the
+      # XCUITest target (which hangs unattended) is excluded, so it is never compiled here.
       - name: Build + run unit tests (no signing; unit target only)
+        # Per-test time allowances turn a hung test into a named failure (instead of wedging the
+        # whole job): any test exceeding the allowance fails by name and the run continues.
         run: |
           xcodebuild test \
             -project DirectorSidecar.xcodeproj \
             -scheme DirectorSidecar \
             -destination 'platform=macOS' \
             -only-testing:DirectorSidecarTests \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 60 \
+            -maximum-test-execution-time-allowance 120 \
             CODE_SIGNING_ALLOWED=NO

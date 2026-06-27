@@ -80,9 +80,22 @@ enum HeadPointingFusion {
         head: HeadPoint?,
         windows: [CuaWindow],
         gesture: GestureReferent? = nil,
+        perceptionTarget: (surface: Contracts.SurfaceSnapshot, confidence: Double)? = nil,
         radius: Double = AttentionRanking.defaultRadius
     ) -> Built {
         var evidence: [Contracts.PointingEvidence] = []
+
+        // Perception NBest branch (#150): the live `PerceptionBus` continuously ranks the bias-
+        // corrected hit against the driver window set and `PointingAligner` fuses the modalities into
+        // ONE top window. When present it LEADS the candidate list as a `point-to-window` referent, so
+        // the resolved window the user is pointing at wins the dedup over the coarser head-neighborhood
+        // and display surfaces. Absent (no live bus / no window under the hit) the head/gesture path
+        // below is unchanged — this is purely additive.
+        if let perceptionTarget {
+            evidence.append(Contracts.PointingEvidence(
+                source: .head, confidence: perceptionTarget.confidence, strategy: "point-to-window",
+                surface: perceptionTarget.surface, cursor: nil))
+        }
 
         // Gesture branch (buildPointingEvidence lines 83-96): the locked referent leads, then the
         // wrist-ray cursor position (even without a lock). The cursor entry is skipped when a locked
@@ -107,16 +120,24 @@ enum HeadPointingFusion {
                 source: .head, confidence: 0.5, strategy: "face-tracker-position",
                 surface: nil, cursor: cursor))
 
-            let candidates = AttentionRanking.rank(point: head, windows: windows, radius: radius)
-            for candidate in candidates {
-                evidence.append(Contracts.PointingEvidence(
-                    source: .head, confidence: candidate.score, strategy: "head-neighborhood",
-                    surface: candidate.surface, cursor: cursor))
-            }
-            if candidates.isEmpty {
-                evidence.append(Contracts.PointingEvidence(
-                    source: .head, confidence: 0, strategy: "head-neighborhood-empty",
-                    surface: nil, cursor: cursor))
+            // Two cooperating rankers, ONE answer (no stacking): when the perception aligner already
+            // resolved a leading window (`perceptionTarget`), it IS the point→window answer, so the
+            // AttentionRanking head-neighborhood is SUPPRESSED. AttentionRanking is the FALLBACK ranker,
+            // run only when the aligner had nothing — so the two never stack competing candidate lists.
+            // TODO CONVERGENCE: NBestCluster (ours) and AttentionRanking (theirs) are two rankers doing
+            // the same job over the same window source — collapse to one in a later cleanup.
+            if perceptionTarget == nil {
+                let candidates = AttentionRanking.rank(point: head, windows: windows, radius: radius)
+                for candidate in candidates {
+                    evidence.append(Contracts.PointingEvidence(
+                        source: .head, confidence: candidate.score, strategy: "head-neighborhood",
+                        surface: candidate.surface, cursor: cursor))
+                }
+                if candidates.isEmpty {
+                    evidence.append(Contracts.PointingEvidence(
+                        source: .head, confidence: 0, strategy: "head-neighborhood-empty",
+                        surface: nil, cursor: cursor))
+                }
             }
         }
 
@@ -154,27 +175,60 @@ enum HeadPointingFusion {
 struct HeadPointingIntake: IntentIntake {
     let snapshot: HeadPointSnapshot
     let driver: any CuaLoopDriver
+    /// The on-screen window list the point→window ranking runs against. The LIVE source is NATIVE
+    /// (`NativeWindowSource.onScreenWindows`, CGWindowList) so targeting does NOT depend on the
+    /// cua-driver (#150/#148 — the driver returns empty in the bundled app). A closure (matching
+    /// `PerceptionService.windowSource`) so the composition root injects native + driver-fallback and
+    /// tests feed fixtures. Optional for back-compat: when nil the legacy `driver.listWindows()` path
+    /// is used (existing tests).
+    var windowSource: (() async -> [CuaWindow])? = nil
     /// The hand-gesture lane's latest referent/cursor (the ported `ReferentLoop` output, recorded by
     /// the live gesture consumer). Optional so the head-only path and tests stay unchanged; when nil
     /// no gesture branch is folded in.
     var gesture: GestureSnapshot? = nil
+    /// The perception NBest consumer (#150): the live fused "what is the user pointing at" answer.
+    /// Optional so the legacy head/gesture path and tests stay unchanged; when nil no perception
+    /// branch is folded in. Paired with `screen` to resolve the ranked id back to a real surface.
+    var aligner: PointingAligner? = nil
+    var screen: ScreenSnapshotProvider? = nil
+    /// Confidence the resolved point-to-window referent leads with (#150 U1 — gesture weight 0.9).
+    var perceptionConfidence: Double = 0.9
     var radius: Double = AttentionRanking.defaultRadius
 
     func makeInput(
         for finalTranscript: Contracts.FinalTranscript,
         sessionId: String
     ) async -> Contracts.IntentInput {
+        // Windows from the NATIVE source (#150) when wired; else the legacy driver path (back-compat).
         let windows: [CuaWindow]
-        if case let .succeeded(value) = await driver.listWindows() {
+        if let windowSource {
+            windows = await windowSource()
+        } else if case let .succeeded(value) = await driver.listWindows() {
             windows = value
         } else {
             windows = []
         }
         let gestureReferent = gesture?.current
+
+        // Resolve the perception aligner's fused top window back to a real surface (id → driver
+        // window). Nil unless the live bus ranked a window under the bias-corrected hit.
+        // Resolution order: (1) the FRESHLY FETCHED windows list — avoids a stale screen-cache
+        // miss when the just-retrieved window hasn't propagated to the provider yet; (2) the
+        // ScreenSnapshotProvider cache as a secondary fallback for windows not in the live fetch.
+        var perceptionTarget: (surface: Contracts.SurfaceSnapshot, confidence: Double)? = nil
+        if let aligner, let top = aligner.top() {
+            let win: CuaWindow? = windows.first(where: { $0.id == top.id })
+                ?? screen.flatMap { $0.surface(forId: top.id) }
+            if let win {
+                perceptionTarget = (win.surface, perceptionConfidence)
+            }
+        }
+
         let built = HeadPointingFusion.build(
-            head: snapshot.current, windows: windows, gesture: gestureReferent, radius: radius)
+            head: snapshot.current, windows: windows, gesture: gestureReferent,
+            perceptionTarget: perceptionTarget, radius: radius)
         DirectorDiagnostics.loop.info(
-            "intake head=\(snapshot.current != nil, privacy: .public) gesture=\(gestureReferent?.isEmpty == false, privacy: .public) windows=\(windows.count, privacy: .public) evidence=\(built.pointingEvidence.count, privacy: .public) candidates=\(built.surfaceCandidates.count, privacy: .public)")
+            "intake head=\(snapshot.current != nil, privacy: .public) gesture=\(gestureReferent?.isEmpty == false, privacy: .public) pointToWindow=\(perceptionTarget != nil, privacy: .public) windows=\(windows.count, privacy: .public) evidence=\(built.pointingEvidence.count, privacy: .public) candidates=\(built.surfaceCandidates.count, privacy: .public)")
         return Contracts.IntentInput(
             sessionId: sessionId,
             finalTranscript: finalTranscript,
