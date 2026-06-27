@@ -31,6 +31,9 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeDashboardKey() {
+        // While the onboarding window is up, don't yank Home to the front over it — onboarding is the
+        // intended front surface at first run.
+        if NSApp.windows.contains(where: { $0.title == "Welcome to Director" && $0.isVisible }) { return }
         let dashboard = NSApp.windows.first { $0.title == "Director" }
             ?? NSApp.windows.first { $0.canBecomeKey && !($0 is NSPanel) && !$0.className.contains("StatusBar") }
         dashboard?.makeKeyAndOrderFront(nil)
@@ -63,6 +66,7 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     func start(hud hudModel: HUDModel, micro microModel: MicroHUDModel,
                overlay overlayModel: OverlayModel, gaze: GazeBracketModel,
                rail railModel: RailModel, store: BridgeStore,
+               railEdge: RailController.Edge,
                onOpenHome: @escaping () -> Void) {
         guard !started else { return }   // once only
         started = true
@@ -73,9 +77,15 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
             micro = MicroHUDController(model: microModel, fullHUD: hudModel, onOpenHome: onOpenHome)
         }
         overlay = OverlayController(model: overlayModel, gaze: gaze)
-        // The Right-edge rail — the always-on ambient edge surface (replaces the parked micro-HUD).
-        // It drives its own actions (deactivate / view activity / pause / open) through the store.
-        railController = RailController(model: railModel, edge: .trailing, store: store)
+        // The rail — the always-on ambient edge surface (replaces the parked micro-HUD). It drives
+        // its own actions (deactivate / view activity / pause / open) through the store. Starts on the
+        // persisted onboarding edge (right by default).
+        railController = RailController(model: railModel, edge: railEdge, store: store)
+    }
+
+    /// Flip the live rail to the left/right edge — wired to the onboarding listening-edge picker.
+    func setRailEdge(_ edge: RailController.Edge) {
+        railController?.setEdge(edge)
     }
 }
 
@@ -89,6 +99,9 @@ struct DirectorSidecarApp: App {
     let gaze: GazeBracketModel
     let home: HomeDashboardModel
     let rail: RailModel
+    /// Flow to First Run — the after-download onboarding journey (welcome → primer → permissions →
+    /// ready). Owns its own state; wired to the real permission + rail systems via injected actions.
+    let onboarding: OnboardingModel
     /// ADR 0005 Track D: the in-process engine (the ported `VoiceCuaLoop`) that replaces the
     /// loopback socket as the app's engine of record. Held for the app's whole run.
     private let engine: LoopEngine
@@ -278,12 +291,38 @@ struct DirectorSidecarApp: App {
         // silently kills input to the WHOLE app (Dashboard AND menu bar go dead). Defer to launch.
         let surfaces = SurfaceHost()
         self.surfaces = surfaces
+
+        // Flow to First Run model — wired to the REAL systems: the CUA driver check, the live rail
+        // controller (edge flip), and Home. Permissions are read/triggered directly via
+        // PermissionsService inside the model.
+        self.onboarding = OnboardingModel(actions: OnboardingModel.Actions(
+            checkCua: {
+                switch await services.cua.checkPermissions() {
+                case let .succeeded(report):
+                    let ready = report.driver == .running
+                        && report.accessibility == .granted
+                        && report.screenRecording == .granted
+                    let detail = ready
+                        ? "Daemon running · screen + accessibility ready."
+                        : "Daemon \(report.driver.rawValue) · grants pending."
+                    return (ready, detail)
+                case let .failed(error):
+                    return (false, "Engine check failed: \(error)")
+                case let .blocked(reason):
+                    return (false, "Engine blocked: \(reason)")
+                }
+            },
+            applyRailEdge: { edge in surfaces.setRailEdge(edge.controllerEdge) },
+            openHome: { store.send(.openHome) }
+        ))
+
         NotificationCenter.default.addObserver(
             forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
         ) { _ in
             MainActor.assumeIsolated {
                 surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze, rail: rail,
-                               store: store, onOpenHome: { store.send(.openHome) })
+                               store: store, railEdge: AppPreferences.railEdge.controllerEdge,
+                               onOpenHome: { store.send(.openHome) })
                 // C1 fix: install the global fn capture tap and route its phases to the listening
                 // commands — press-hold → start/stop, double-tap → toggle. Session-wide, so this fires
                 // while another app is frontmost (the entire hands-off entry point), unlike the old
@@ -303,6 +342,9 @@ struct DirectorSidecarApp: App {
                 // cannot be pre-granted in System Settings — the app MUST request once). Without
                 // this the STT path only ever reads `notDetermined` and fails every listen with
                 // "speech recognition not authorized"; the request APIs are no-ops once decided.
+                // Onboarding (when shown) drives permissions via its own buttons, so only auto-prompt
+                // at launch when the onboarding window is NOT showing — avoids a double prompt.
+                if !OnboardingGate.shouldShowAtLaunch {
                 Task {
                     let granted = await PermissionsService.requestMediaPermissions()
                     DirectorDiagnostics.services.info(
@@ -317,6 +359,7 @@ struct DirectorSidecarApp: App {
                     let accessibility = PermissionsService.promptAccessibility()
                     DirectorDiagnostics.services.info(
                         "cua permissions screen_recording=\(screenRecording ? "granted" : "denied", privacy: .public) accessibility=\(accessibility ? "granted" : "denied", privacy: .public)")
+                }
                 }
             }
         }
@@ -376,6 +419,16 @@ struct DirectorSidecarApp: App {
             ThemedRoot { ContentView() }
         }
 
+        // Flow to First Run — the after-download onboarding window. Content-sized with a hidden
+        // titlebar (macOS still draws the traffic lights), centered. Opened at launch by
+        // HomeOpenWiring when OnboardingGate says so; it closes itself via dismissWindow on finish.
+        Window("Welcome to Director", id: OnboardingScene.id) {
+            ThemedRoot { OnboardingView(model: onboarding) }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
         // G1 product entry: menu-bar status item + NATIVE pull-down menu. The `.menu` style renders
         // a real NSMenu (system liquid-glass material + native selection highlight), so MenuContent
         // only declares menu items — no custom window/blur/hover. (The label stays themed for the
@@ -406,6 +459,11 @@ private struct HomeOpenWiring: ViewModifier {
                 }
                 // Home is showing → its minimized echo (the rail) hides.
                 rail.setHomeOpen(true)
+                // Flow to First Run: open the onboarding window over Home at launch (every relaunch
+                // while OnboardingGate.alwaysShow is on; otherwise only until completed once).
+                if OnboardingGate.shouldShowAtLaunch {
+                    openWindow(id: OnboardingScene.id)
+                }
             }
             .onDisappear {
                 // Home closed (red-X) → the rail returns as the ambient edge summary.

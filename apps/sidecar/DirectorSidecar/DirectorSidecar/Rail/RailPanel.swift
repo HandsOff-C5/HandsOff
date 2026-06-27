@@ -22,7 +22,9 @@ final class RailController {
 
     private let model: RailModel
     private let store: BridgeStore
-    private let edge: Edge
+    /// Mutable so the onboarding `listenEdge` choice can flip left/right at runtime; `setEdge`
+    /// re-anchors the live panel immediately.
+    private var edge: Edge
     private let inset: CGFloat = 12
     /// The panel is a FIXED width, anchored by its right edge — it never resizes on hover, so the
     /// window can't move and the right edge physically cannot shift. The capsule hugs its content
@@ -62,6 +64,13 @@ final class RailController {
 
     private func applyVisibility() {
         if model.isVisible { show() } else { hide() }
+    }
+
+    /// Flip the rail to the left or right screen edge and re-anchor the live panel. Idempotent.
+    func setEdge(_ edge: Edge) {
+        guard edge != self.edge else { return }
+        self.edge = edge
+        anchor() // no-op if the panel isn't built/visible yet; the new edge sticks for next show()
     }
 
     @objc private func screensChanged() {

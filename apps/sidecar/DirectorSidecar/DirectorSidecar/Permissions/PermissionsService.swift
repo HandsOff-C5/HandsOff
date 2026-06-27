@@ -142,6 +142,21 @@ enum PermissionsService {
         )
     }
 
+    /// Microphone-only (plus speech, which the listening path always needs alongside it) request,
+    /// for the onboarding's per-row "Allow". Prompts any undetermined grant; no-op once decided.
+    static func requestMicrophoneAndSpeech() async -> (microphone: PermissionState, speech: PermissionState) {
+        await requestSpeechAuthorization()
+        _ = await AVCaptureDevice.requestAccess(for: .audio)
+        return (microphoneState(), speechRecognitionState())
+    }
+
+    /// Camera-only request, for the onboarding's per-row "Allow". Prompts if undetermined; the grant
+    /// registers under the app's bundle id so the head-track service inherits it.
+    static func requestCamera() async -> PermissionState {
+        _ = await AVCaptureDevice.requestAccess(for: .video)
+        return cameraState()
+    }
+
     /// Trigger the Screen Recording prompt AND register the app in the Screen Recording
     /// list so the user can toggle it on. Unlike the read-only preflight the probe uses,
     /// this REQUESTS access. Returns whether access is already granted (a fresh grant
