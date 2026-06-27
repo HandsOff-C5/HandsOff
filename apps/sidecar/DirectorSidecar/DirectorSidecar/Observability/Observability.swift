@@ -70,6 +70,7 @@ enum ObservabilityPrivacyError: Error, Equatable, LocalizedError {
     case emptyField(String)
     case invalidTimestamp(String)
     case negativeDurationMs(Double)
+    case nonFiniteNumber(String)
     case forbiddenAttributeKey(String)
     case missingKindField(String)
 
@@ -78,6 +79,7 @@ enum ObservabilityPrivacyError: Error, Equatable, LocalizedError {
         case let .emptyField(field): return "observability field must not be empty: \(field)"
         case let .invalidTimestamp(timestamp): return "observability timestamp must be ISO-8601: \(timestamp)"
         case let .negativeDurationMs(value): return "observability span duration must be nonnegative: \(value)"
+        case let .nonFiniteNumber(field): return "observability number must be finite: \(field)"
         case let .forbiddenAttributeKey(key): return "observability attributes must not include private/raw field name: \(key)"
         case let .missingKindField(field): return "observability record is missing required field: \(field)"
         }
@@ -92,10 +94,13 @@ enum ObservabilityPrivacy {
     ]
 
     static func validateAttributes(_ attributes: [String: ObservabilityAttributeValue]) throws {
-        for key in attributes.keys {
+        for (key, value) in attributes {
             guard !key.isEmpty else { throw ObservabilityPrivacyError.emptyField("attributes.key") }
             if isForbiddenAttributeKey(key) {
                 throw ObservabilityPrivacyError.forbiddenAttributeKey(key)
+            }
+            if case let .number(number) = value, !number.isFinite {
+                throw ObservabilityPrivacyError.nonFiniteNumber("attributes.\(key)")
             }
         }
     }
@@ -166,6 +171,7 @@ struct ObservabilityRecord: Equatable, Sendable, Codable {
             spanId: spanId
         )
         try ObservabilityPrivacy.validateAttributes(attributes)
+        if let durationMs, !durationMs.isFinite { throw ObservabilityPrivacyError.nonFiniteNumber("durationMs") }
         if let durationMs, durationMs < 0 { throw ObservabilityPrivacyError.negativeDurationMs(durationMs) }
         try Self.validateKind(
             kind,
@@ -220,7 +226,8 @@ struct ObservabilityRecord: Equatable, Sendable, Codable {
             guard status != nil else { throw ObservabilityPrivacyError.missingKindField("status") }
         case .metric:
             try validateRequired(name, "name")
-            guard value != nil else { throw ObservabilityPrivacyError.missingKindField("value") }
+            guard let value else { throw ObservabilityPrivacyError.missingKindField("value") }
+            guard value.isFinite else { throw ObservabilityPrivacyError.nonFiniteNumber("value") }
             try validateOptional(unit, "unit")
         case .analytics:
             guard stage != nil else { throw ObservabilityPrivacyError.missingKindField("stage") }

@@ -127,6 +127,42 @@ private let fixedObservabilityTime = "2026-06-27T12:00:00.000Z"
     }
 }
 
+@Test func rejectsNonFiniteNumericFields() {
+    #expect(throws: ObservabilityPrivacyError.nonFiniteNumber("value")) {
+        _ = try ObservabilityRecord(
+            kind: .metric,
+            timestamp: fixedObservabilityTime,
+            component: "director.loop",
+            event: "resolver.latency",
+            name: "resolver_latency_ms",
+            value: .infinity,
+            unit: "ms"
+        )
+    }
+
+    #expect(throws: ObservabilityPrivacyError.nonFiniteNumber("durationMs")) {
+        _ = try ObservabilityRecord(
+            kind: .span,
+            timestamp: fixedObservabilityTime,
+            component: "director.loop",
+            event: "resolver.resolve",
+            durationMs: .nan,
+            status: .ok
+        )
+    }
+
+    #expect(throws: ObservabilityPrivacyError.nonFiniteNumber("attributes.latency_ms")) {
+        _ = try ObservabilityRecord(
+            kind: .log,
+            timestamp: fixedObservabilityTime,
+            component: "director.loop",
+            event: "unsafe",
+            attributes: ["latency_ms": .number(-.infinity)],
+            level: .info
+        )
+    }
+}
+
 @Test func exportPolicyDefaultsToLocalOnlyAndRequiresConsentForRemote() throws {
     let record = try ObservabilityRecord(
         kind: .metric,
