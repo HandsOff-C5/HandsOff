@@ -1,13 +1,22 @@
+import { safeParseObservabilityRecord, type ObservabilityRecord } from "@handsoff/contracts";
+
 const DEFAULT_ASSEMBLYAI_TOKEN_ENDPOINT = "https://streaming.assemblyai.com/v3/token";
 const DEFAULT_EXPIRES_SECONDS = 60;
 const MIN_EXPIRES_SECONDS = 1;
 const MAX_EXPIRES_SECONDS = 600;
+const COMPONENT = "workers.assemblyai-token";
+const ROUTE = "/v1/realtime-token";
 const encoder = new TextEncoder();
+
+interface ObservabilitySink {
+  emit(record: ObservabilityRecord): void;
+}
 
 export interface Env {
   readonly ASSEMBLYAI_API_KEY: string;
   readonly HANDSOFF_APP_TOKEN: string;
   readonly ASSEMBLYAI_TOKEN_ENDPOINT?: string;
+  readonly OBSERVABILITY_SINK?: ObservabilitySink;
 }
 
 interface AssemblyAiTokenResponse {
@@ -15,11 +24,185 @@ interface AssemblyAiTokenResponse {
   readonly expires_in_seconds: unknown;
 }
 
+interface ObservabilityContext {
+  readonly requestId: string;
+  readonly route: string;
+  readonly method: string;
+  readonly sessionId?: string;
+  readonly correlationId: string;
+  readonly traceId: string;
+  readonly spanId: string;
+}
+
+const ERROR_CLASS_BY_CODE: Record<string, string> = {
+  assemblyai_api_key_missing: "AssemblyAiApiKeyMissingError",
+  assemblyai_token_endpoint_invalid: "AssemblyAiTokenEndpointInvalidError",
+  assemblyai_token_request_failed: "AssemblyAiTokenRequestFailedError",
+  handsoff_app_token_missing: "HandsoffAppTokenMissingError",
+  invalid_app_credential: "InvalidAppCredentialError",
+  invalid_assemblyai_token_response: "InvalidAssemblyAiTokenResponseError",
+  invalid_expires_in_seconds: "InvalidExpiresInSecondsError",
+  method_not_allowed: "MethodNotAllowedError",
+  missing_app_credential: "MissingAppCredentialError",
+  not_found: "NotFoundError",
+};
+
 function json(body: unknown, status = 200): Response {
   return Response.json(body, {
     status,
     headers: { "cache-control": "no-store" },
   });
+}
+
+function headerValue(request: Request, name: string): string | null {
+  const value = request.headers.get(name)?.trim();
+  return value ? value : null;
+}
+
+function generatedId(): string {
+  return crypto.randomUUID().replaceAll("-", "");
+}
+
+function traceIdForRequest(request: Request, fallback: string): string {
+  const traceparent = headerValue(request, "traceparent");
+  const match = traceparent?.match(/^00-([a-f0-9]{32})-[a-f0-9]{16}-[a-f0-9]{2}$/i);
+  return match?.[1] ?? fallback;
+}
+
+function methodLabel(method: string): string {
+  return ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"].includes(method)
+    ? method
+    : "OTHER";
+}
+
+function observabilityContext(request: Request, route: string): ObservabilityContext {
+  const requestId = headerValue(request, "x-request-id") ?? generatedId();
+  const correlationId = headerValue(request, "x-correlation-id") ?? requestId;
+  return {
+    requestId,
+    route,
+    method: methodLabel(request.method),
+    sessionId: headerValue(request, "x-handsoff-session-id") ?? undefined,
+    correlationId,
+    traceId: traceIdForRequest(request, correlationId),
+    spanId: headerValue(request, "x-handsoff-span-id") ?? generatedId().slice(0, 16),
+  };
+}
+
+function statusClass(status: number): string {
+  return `${Math.trunc(status / 100)}xx`;
+}
+
+function fallbackErrorClass(status: number): string {
+  return `Http${Math.trunc(status / 100)}xxError`;
+}
+
+async function errorClassForResponse(response: Response): Promise<string | null> {
+  if (response.status < 400) return null;
+  try {
+    const body = (await response.clone().json()) as { error?: unknown };
+    if (typeof body.error === "string") {
+      return ERROR_CLASS_BY_CODE[body.error] ?? fallbackErrorClass(response.status);
+    }
+  } catch {
+    // Body parsing is only for the Worker's own sanitized error envelope.
+  }
+  return fallbackErrorClass(response.status);
+}
+
+function emitRecord(sink: ObservabilitySink | undefined, record: ObservabilityRecord): void {
+  const parsed = safeParseObservabilityRecord(record);
+  if (parsed.success) sink?.emit(parsed.data);
+}
+
+async function emitRequestRecords(
+  sink: ObservabilitySink | undefined,
+  context: ObservabilityContext,
+  response: Response,
+  durationMs: number,
+): Promise<void> {
+  const timestamp = new Date().toISOString();
+  const errorClass = await errorClassForResponse(response);
+  const attributes = {
+    request_id: context.requestId,
+    route: context.route,
+    method: context.method,
+    http_status: response.status,
+    status_class: statusClass(response.status),
+    latency_ms: durationMs,
+    ...(errorClass ? { error_class: errorClass } : {}),
+  };
+  const metricAttributes = {
+    route: context.route,
+    method: context.method,
+    status_class: statusClass(response.status),
+    ...(errorClass ? { error_class: errorClass } : {}),
+  };
+  const base = {
+    timestamp,
+    component: COMPONENT,
+    sessionId: context.sessionId,
+    correlationId: context.correlationId,
+    traceId: context.traceId,
+    spanId: context.spanId,
+  };
+
+  emitRecord(sink, {
+    ...base,
+    kind: "log",
+    level: response.status >= 500 ? "error" : response.status >= 400 ? "warn" : "info",
+    event: "request_finished",
+    attributes,
+  });
+  emitRecord(sink, {
+    ...base,
+    kind: "span",
+    event: "http.server.request",
+    status: errorClass ? "error" : "ok",
+    durationMs,
+    attributes,
+  });
+  emitRecord(sink, {
+    ...base,
+    kind: "metric",
+    event: "worker_request_latency",
+    name: "worker.request.latency_ms",
+    value: durationMs,
+    unit: "ms",
+    attributes: metricAttributes,
+  });
+  if (errorClass === null) return;
+  emitRecord(sink, {
+    ...base,
+    kind: "error",
+    event: "request_failed",
+    errorClass,
+    handled: true,
+    attributes,
+  });
+  emitRecord(sink, {
+    ...base,
+    kind: "metric",
+    event: "worker_request_error",
+    name: "worker.request.error.count",
+    value: 1,
+    unit: "count",
+    attributes: metricAttributes,
+  });
+}
+
+async function observeRequest(
+  request: Request,
+  env: Env,
+  route: string,
+  handler: () => Promise<Response>,
+): Promise<Response> {
+  const started = performance.now();
+  const context = observabilityContext(request, route);
+  const response = await handler();
+  const durationMs = Math.max(0, Math.round((performance.now() - started) * 100) / 100);
+  await emitRequestRecords(env.OBSERVABILITY_SINK, context, response, durationMs);
+  return response;
 }
 
 function readSecret(value: string | undefined, name: string): string | Response {
@@ -142,7 +325,10 @@ async function handleTokenRequest(request: Request, env: Env): Promise<Response>
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname !== "/v1/realtime-token") return json({ error: "not_found" }, 404);
-    return handleTokenRequest(request, env);
+    const route = url.pathname === ROUTE ? ROUTE : "not_found";
+    return observeRequest(request, env, route, async () => {
+      if (url.pathname !== ROUTE) return json({ error: "not_found" }, 404);
+      return handleTokenRequest(request, env);
+    });
   },
 } satisfies ExportedHandler<Env>;
