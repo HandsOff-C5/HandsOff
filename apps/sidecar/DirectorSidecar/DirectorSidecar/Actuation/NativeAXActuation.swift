@@ -6,8 +6,8 @@
 //  side effects fire, using the Director's OWN Accessibility grant (not the `cua-driver`). It composes
 //  the pure policy (route + verify) with the live `AXElementResolver`, and performs the read-back
 //  verify→rollback ported from the rebuild's ActionActuator. It NEVER fakes success: a verb whose
-//  element does not resolve, or whose mutation does not verify, returns a non-success outcome so the
-//  hybrid driver falls back to the `cua-driver` rather than reporting a silent no-op.
+//  element does not resolve falls back to the driver; a resolved mutation that does not verify is
+//  rolled back and surfaced as a failure — never a silent no-op.
 //
 //  This backend sits BEHIND the loop's existing ToolCallGate (every mutating step is gated/approved
 //  before dispatch reaches the driver — see VoiceCuaLoop.runGoalAction → StepDispatch.firstBlockedStep),
@@ -16,13 +16,21 @@
 
 import Foundation
 
-/// The outcome of a native actuation attempt. `verified == true` means the mutation landed and the
-/// read-back confirmed it (or, for a click, the element resolved and the action posted — a click has
-/// no AX-readable field to compare). `verified == false` means a real attempt was made but did NOT
-/// verify (rolled back) → the hybrid router falls back to the driver.
-struct NativeActionOutcome: Equatable, Sendable {
-    let verified: Bool
-    let summary: String
+/// The outcome of a native actuation attempt — a three-way result so the hybrid driver can tell a
+/// "couldn't do it natively" case (→ driver fallback) apart from a "tried natively, it didn't take"
+/// case (→ a failure result; NOT a driver re-attempt, which would double-actuate):
+///   • `verified`     — the mutation landed and the read-back confirmed it (or, for a click, a real
+///                      element resolved and the press/click posted; a click has no AX-readable field
+///                      to compare). → success.
+///   • `failedVerify` — a real native mutation was attempted on a resolved element but the read-back
+///                      did NOT match; the prior value was rolled back. → a FAILURE result, surfaced
+///                      to the loop (never silent), with no driver re-attempt.
+///   • `notResolved`  — no Accessibility trust, an AX-opaque surface, or the element could not be
+///                      resolved → the hybrid driver falls back to the `cua-driver`.
+enum NativeActionOutcome: Equatable, Sendable {
+    case verified(summary: String)
+    case failedVerify(reason: String)
+    case notResolved
 }
 
 #if canImport(ApplicationServices)
@@ -35,13 +43,13 @@ enum NativeAXActuation {
     /// reports the stale value as a mismatch. ~130ms matches the rebuild backend's settle delay.
     private static let settleMicroseconds: useconds_t = 130_000
 
-    // MARK: Action dispatch (AX-first; nil → driver fallback)
+    // MARK: Action dispatch (AX-first; .notResolved → driver fallback)
 
-    /// Attempt a mutating verb in-process. nil = NOT a native candidate now (no trust, or the element
-    /// is AX-opaque/unresolved) → the hybrid router uses the driver. A non-nil outcome carries whether
-    /// the mutation verified.
-    static func perform(_ request: NativeActionRequest) -> NativeActionOutcome? {
-        guard AXElementResolver.isTrusted, let pid = request.pid else { return nil }
+    /// Attempt a mutating verb in-process. `.notResolved` = NOT a native candidate now (no trust, or
+    /// the element is AX-opaque/unresolved) → the hybrid router uses the driver. `.verified`/
+    /// `.failedVerify` mean a real native attempt was made.
+    static func perform(_ request: NativeActionRequest) -> NativeActionOutcome {
+        guard AXElementResolver.isTrusted, let pid = request.pid else { return .notResolved }
         switch request.kind {
         case .click, .rightClick, .doubleClick:
             return performClick(request, pid: pid)
@@ -52,63 +60,66 @@ enum NativeAXActuation {
         }
     }
 
-    /// Resolve a real element (point→element first, then element_index), click its CENTER, and treat
-    /// the click as verified once posted. A click commits app-internal state with no AX-readable field
-    /// to read back, so the verify here is element resolution + a posted action — the honest port of
-    /// the rebuild's verify spirit, NOT the (0,0) stub (which clicked nothing real).
-    private static func performClick(_ request: NativeActionRequest, pid: Int) -> NativeActionOutcome? {
-        // Point→element (the (0,0) fix): if the call carried a point, click exactly there.
-        if let point = request.point, AXElementResolver.element(at: point) != nil {
+    /// Resolve a real element (point→element first, then element_index) and activate it. A click
+    /// commits app-internal state with no AX-readable field to read back, so the verify here is
+    /// element resolution + a posted action — the honest port of the rebuild's verify spirit, NOT the
+    /// (0,0) stub (which clicked nothing real).
+    private static func performClick(_ request: NativeActionRequest, pid: Int) -> NativeActionOutcome {
+        // Point→element (the (0,0) fix): resolve the element under the point; a real control's own
+        // press is the most reliable activation, else click the point directly.
+        if let point = request.point, let element = AXElementResolver.element(at: point) {
+            if request.kind == .click, AXElementResolver.press(element) {
+                return .verified(summary: "native-ax: pressed element at point")
+            }
             postMouseClick(at: point, kind: request.kind)
-            return NativeActionOutcome(verified: true, summary: "native-ax: \(label(request.kind)) at point")
+            return .verified(summary: "native-ax: \(label(request.kind)) at point")
         }
         // Else resolve the element_index against the in-process enumeration and click its center.
         guard let index = request.elementIndex,
               let resolved = AXElementResolver.element(ofPid: pid, atIndex: index) else {
-            return nil  // AX-opaque / index no longer resolves → driver fallback.
+            return .notResolved  // AX-opaque / index no longer resolves → driver fallback.
         }
         // A real AX control's own press is the most reliable left-click; fall back to a CGEvent at
         // the element center for right/double clicks or controls without a press action.
         if request.kind == .click, AXElementResolver.press(resolved.element) {
-            return NativeActionOutcome(verified: true, summary: "native-ax: pressed element \(index)")
+            return .verified(summary: "native-ax: pressed element \(index)")
         }
-        guard let center = AXElementResolver.center(of: resolved.element) else { return nil }
+        guard let center = AXElementResolver.center(of: resolved.element) else { return .notResolved }
         postMouseClick(at: center, kind: request.kind)
-        return NativeActionOutcome(verified: true, summary: "native-ax: \(label(request.kind)) element \(index)")
+        return .verified(summary: "native-ax: \(label(request.kind)) element \(index)")
     }
 
     /// Type into the focused field via CGEvent keystrokes, then VERIFY the focused value reflects the
     /// typed text; on mismatch, roll the field back to its captured prior value (INV-3 spirit).
-    private static func performType(_ request: NativeActionRequest, pid: Int) -> NativeActionOutcome? {
-        guard let text = request.text else { return nil }
-        guard let focused = AXElementResolver.focusedElement(ofPid: pid) else { return nil }
+    private static func performType(_ request: NativeActionRequest, pid: Int) -> NativeActionOutcome {
+        guard let text = request.text else { return .notResolved }
+        guard let focused = AXElementResolver.focusedElement(ofPid: pid) else { return .notResolved }
         let prior = AXElementResolver.readString(focused, kAXValueAttribute)
         postKeystrokes(text)
         usleep(settleMicroseconds)
         let readBack = AXElementResolver.readString(focused, kAXValueAttribute)
         switch NativeActionPolicy.verifyTyped(prior: prior, readBack: readBack, typed: text) {
         case .verified:
-            return NativeActionOutcome(verified: true, summary: "native-ax: typed \(text.count) chars")
+            return .verified(summary: "native-ax: typed \(text.count) chars")
         case .mismatchRollback:
             rollback(focused, to: prior)
-            return NativeActionOutcome(verified: false, summary: "native-ax: type not verified, rolled back")
+            return .failedVerify(reason: "native-ax: type did not verify on AX re-read (rolled back)")
         }
     }
 
     /// Set the field's kAXValue (the cheap AX path), VERIFY by read-back, and on a Chromium/WebKit
     /// misfire fall back to CGEvent keystrokes — re-verifying — before giving up. A final mismatch
-    /// rolls back to the captured prior value and returns unverified (→ driver fallback).
-    private static func performSetValue(_ request: NativeActionRequest, pid: Int) -> NativeActionOutcome? {
-        guard let value = request.value else { return nil }
-        let element = resolveValueTarget(request, pid: pid)
-        guard let element else { return nil }
+    /// rolls back to the captured prior value and reports a failure (never silent).
+    private static func performSetValue(_ request: NativeActionRequest, pid: Int) -> NativeActionOutcome {
+        guard let value = request.value else { return .notResolved }
+        guard let element = resolveValueTarget(request, pid: pid) else { return .notResolved }
         let prior = AXElementResolver.readString(element, kAXValueAttribute)
 
         _ = AXElementResolver.setValue(element, value)
         usleep(settleMicroseconds)
         if NativeActionPolicy.verifySetValue(
             readBack: AXElementResolver.readString(element, kAXValueAttribute), expected: value) == .verified {
-            return NativeActionOutcome(verified: true, summary: "native-ax: set value (\(value.count) chars)")
+            return .verified(summary: "native-ax: set value (\(value.count) chars)")
         }
 
         // AX value-set did not land → CGEvent keystroke fallback through the same surface.
@@ -116,11 +127,11 @@ enum NativeAXActuation {
         usleep(settleMicroseconds)
         if NativeActionPolicy.verifySetValue(
             readBack: AXElementResolver.readString(element, kAXValueAttribute), expected: value) == .verified {
-            return NativeActionOutcome(verified: true, summary: "native-ax: set value via keystroke fallback")
+            return .verified(summary: "native-ax: set value via keystroke fallback")
         }
 
         rollback(element, to: prior)
-        return NativeActionOutcome(verified: false, summary: "native-ax: set value not verified, rolled back")
+        return .failedVerify(reason: "native-ax: set_value did not verify on AX re-read (rolled back)")
     }
 
     /// The element a value mutation targets: an explicit element_index if given, else the app's
@@ -210,7 +221,7 @@ enum NativeAXActuation {
 /// Non-AX platforms (never the macOS app target): native actuation is unavailable, so every attempt
 /// defers to the driver. Present only so the hybrid driver compiles platform-agnostically.
 enum NativeAXActuation {
-    static func perform(_ request: NativeActionRequest) -> NativeActionOutcome? { nil }
+    static func perform(_ request: NativeActionRequest) -> NativeActionOutcome { .notResolved }
     static func windowState(pid: Int, windowId: Int, windows: [CuaWindow]) -> CuaWindowState? { nil }
 }
 

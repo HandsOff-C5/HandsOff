@@ -57,6 +57,9 @@ enum AXElementResolver {
     /// `windowId` has no stable AX counterpart, so the slice targets the app's front window; the
     /// loop observes and acts on the focused app, so pid is the load-bearing key.)
     static func frontWindow(ofPid pid: Int) -> AXUIElement? {
+        // Electron/Chromium targets expose nothing until accessibility is requested — trigger it so a
+        // Slack/Cursor window resolves natively instead of always falling back to the driver (#148).
+        ElectronAccessibility.enable(forPid: pid)
         let app = AXUIElementCreateApplication(pid_t(pid))
         if let focused = copyElement(app, kAXFocusedWindowAttribute) { return focused }
         if let main = copyElement(app, kAXMainWindowAttribute) { return main }
@@ -65,6 +68,7 @@ enum AXElementResolver {
 
     /// The app's focused UI element (kAXFocusedUIElement) — the target for type/set_value.
     static func focusedElement(ofPid pid: Int) -> AXUIElement? {
+        ElectronAccessibility.enable(forPid: pid)
         let app = AXUIElementCreateApplication(pid_t(pid))
         return copyElement(app, kAXFocusedUIElementAttribute)
     }

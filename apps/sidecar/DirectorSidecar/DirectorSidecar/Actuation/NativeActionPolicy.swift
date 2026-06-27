@@ -12,7 +12,7 @@
 //     first, driver only when the native list is empty).
 //   • VERIFY (read-back, port of ActionActuator's verify→rollback): after a value mutation the field
 //     is re-read; a mismatch rolls back the captured prior value and the call is treated as NOT
-//     verified (so the hybrid router then falls back to the driver rather than faking success).
+//     verified (so the hybrid router surfaces a failure rather than faking success).
 //
 
 import Foundation
@@ -60,7 +60,7 @@ enum NativeActionPolicy {
 
     /// `type_text` read-back: the typed text must be observable in the focused field — the value
     /// CHANGED from the prior contents AND now contains what we typed. A field that did not change
-    /// (the keystrokes never landed) is a mismatch, so the router falls back to the driver.
+    /// (the keystrokes never landed) is a mismatch, so the router surfaces a failure.
     static func verifyTyped(prior: String?, readBack: String?, typed: String) -> VerifyDecision {
         guard let readBack else { return .mismatchRollback }
         if readBack != (prior ?? "") && readBack.contains(typed) { return .verified }

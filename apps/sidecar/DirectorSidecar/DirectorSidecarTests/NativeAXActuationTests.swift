@@ -108,7 +108,7 @@ private func window(pid: Int, windowId: Int) -> CuaWindow {
 
 @Test func nonNativeToolPassesThroughToDriver() async {
     let fake = FakeLoopDriver()
-    let hybrid = HybridActionDriver(driver: fake, nativeWindows: { [] })
+    let hybrid = HybridActuator(inner: fake, nativeWindows: { [] })
     let result = await hybrid.call(tool: "launch_app", input: .object(["app_name": .string("X")]))
     if case let .succeeded(value) = result { #expect(value == .string("driver-ok")) } else { Issue.record("expected success") }
     #expect(await fake.calledTools == ["launch_app"])
@@ -116,7 +116,7 @@ private func window(pid: Int, windowId: Int) -> CuaWindow {
 
 @Test func unresolvableNativeVerbFallsBackToDriver() async {
     let fake = FakeLoopDriver()
-    let hybrid = HybridActionDriver(driver: fake, nativeWindows: { [] })
+    let hybrid = HybridActuator(inner: fake, nativeWindows: { [] })
     // No pid / element / point → native resolution is impossible → driver fallback (deterministic).
     _ = await hybrid.call(tool: "click", input: .object([:]))
     _ = await hybrid.call(tool: "type_text", input: .object([:]))
@@ -126,13 +126,13 @@ private func window(pid: Int, windowId: Int) -> CuaWindow {
 
 @Test func listWindowsPrefersNativeThenFallsBack() async {
     let native = [window(pid: 10, windowId: 1)]
-    let withNative = HybridActionDriver(driver: FakeLoopDriver(), nativeWindows: { native })
+    let withNative = HybridActuator(inner: FakeLoopDriver(), nativeWindows: { native })
     if case let .succeeded(windows) = await withNative.listWindows() {
         #expect(windows == native)
     } else { Issue.record("expected native windows") }
 
     let fake = FakeLoopDriver(scriptedWindows: [window(pid: 20, windowId: 2)])
-    let emptyNative = HybridActionDriver(driver: fake, nativeWindows: { [] })
+    let emptyNative = HybridActuator(inner: fake, nativeWindows: { [] })
     _ = await emptyNative.listWindows()
     #expect(await fake.listWindowsCalls == 1)  // empty native → driver fallback.
 }
@@ -140,7 +140,7 @@ private func window(pid: Int, windowId: Int) -> CuaWindow {
 @Test func getWindowStateFallsBackWhenNativeReadEmpty() async {
     // A non-existent pid yields no AX app → no in-process elements → driver fallback (deterministic).
     let fake = FakeLoopDriver()
-    let hybrid = HybridActionDriver(driver: fake, nativeWindows: { [window(pid: 999_999, windowId: 1)] })
+    let hybrid = HybridActuator(inner: fake, nativeWindows: { [window(pid: 999_999, windowId: 1)] })
     let result = await hybrid.getWindowState(pid: 999_999, windowId: 1)
     if case .failed = result {} else { Issue.record("expected driver fallback failure") }
     #expect(await fake.getWindowStateCalls == 1)
