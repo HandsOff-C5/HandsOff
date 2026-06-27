@@ -38,6 +38,9 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     /// Single-instance: terminate any other running Director before this one takes over, so a stale
     /// build (or a relaunch fork) can't leave two apps in the Dock. Newest launch wins.
     private func terminateOtherInstances() {
+        // NEVER under XCTest: parallel test runs launch multiple host clones, and force-terminating
+        // "other instances" would SIGTERM sibling test hosts mid-bootstrap (crashes the suite + CI).
+        if NSClassFromString("XCTestCase") != nil { return }
         guard let bid = Bundle.main.bundleIdentifier else { return }
         let myPid = ProcessInfo.processInfo.processIdentifier
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: bid)
