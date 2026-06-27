@@ -89,7 +89,14 @@ jobs:
         working-directory: apps/sidecar/DirectorSidecar
     steps:
       - uses: actions/checkout@v4
+      # Pin to the runner's latest installed stable Xcode (xcode-select only — no download) so the
+      # build doesn't fall back to an older default toolchain.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - run: xcodebuild -version
+      # The shared `DirectorSidecar` scheme builds only the app + the unit-test target — the
+      # XCUITest target (which hangs unattended) is excluded, so it is never compiled here.
       - name: Build + run unit tests (no signing; unit target only)
         run: |
           xcodebuild test \
