@@ -12,6 +12,7 @@
 import SwiftUI
 import AppKit
 import OSLog
+import ApplicationServices
 
 /// The overlay/HUD panels order-front *without* activating (by design), so nothing brings the app
 /// forward at launch and the Dashboard window never becomes key — leaving its content unclickable
@@ -218,6 +219,52 @@ struct DirectorSidecarApp: App {
         store.bridge = engine
         home.bridge = engine
         hud.connection = engine
+
+        // Beat 1 — the look+voice formatted-drop flow ("Hey Director, copy this" → "…drop it here").
+        // Wire the pure `VoiceActionCoordinator` to the real subsystems: the gaze point comes from the
+        // shared head snapshot, text/frame from the in-process AX resolver (#148, the Director's own
+        // grant), the clipboard from `FormattedClipboard`, the paste from `NativeAXActuation`, and the
+        // element brackets ride the same `gazeFocus` fan-out the gaze CV uses.
+        //
+        // Owner gate: `.auditedBypass` for the live demo — there is no voiceprint source yet, so every
+        // verify returns `.bypassed` (LOGGED, never a silent admit). Swapping to `.enforce` plus a real
+        // embedding source (a speaker-encoder over the STT audio) is the remaining live-backend
+        // dependency before this gates on the owner's voice.
+        let beat1OwnerGate = OwnerGate(mode: .auditedBypass)
+        let voiceCoordinator = VoiceActionCoordinator(environment: VoiceActionEnvironment(
+            currentPoint: {
+                guard let p = headSnapshot.current else { return nil }
+                return CGPoint(x: p.x, y: p.y)
+            },
+            readText: { point in
+                guard let element = AXElementResolver.element(at: point) else { return nil }
+                return AXElementResolver.readString(element, kAXSelectedTextAttribute as String)
+                    ?? AXElementResolver.readString(element, kAXValueAttribute as String)
+            },
+            elementFrame: { point in
+                guard let element = AXElementResolver.element(at: point) else { return nil }
+                return AXElementResolver.frame(of: element)
+            },
+            writeClipboard: { content in FormattedClipboard.write(content) },
+            paste: { NativeAXActuation.postPaste() },
+            showBrackets: { rect, _ in
+                // Render element-sized gaze brackets over the captured/targeted region. AX frames are
+                // CG-global top-left and `GazeRegion` is virtual-desktop px top-left — the same space.
+                let focus = GazeFocus(
+                    bounds: GazeRegion(x: rect.origin.x, y: rect.origin.y, w: rect.width, h: rect.height),
+                    confidence: 1.0,
+                    sizeClass: "element",
+                    ts: Date().timeIntervalSince1970 * 1000)
+                dispatch(.gaze(focus))
+            },
+            ownerVerify: { beat1OwnerGate.verify([]) },
+            log: { message in DirectorDiagnostics.loop.info("\(message, privacy: .public)") }
+        ))
+        // A consumed Beat 1 command does not also start a goal (see LoopEngine.ingestSpeech). The hook
+        // is invoked from the main-actor speech intake; the coordinator is @MainActor.
+        engine.voiceAction = { [voiceCoordinator] text in
+            voiceCoordinator.handle(transcript: text)
+        }
 
         // The loop's transcript trigger: live STT `.final` events start a goal; partial/final also
         // surface as HUD transcript frames. (Track F bound the mic lifecycle; this is its consumer.)

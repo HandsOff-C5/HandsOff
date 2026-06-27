@@ -40,6 +40,11 @@ final class LoopEngine: CommandSink {
     var onFrame: ((BridgeFrame) -> Void)?
     /// Connection-state fan-out (set by the app). An in-process engine is `.connected` once started.
     var onState: ((ConnectionState) -> Void)?
+    /// Beat 1 voice-action hook (set by the app to the `VoiceActionCoordinator`). Given a final
+    /// transcript it returns `true` iff it CONSUMED the utterance (a "Hey Director, copy this/drop it
+    /// here" command) — in which case the engine does NOT also start a goal. Non-consumed utterances
+    /// fall through to the existing push-to-talk `startGoal` path unchanged. nil in tests.
+    var voiceAction: ((String) -> Bool)?
 
     // The loop exposes only the CURRENT session; the menu/dashboard render a fleet. Accumulate the
     // sessions we observe (insertion order) so the list grows across goals, titled by the goal text.
@@ -115,6 +120,13 @@ final class LoopEngine: CommandSink {
             DirectorDiagnostics.loop.info("speech final chars=\(text.count, privacy: .public) confidence=\(confidence, privacy: .public)")
             onFrame?(.transcript(LoopFrameMapping.transcript(
                 partial: false, text: text, confidence: confidence, latencyMs: latencyMs, receivedAt: receivedAt)))
+            // Beat 1: a consumed "Hey Director, copy this / drop it here" command is handled by the
+            // voice-action coordinator and does NOT also start a goal. Non-consumed utterances fall
+            // through to the push-to-talk goal path unchanged.
+            if voiceAction?(text) == true {
+                DirectorDiagnostics.loop.info("beat1 voice command consumed; not starting a goal")
+                return
+            }
             startGoal(Contracts.FinalTranscript(
                 text: text, confidence: confidence, latencyMs: latencyMs, receivedAt: receivedAt))
         case let .error(error, _):
