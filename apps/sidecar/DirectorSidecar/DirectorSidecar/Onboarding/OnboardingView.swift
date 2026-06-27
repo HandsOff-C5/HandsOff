@@ -150,10 +150,14 @@ private struct PrimerStep: View {
                 .padding(.bottom, 20)
 
             HStack(alignment: .top, spacing: 18) {
-                ExplainerColumn(symbol: "hand.point.up.left.fill", title: "Point",
-                                detail: "Hold to lock onto a window, tab, or terminal.")
-                ExplainerColumn(symbol: "waveform", title: "Speak",
-                                detail: "Hold fn and say what you want done.")
+                ExplainerColumn(symbol: "hand.point.up.left.fill", title: "Point") {
+                    Text("Hold to lock onto a window, tab, or terminal.")
+                }
+                ExplainerColumn(symbol: "waveform", title: "Speak") {
+                    HStack(spacing: 4) {
+                        Text("Hold"); KeyCap("fn"); Text("and say what you want done.")
+                    }
+                }
             }
             .padding(.bottom, 24)
 
@@ -235,22 +239,37 @@ private struct Reticle: View {
     }
 }
 
-private struct ExplainerColumn: View {
+private struct ExplainerColumn<Detail: View>: View {
     let symbol: String
     let title: String
-    let detail: String
+    @ViewBuilder let detail: () -> Detail
     @Environment(\.theme) private var theme
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: symbol).font(.system(size: 17, weight: .medium))
                 .foregroundStyle(theme.accent).frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(theme.body.weight(.semibold)).foregroundStyle(theme.textPrimary)
-                Text(detail).font(.system(size: 11)).foregroundStyle(theme.textSecondary).lineSpacing(1)
+                detail().font(.system(size: 11)).foregroundStyle(theme.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A small keyboard-key chip — used to make the `fn` activation key read as a real key, not prose.
+private struct KeyCap: View {
+    let text: String
+    @Environment(\.theme) private var theme
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+            .foregroundStyle(theme.textPrimary)
+            .padding(.horizontal, 5).padding(.vertical, 1.5)
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(theme.controlBg))
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(theme.border, lineWidth: 1))
     }
 }
 
@@ -265,7 +284,12 @@ private struct PermissionsStep: View {
             StepTitle("Grant a few permissions")
             Text("Director needs these to see your screen, hear you, and act on your behalf. Each is explicit and revocable in System Settings anytime.")
                 .font(theme.body).foregroundStyle(theme.textSecondary)
-                .multilineTextAlignment(.center).frame(maxWidth: 430).padding(.bottom, 20)
+                .multilineTextAlignment(.center).frame(maxWidth: 430).padding(.bottom, 14)
+
+            PermissionProgress(screen: model.screen, accessibility: model.accessibility,
+                               microphone: model.microphone, camera: model.camera,
+                               screenRequested: model.screenRequested)
+                .padding(.bottom, 16)
 
             AllowAllBanner { Task { await model.allowAll() } }
                 .padding(.bottom, 14)
@@ -293,9 +317,9 @@ private struct PermissionsStep: View {
 
             if model.accessibility != .granted || model.screen != .granted {
                 VStack(spacing: 8) {
-                    Text("Enabled in System Settings but still shown as needed? macOS often needs a relaunch to apply Accessibility / Screen Recording — and a rebuilt-and-resigned app gets a new identity, so its old grant no longer matches (remove stale “Director” rows in Settings, then re-grant).")
+                    Text("Turned one on in System Settings but it still shows here? Some macOS permissions need a quick relaunch to take effect.")
                         .font(.system(size: 10)).foregroundStyle(theme.textTertiary)
-                        .multilineTextAlignment(.center).lineSpacing(1).frame(maxWidth: 460)
+                        .multilineTextAlignment(.center).lineSpacing(1).frame(maxWidth: 420)
                     HStack(spacing: 18) {
                         Button("Recheck now") { model.refreshPermissions() }
                             .buttonStyle(.plain).font(.system(size: 11, weight: .medium))
@@ -352,6 +376,38 @@ private struct AllowAllBanner: View {
     }
 }
 
+/// At-a-glance momentum: four dots (Screen / Accessibility / Mic / Camera) + a ready count. Screen
+/// counts as ready once requested, since its grant only reads back after a relaunch.
+private struct PermissionProgress: View {
+    let screen: PermissionState
+    let accessibility: PermissionState
+    let microphone: PermissionState
+    let camera: PermissionState
+    let screenRequested: Bool
+    @Environment(\.theme) private var theme
+
+    private var flags: [Bool] {
+        [screen == .granted || screenRequested, accessibility == .granted,
+         microphone == .granted, camera == .granted]
+    }
+
+    var body: some View {
+        let ready = flags.filter { $0 }.count
+        HStack(spacing: 7) {
+            ForEach(Array(flags.enumerated()), id: \.offset) { _, on in
+                Circle().fill(on ? theme.success : theme.textTertiary.opacity(0.3))
+                    .frame(width: 6, height: 6)
+            }
+            Text("\(ready) of 4 ready")
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
+                .padding(.leading, 3)
+                .animation(theme.quickMotion, value: ready)
+        }
+        .accessibilityElement()
+        .accessibilityLabel("\(ready) of 4 permissions ready")
+    }
+}
+
 private struct PermissionRow: View {
     let symbol: String
     let title: String
@@ -397,8 +453,13 @@ private struct CuaHealthRow: View {
         HStack(spacing: 11) {
             Image(systemName: "cpu").font(.system(size: 17)).foregroundStyle(theme.textSecondary).frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Computer-use engine").font(theme.body.weight(.medium)).foregroundStyle(theme.textPrimary)
-                Text(detail).font(theme.mono).foregroundStyle(theme.textTertiary)
+                HStack(spacing: 6) {
+                    Text("Computer-use engine").font(theme.body.weight(.medium)).foregroundStyle(theme.textPrimary)
+                    Text("Optional").font(.system(size: 9.5, weight: .medium)).foregroundStyle(theme.textTertiary)
+                        .padding(.horizontal, 6).padding(.vertical, 1.5)
+                        .background(Capsule().fill(theme.controlBg))
+                }
+                Text(detail).font(.system(size: 11)).foregroundStyle(theme.textTertiary)
             }
             Spacer(minLength: 8)
             switch phase {
@@ -464,7 +525,8 @@ private struct ReadyStep: View {
     }
 }
 
-/// The rail / listening-edge segmented control. Right is the product default.
+/// The rail-edge picker — two little screen previews showing where Director's rail docks, so the
+/// choice is visual, not abstract. Right is the product default.
 private struct EdgePicker: View {
     let selected: RailEdge
     let onPick: (RailEdge) -> Void
@@ -472,43 +534,70 @@ private struct EdgePicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "dock.rectangle").font(.system(size: 15)).foregroundStyle(theme.textSecondary)
-                Text("Listening panel edge").font(theme.body.weight(.semibold)).foregroundStyle(theme.textPrimary)
+            HStack(spacing: 6) {
+                Image(systemName: "sidebar.right").font(.system(size: 14)).foregroundStyle(theme.textSecondary)
+                Text("Where should the rail live?").font(theme.body.weight(.semibold)).foregroundStyle(theme.textPrimary)
+                Spacer(minLength: 8)
+                Text("Optional").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(theme.controlBg))
             }
-            .padding(.bottom, 4)
-            Text("Where the rail appears when you hold fn to speak.")
-                .font(.system(size: 11)).foregroundStyle(theme.textTertiary).padding(.bottom, 11)
+            .padding(.bottom, 3)
+            Text("Director's edge rail appears here while you're speaking. Change it anytime in Settings.")
+                .font(.system(size: 11)).foregroundStyle(theme.textTertiary).padding(.bottom, 12)
 
-            HStack(spacing: 3) {
-                segment(.left, symbol: "rectangle.lefthalf.filled", label: "Left edge")
-                segment(.right, symbol: "rectangle.righthalf.filled", label: "Right edge")
+            HStack(spacing: 10) {
+                EdgePreviewCard(edge: .left, selected: selected == .left) { onPick(.left) }
+                EdgePreviewCard(edge: .right, selected: selected == .right) { onPick(.right) }
             }
-            .padding(3)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.cardInset))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(theme.card))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(theme.separator, lineWidth: 1))
     }
+}
 
-    private func segment(_ edge: RailEdge, symbol: String, label: String) -> some View {
-        let on = selected == edge
-        return Button { onPick(edge) } label: {
-            HStack(spacing: 6) {
-                Image(systemName: symbol).font(.system(size: 13))
-                Text(label).font(theme.body.weight(on ? .medium : .regular))
+/// One edge choice: a mini desktop with the gold rail docked on `edge`, selectable.
+private struct EdgePreviewCard: View {
+    let edge: RailEdge
+    let selected: Bool
+    let onTap: () -> Void
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 9) {
+                ZStack(alignment: edge == .left ? .leading : .trailing) {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(LinearGradient(colors: [theme.cardInset, theme.canvas],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(height: 60)
+                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(theme.separator, lineWidth: 1))
+                    // the rail, hugging the chosen edge
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(theme.accent)
+                        .frame(width: 7, height: 30)
+                        .padding(edge == .left ? .leading : .trailing, 7)
+                }
+                HStack(spacing: 5) {
+                    if selected { Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(theme.accent) }
+                    Text(edge == .left ? "Left" : "Right")
+                        .font(theme.body.weight(selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? theme.textPrimary : theme.textSecondary)
+                }
             }
-            .foregroundStyle(on ? theme.textPrimary : theme.textSecondary)
-            .padding(.horizontal, 16).padding(.vertical, 7)
+            .padding(8)
             .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(on ? theme.controlBg : .clear))
-            .contentShape(Rectangle())
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(selected ? theme.accentWash : .clear))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(selected ? theme.accent : theme.separator, lineWidth: selected ? 1.5 : 1))
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+        .animation(theme.quickMotion, value: selected)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityLabel("\(edge == .left ? "Left" : "Right") edge")
     }
 }
 
