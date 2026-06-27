@@ -13,7 +13,7 @@
     ],
   },
   "vars": {
-    "EMAIL_FROM": "Hands-Off <onboarding@resend.dev>",
-    "CONFIRM_BASE_URL": "https://handsoff.dev/confirmed",
+    "EMAIL_FROM": "Director <hi@forthedirector.com>",
+    "CONFIRM_BASE_URL": "https://forthedirector.com/confirmed",
   },
 }
