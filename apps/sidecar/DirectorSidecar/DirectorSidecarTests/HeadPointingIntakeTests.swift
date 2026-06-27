@@ -138,14 +138,15 @@ struct HeadPointingFusionTests {
         #expect(!built.pointingEvidence.contains { $0.strategy == "head-neighborhood-empty" })
     }
 
-    @Test func perceptionTargetLeadsAndWinsTheDedup() {
-        // #150: the live perception NBest aligner resolved a window under the bias-corrected hit. It
-        // is folded as a LEADING `point-to-window` referent, so it wins the dedup over the coarser
-        // head-neighborhood for the SAME window (and over any display surface).
+    @Test func perceptionTargetLeadsAndSuppressesAttentionRanking() {
+        // #150 + condition (b): when the perception aligner resolved a leading window, it IS the
+        // point→window answer (leads), and AttentionRanking's head-neighborhood is SUPPRESSED — the
+        // two rankers never stack competing candidates. The positional face-tracker cue still appears.
         let target = window("textedit", bounds(100, 100, 200, 200))
+        let other = window("other", bounds(140, 140, 60, 60))   // also near the point — would rank w/o suppression
         let built = HeadPointingFusion.build(
             head: head(150, 150),
-            windows: [target],
+            windows: [target, other],
             perceptionTarget: (surface: target.surface, confidence: 0.9))
 
         // The point-to-window referent leads the evidence list.
@@ -154,9 +155,10 @@ struct HeadPointingFusionTests {
         #expect(first?.surface?.id == "textedit")
         #expect(first?.confidence == 0.9)
 
-        // The head-neighborhood for the SAME window is still emitted, but the resolved window leads
-        // and the dedup keeps a single candidate (the point-to-window one, first-seen).
-        #expect(built.pointingEvidence.contains { $0.strategy == "head-neighborhood" && $0.surface?.id == "textedit" })
+        // AttentionRanking suppressed: NO head-neighborhood evidence at all, so the only candidate is
+        // the aligner's resolved window — the rankers do not stack.
+        #expect(!built.pointingEvidence.contains { $0.strategy == "head-neighborhood" })
+        #expect(built.pointingEvidence.contains { $0.strategy == "face-tracker-position" })
         #expect(built.surfaceCandidates.map(\.id) == ["textedit"])
     }
 
@@ -284,6 +286,49 @@ struct HeadPointingIntakeTests {
         #expect(input.pointingEvidence.contains { $0.source == .head && $0.strategy == "face-tracker-position" })
         #expect(input.pointingEvidence.contains { $0.strategy == "head-neighborhood" && $0.surface?.id == "looked-at" })
         #expect(input.surfaceCandidates.map(\.id) == ["looked-at"])
+    }
+
+    // #150 ACCEPTANCE TEST — the gate. A head point inside a NON-frontmost window resolves to THAT
+    // window as the leading surface candidate (not the frontmost/focused one), sourced from the NATIVE
+    // window list with the cua-driver ABSENT (empty) — proving targeting is decoupled from #148.
+    @Test func pointInsideNonFrontmostWindowLeadsViaNativeSource_driverAbsent() async {
+        // Native fixture: A is the frontmost + focused window; B is behind it, elsewhere on screen.
+        let frontmostA = window("A-front", bounds(0, 0, 200, 200), focused: true, app: "Frontmost")
+        let behindB = window("B-behind", bounds(260, 260, 100, 100), focused: false, app: "Behind")
+        // The head looks at (300,300) — INSIDE B, only near A (so B must win, not the frontmost A).
+        let snapshot = HeadPointSnapshot()
+        snapshot.record(head(300, 300))
+
+        // Driver ABSENT: returns no windows. Targeting must still work from the native source alone.
+        let absentDriver = FakeIntakeDriver(windows: [])
+        let intake = HeadPointingIntake(
+            snapshot: snapshot,
+            driver: absentDriver,
+            windowSource: { [frontmostA, behindB] in [frontmostA, behindB] })
+
+        let input = await intake.makeInput(for: finalTranscript("type into that"), sessionId: "s1")
+
+        // The pointed (non-frontmost) window leads the candidates — NOT the frontmost/focused A.
+        #expect(input.surfaceCandidates.first?.id == "B-behind")
+        #expect(input.surfaceCandidates.first?.id != "A-front")
+        // And it is carried as head-neighborhood pointing evidence for B.
+        #expect(input.pointingEvidence.contains { $0.strategy == "head-neighborhood" && $0.surface?.id == "B-behind" })
+    }
+
+    // Proof the driver path is NOT consulted when the native source is wired: a driver that would
+    // return a DIFFERENT (wrong) window is ignored in favor of the native list.
+    @Test func nativeSourceOverridesDriver() async {
+        let snapshot = HeadPointSnapshot()
+        snapshot.record(head(150, 150))
+        let driverWindow = window("driver-wrong", bounds(100, 100, 200, 200), focused: true, app: "Driver")
+        let nativeWindow = window("native-right", bounds(100, 100, 200, 200), focused: true, app: "Native")
+        let intake = HeadPointingIntake(
+            snapshot: snapshot,
+            driver: FakeIntakeDriver(windows: [driverWindow]),  // would resolve "driver-wrong"
+            windowSource: { [nativeWindow] in [nativeWindow] })  // native takes precedence
+
+        let input = await intake.makeInput(for: finalTranscript("click that"), sessionId: "s1")
+        #expect(input.surfaceCandidates.map(\.id) == ["native-right"])
     }
 
     // The whole point of the migration: a tracked head point reaches the RESOLVER's input at tick 0.

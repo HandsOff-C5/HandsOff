@@ -120,16 +120,24 @@ enum HeadPointingFusion {
                 source: .head, confidence: 0.5, strategy: "face-tracker-position",
                 surface: nil, cursor: cursor))
 
-            let candidates = AttentionRanking.rank(point: head, windows: windows, radius: radius)
-            for candidate in candidates {
-                evidence.append(Contracts.PointingEvidence(
-                    source: .head, confidence: candidate.score, strategy: "head-neighborhood",
-                    surface: candidate.surface, cursor: cursor))
-            }
-            if candidates.isEmpty {
-                evidence.append(Contracts.PointingEvidence(
-                    source: .head, confidence: 0, strategy: "head-neighborhood-empty",
-                    surface: nil, cursor: cursor))
+            // Two cooperating rankers, ONE answer (no stacking): when the perception aligner already
+            // resolved a leading window (`perceptionTarget`), it IS the point→window answer, so the
+            // AttentionRanking head-neighborhood is SUPPRESSED. AttentionRanking is the FALLBACK ranker,
+            // run only when the aligner had nothing — so the two never stack competing candidate lists.
+            // TODO CONVERGENCE: NBestCluster (ours) and AttentionRanking (theirs) are two rankers doing
+            // the same job over the same window source — collapse to one in a later cleanup.
+            if perceptionTarget == nil {
+                let candidates = AttentionRanking.rank(point: head, windows: windows, radius: radius)
+                for candidate in candidates {
+                    evidence.append(Contracts.PointingEvidence(
+                        source: .head, confidence: candidate.score, strategy: "head-neighborhood",
+                        surface: candidate.surface, cursor: cursor))
+                }
+                if candidates.isEmpty {
+                    evidence.append(Contracts.PointingEvidence(
+                        source: .head, confidence: 0, strategy: "head-neighborhood-empty",
+                        surface: nil, cursor: cursor))
+                }
             }
         }
 
@@ -167,6 +175,13 @@ enum HeadPointingFusion {
 struct HeadPointingIntake: IntentIntake {
     let snapshot: HeadPointSnapshot
     let driver: any CuaLoopDriver
+    /// The on-screen window list the point→window ranking runs against. The LIVE source is NATIVE
+    /// (`NativeWindowSource.onScreenWindows`, CGWindowList) so targeting does NOT depend on the
+    /// cua-driver (#150/#148 — the driver returns empty in the bundled app). A closure (matching
+    /// `PerceptionService.windowSource`) so the composition root injects native + driver-fallback and
+    /// tests feed fixtures. Optional for back-compat: when nil the legacy `driver.listWindows()` path
+    /// is used (existing tests).
+    var windowSource: (() async -> [CuaWindow])? = nil
     /// The hand-gesture lane's latest referent/cursor (the ported `ReferentLoop` output, recorded by
     /// the live gesture consumer). Optional so the head-only path and tests stay unchanged; when nil
     /// no gesture branch is folded in.
@@ -184,8 +199,11 @@ struct HeadPointingIntake: IntentIntake {
         for finalTranscript: Contracts.FinalTranscript,
         sessionId: String
     ) async -> Contracts.IntentInput {
+        // Windows from the NATIVE source (#150) when wired; else the legacy driver path (back-compat).
         let windows: [CuaWindow]
-        if case let .succeeded(value) = await driver.listWindows() {
+        if let windowSource {
+            windows = await windowSource()
+        } else if case let .succeeded(value) = await driver.listWindows() {
             windows = value
         } else {
             windows = []

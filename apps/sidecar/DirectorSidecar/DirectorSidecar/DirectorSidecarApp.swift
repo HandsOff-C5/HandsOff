@@ -163,33 +163,40 @@ struct DirectorSidecarApp: App {
         // perception NBest consumer can ground the intake). Fans each frame to the face + hand plugins:
         //   • hand → the `.user` cursor (`cursorPosition` topic) + the gesture intent snapshot
         //   • face → the gaze region (`gazeFocus` topic)         + the head-point intent snapshot
-        // #150: the bus ranks each hit against the live driver window list (`windowSource`) and
-        // `PointingAligner` fuses the result; the intake folds the fused top window as a leading
-        // point-to-window referent. Per-display hand calibration (RB-3) is loaded for the main display
-        // from the persisted profile (uncalibrated when none is stored — the capture flow is deferred).
+        // #150/#148: read the on-screen window list NATIVELY (CGWindowList) from our OWN process so
+        // point→window targeting works WITHOUT the cua-driver / its separate `com.trycua.driver` TCC
+        // identity (the driver returns empty in the bundled app — the root of the "Display 3 / empty
+        // candidates" symptom). Fall back to the driver only if the native list is empty. The SAME
+        // source feeds BOTH rankers — the perception NBest bus AND the intake's AttentionRanking.
+        let nativeWindowList: () async -> [CuaWindow] = { [services] in
+            let native = NativeWindowSource.onScreenWindows()
+            if !native.isEmpty { return native }
+            if case let .succeeded(windows) = await services.cua.listWindows() { return windows }
+            return []
+        }
+
+        // Face/hand migration: the one camera owner (constructed here, before the loop, so its live
+        // perception NBest consumer can ground the intake). #150: the bus ranks each hit against the
+        // native window list and `PointingAligner` fuses the result; the intake folds the fused top
+        // window as a leading point-to-window referent. Per-display hand calibration (RB-3) is loaded
+        // for the main display from the persisted profile (uncalibrated when none is stored — the
+        // capture flow is deferred).
         let calibrationRepo = CalibrationProfileRepository()
         let perception = PerceptionService(
-            windowSource: { [services] in
-                // #150/#148: read the window list NATIVELY (CGWindowList) from our own process so
-                // targeting works without the cua-driver / its separate TCC identity. Fall back to
-                // the driver only if the native list is empty.
-                let native = NativeWindowSource.onScreenWindows()
-                if !native.isEmpty { return native }
-                if case let .succeeded(windows) = await services.cua.listWindows() { return windows }
-                return []
-            },
+            windowSource: nativeWindowList,
             calibration: calibrationRepo.load(forDisplayID: CGMainDisplayID())?.calibrationFit()
         )
 
         // ADR 0005 Track D — no bridge: run the ported supervision loop IN-PROCESS and make it the
         // app's engine. The loop drives the SAME frames the socket used to deliver (engine.onFrame →
         // dispatch) and the UI's commands route to the loop (the models' command sink IS the engine).
+        // The intake reads the NATIVE window list (#150) — NOT driver.listWindows() — for its ranking.
         let loop = VoiceCuaLoop(
             driver: services.cua,
             resolve: IntentWorkerConfig.resolver(),
             intake: HeadPointingIntake(
-                snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot,
-                aligner: perception.aligner, screen: perception.screen)
+                snapshot: headSnapshot, driver: services.cua, windowSource: nativeWindowList,
+                gesture: gestureSnapshot, aligner: perception.aligner, screen: perception.screen)
         )
         // Probe the cua-driver DAEMON's own TCC (accessibility/screen-recording) so readiness reflects
         // the process a task runs through — its missing grants would otherwise only surface mid-task as

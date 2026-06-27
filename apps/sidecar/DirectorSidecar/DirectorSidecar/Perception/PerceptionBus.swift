@@ -93,6 +93,11 @@ final class PerceptionBus {
                 // Rank the bias-corrected screen hit against the live window set (FR-4). A frozen
                 // (dropout) frame asserts no fresh referent, so it is not ranked — the adapter also
                 // clears n-best on a frozen frame (I6), this just avoids the wasted work.
+                // TODO CONVERGENCE: NBestCluster (ours, here) and AttentionRanking (theirs, in the
+                // intake) are two rankers doing the SAME point→window job over the SAME native window
+                // source — collapse to one in a later cleanup. For now the intake suppresses
+                // AttentionRanking whenever this chain (via PointingAligner) produced a leading window,
+                // so they never stack competing candidates.
                 let nBest: [WindowOrRegionRef]
                 if output.state != .frozen, let screen = self.screenProvider?() {
                     let corrected = self.correctedHit(PixelPoint(x: output.point.x, y: output.point.y))
