@@ -25,8 +25,16 @@ enum RailEdge: String, Sendable, Equatable, CaseIterable {
 enum AppPreferences {
     private static let onboardingCompletedKey = "director.onboardingCompleted"
     private static let railEdgeKey = "director.railEdge"
+    private static let launchAtLoginKey = "director.launchAtLogin"
+    private static let notificationsEnabledKey = "director.notificationsEnabled"
 
     private static var defaults: UserDefaults { .standard }
+
+    /// Default-ON booleans: UserDefaults.bool returns false when unset, so read the object first and
+    /// fall back to `true` when the key has never been written.
+    private static func boolDefaultingTrue(_ key: String) -> Bool {
+        defaults.object(forKey: key) == nil ? true : defaults.bool(forKey: key)
+    }
 
     /// Whether the user has finished the onboarding at least once.
     static var onboardingCompleted: Bool {
@@ -38,6 +46,18 @@ enum AppPreferences {
     static var railEdge: RailEdge {
         get { defaults.string(forKey: railEdgeKey).flatMap(RailEdge.init(rawValue:)) ?? .right }
         set { defaults.set(newValue.rawValue, forKey: railEdgeKey) }
+    }
+
+    /// Launch Director at login — ON by default (it's a menu-bar resident).
+    static var launchAtLogin: Bool {
+        get { boolDefaultingTrue(launchAtLoginKey) }
+        set { defaults.set(newValue, forKey: launchAtLoginKey) }
+    }
+
+    /// Local notifications when an agent needs you / finishes — ON by default.
+    static var notificationsEnabled: Bool {
+        get { boolDefaultingTrue(notificationsEnabledKey) }
+        set { defaults.set(newValue, forKey: notificationsEnabledKey) }
     }
 }
 

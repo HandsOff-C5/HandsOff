@@ -140,6 +140,8 @@ struct DirectorSidecarApp: App {
     /// works while ANOTHER app is frontmost (the whole hands-off entry point). Replaces the old local
     /// `NSEvent` monitor that only fired while Director itself was the active app. Held for the run.
     private let fnHotkey: FnHotkeyService
+    /// Local notifications for the supervision model — held for the app's life (owns the UN delegate).
+    private let notifications: NotificationService
 
     init() {
         // Latch onboarding presentation BEFORE any scene appears, so a Home window macOS restores at
@@ -154,10 +156,15 @@ struct DirectorSidecarApp: App {
         let home = HomeDashboardModel()
         let rail = RailModel()
 
+        // Local notifications for the supervision model (agent needs you / finished). Reads every
+        // frame off the same fan-out.
+        let notifications = NotificationService()
+
         // One fan-out of every frame to every model.
         let dispatch: (BridgeFrame) -> Void = { frame in
             store.apply(frame); hud.apply(frame); micro.apply(frame)
             overlay.apply(frame); gaze.apply(frame); home.apply(frame); rail.apply(frame)
+            notifications.apply(frame)
         }
 
         // Track F: own the ported engine services and bind them to the lifecycle. Head-pointer
@@ -309,6 +316,7 @@ struct DirectorSidecarApp: App {
         self.rail = rail
         self.services = services
         self.coordinator = coordinator
+        self.notifications = notifications
 
         // C1 fix: own the global fn capture trigger. Started at launch (its CGEventTap + permission
         // prompts must come up after AppKit finishes wiring event routing), with its phase stream
@@ -370,7 +378,13 @@ struct DirectorSidecarApp: App {
                 }
                 NotificationCenter.default.addObserver(
                     forName: .directorEnterApp, object: nil, queue: .main
-                ) { _ in MainActor.assumeIsolated { startFnCapture() } }
+                ) { _ in MainActor.assumeIsolated {
+                    startFnCapture()
+                    // Entering the app: ask for notification permission (once) and reflect the
+                    // launch-at-login preference (ON by default) into the system login item.
+                    notifications.requestAuthorization()
+                    LoginItemService.syncToPreference()
+                } }
                 // Track F: begin consuming the head-pointer feed for the app's life (camera stays
                 // off until Listening turns sensing on). Deferred to launch alongside the surfaces.
                 coordinator.start()
