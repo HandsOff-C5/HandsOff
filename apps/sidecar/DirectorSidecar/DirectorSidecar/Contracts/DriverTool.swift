@@ -58,6 +58,12 @@ extension Contracts {
         case killApp = "kill_app"
         case replayTrajectory = "replay_trajectory"
         case installFfmpeg = "install_ffmpeg"
+        // locally-handled compose surface (U3) — NOT a cua-driver tool. The loop executes it
+        // NATIVELY (NoteWriter writes ~/Documents/<title>.md + opens it) instead of forwarding to
+        // the driver. Registered here so the resolver's chosen tool name validates through
+        // `Contracts.DriverTool.parse` (not blocked as "unknown tool") and risk keys off it; the
+        // dispatch interception that short-circuits it away from `driver.call` lives in the loop.
+        case writeNote = "write_note"
     }
 }
 

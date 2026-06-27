@@ -340,6 +340,16 @@ struct DirectorSidecarApp: App {
             applyRailEdge: { edge in surfaces.setRailEdge(edge.controllerEdge) }
         ))
 
+        // Hosted XCTest: every stored property is initialized above, so unit tests can exercise the
+        // app's types — but DO NOT start the live agent runtime under `XCTestConfigurationFilePath`.
+        // Starting it (`engine.start()` + the launch observers below) spawns the cua-driver as a
+        // Process — `CuaDriverService` blocks on a `DispatchSemaphore` + `waitUntilExit()` — and opens
+        // the camera + a global CGEventTap and prompts for permissions. With XCTest owning the main
+        // thread that deadlocks the host ("application not responding"), spawns driver processes that
+        // never get cleaned up, and stops XCTest from ever finishing so the host lingers. Returning
+        // here keeps the host responsive and lets XCTest tear it down cleanly when the suite ends.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+
         NotificationCenter.default.addObserver(
             forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
         ) { _ in

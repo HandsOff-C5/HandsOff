@@ -53,6 +53,10 @@ extension Contracts {
             .setValue: .reversible,
             .launchApp: .reversible,
             .bringToFront: .reversible,
+            // write_note (U3): writes a NEW titled .md into ~/Documents (confined, collision-safe,
+            // never overwrites) — a reversible draft like type_text, so the compose-and-write
+            // deliverable auto-runs rather than gating (KD1 / Q1 reversible-auto-run golden).
+            .writeNote: .reversible,
             // bases; click/key/page get refined by riskForToolCall
             .click: .reversible,       // base: navigation; escalated to mutating on a commit element
             .rightClick: .reversible,  // base: opens a context menu (navigation)

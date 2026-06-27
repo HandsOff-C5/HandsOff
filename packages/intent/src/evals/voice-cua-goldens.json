@@ -67,14 +67,16 @@
     }
   },
   {
-    "name": "unsupported send it",
-    "transcript": "send it",
+    "name": "Q5 send is a mutating commit requiring approval",
+    "transcript": "Send this.",
     "expected": {
-      "status": "blocked",
-      "requires_approval": false,
-      "target_agent": "none",
-      "reason": "Unsupported voice command",
-      "actionKinds": [],
+      "status": "ready",
+      "intent_type": "click",
+      "risk_level": "mutating",
+      "requires_approval": true,
+      "target_agent": "cua-driver",
+      "referentId": "surface-1",
+      "actionKinds": ["click_element"],
       "actionTexts": []
     }
   }

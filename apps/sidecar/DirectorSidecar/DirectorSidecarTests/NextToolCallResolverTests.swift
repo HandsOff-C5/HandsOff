@@ -33,7 +33,8 @@ private func makeInput(
     transcript: String = "scroll down to find Boogie Woogie",
     pointingEvidence: [[String: Any]] = [["source": "head", "confidence": 0.9, "strategy": "head-neighborhood"]],
     surfaceCandidates: [[String: Any]] = [surfaceDict()],
-    goalSession: [String: Any]? = nil
+    goalSession: [String: Any]? = nil,
+    selectionText: String? = nil
 ) throws -> Contracts.IntentInput {
     var dict: [String: Any] = [
         "sessionId": "session-1",
@@ -44,6 +45,7 @@ private func makeInput(
         "surfaceCandidates": surfaceCandidates,
     ]
     if let goalSession { dict["goalSession"] = goalSession }
+    if let selectionText { dict["selectionText"] = selectionText }
     let data = try JSONSerialization.data(withJSONObject: dict)
     return try JSONDecoder().decode(Contracts.IntentInput.self, from: data)
 }
@@ -115,7 +117,7 @@ private struct DescribedError: Error, CustomStringConvertible {
     #expect(args["pid"] == .number(42))
     #expect(args["window_id"] == .number(7))
     #expect(args["direction"] == .string("down"))
-    #expect(client.lastModel == "gpt-4o-mini")  // default model reaches the Worker
+    #expect(client.lastModel == "gpt-4o")  // default model reaches the Worker (matches worker DEFAULT_OPENAI_MODEL)
 }
 
 @Test func usesUnescalatedClickBaseForDisplayIntent() async throws {
@@ -277,6 +279,53 @@ private struct DescribedError: Error, CustomStringConvertible {
     #expect((candidates[0]["confidence"] as? NSNumber)?.doubleValue == 0.85)
     #expect(candidates[0]["source"] as? String == "fusion")
     #expect(candidates[1]["source"] as? String == "fusion")
+}
+
+// MARK: - Intent-aware system prompt (U2 — compose / decompose / no literal typing)
+
+@Test func systemPromptTeachesComposeReadGenerateWriteWithoutLiteralTyping() {
+    let prompt = NextToolCallPrompt.systemPrompt
+    // Covers R1: compose tasks recognised, and the read → generate → write loop is spelled out.
+    #expect(prompt.contains("COMPOSE TASKS"))
+    #expect(prompt.contains("summarize"))
+    #expect(prompt.contains("READ the source content"))
+    #expect(prompt.contains("GENERATE the finished deliverable yourself"))
+    // The deliverable surface for compose tasks is the write_note tool.
+    #expect(prompt.contains("write_note"))
+    // Never type the request verbatim; never hunt a verb-named button.
+    #expect(prompt.contains("type_text"))
+    #expect(prompt.contains("there is no \"Summarize\" control"))
+    // Unreadable source → clarify, never fabricate.
+    #expect(prompt.contains("clarify"))
+    #expect(prompt.contains("never invent, guess, or fabricate a summary"))
+}
+
+@Test func systemPromptTeachesDecompositionAndNeverReissuingAFailedCall() {
+    let prompt = NextToolCallPrompt.systemPrompt
+    // Covers R2: multi-step decomposition + the no-loop guard.
+    #expect(prompt.contains("DECOMPOSE a multi-step goal"))
+    #expect(prompt.contains("NEVER re-issue a call"))
+    #expect(prompt.contains("recentResults"))
+}
+
+@Test func systemPromptKeepsDeicticReferentGuidanceIntact() {
+    let prompt = NextToolCallPrompt.systemPrompt
+    // Regression guard (R5): fusion deixis guidance must survive the rewrite.
+    #expect(prompt.contains("boundReferents"))
+    #expect(prompt.contains("candidateSurfaces"))
+    // U9: the prompt explains selectionText as the exact pointed text.
+    #expect(prompt.contains("selectionText"))
+}
+
+@Test func carriesSelectionTextIntoPayloadAlongsideBoundReferents() throws {
+    // Covers U9: the exact pointed text reaches the model payload next to boundReferents.
+    let input = try makeInput(
+        transcript: "summarize this", selectionText: "Bug: clicks no-op on Catalyst windows")
+    let payload = try parseObject(NextToolCallPrompt.buildMessages(input, tools: try sampleTools())[1].content)
+    #expect(payload["selectionText"] as? String == "Bug: clicks no-op on Catalyst windows")
+    // Present (not absent) even when there is no selection — encoded as JSON null.
+    let bare = try parseObject(NextToolCallPrompt.buildMessages(try makeInput(), tools: try sampleTools())[1].content)
+    #expect(bare["selectionText"] is NSNull)
 }
 
 // MARK: - Contracts.ToolRisk (tool-risk.ts)

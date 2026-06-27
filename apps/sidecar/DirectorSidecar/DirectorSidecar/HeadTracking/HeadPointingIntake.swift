@@ -159,6 +159,11 @@ struct HeadPointingIntake: IntentIntake {
     /// no gesture branch is folded in.
     var gesture: GestureSnapshot? = nil
     var radius: Double = AttentionRanking.defaultRadius
+    /// U9: reads the on-screen selected text from a surface's pid (AX focused-element selection).
+    /// Defaults to the live `SelectionRead.selectedText(forPid:)`; injectable so tests can assert the
+    /// selection reaches the input without a live AX tree. Returns nil → no selection attached
+    /// (degrades cleanly when AX is untrusted, the surface has no pid, or nothing is selected).
+    var readSelection: @Sendable (pid_t) -> String? = SelectionRead.selectedText(forPid:)
 
     func makeInput(
         for finalTranscript: Contracts.FinalTranscript,
@@ -173,13 +178,24 @@ struct HeadPointingIntake: IntentIntake {
         let gestureReferent = gesture?.current
         let built = HeadPointingFusion.build(
             head: snapshot.current, windows: windows, gesture: gestureReferent, radius: radius)
+        // U9: ground "this" — read the selected text from the binder-resolved surface (the strongest
+        // candidate the fusion ranked first), keyed by its pid. The fusion stays authoritative for
+        // *which* surface; this is purely additive — `pointingEvidence`/`surfaceCandidates` are
+        // unchanged (R5). Degrades to nil (no selection) when the surface has no pid, AX is untrusted,
+        // or nothing is selected. The change-count-gated clipboard read awaits a listen-start
+        // changeCount baseline (not yet captured) — AX selection only for now; clipboard is a follow-up.
+        let selectionText = built.surfaceCandidates.first
+            .flatMap(\.pid)
+            .flatMap { pid_t(exactly: $0) }
+            .flatMap(readSelection)
         DirectorDiagnostics.loop.info(
-            "intake head=\(snapshot.current != nil, privacy: .public) gesture=\(gestureReferent?.isEmpty == false, privacy: .public) windows=\(windows.count, privacy: .public) evidence=\(built.pointingEvidence.count, privacy: .public) candidates=\(built.surfaceCandidates.count, privacy: .public)")
+            "intake head=\(snapshot.current != nil, privacy: .public) gesture=\(gestureReferent?.isEmpty == false, privacy: .public) windows=\(windows.count, privacy: .public) evidence=\(built.pointingEvidence.count, privacy: .public) candidates=\(built.surfaceCandidates.count, privacy: .public) selection=\(selectionText != nil, privacy: .public)")
         return Contracts.IntentInput(
             sessionId: sessionId,
             finalTranscript: finalTranscript,
             pointingEvidence: built.pointingEvidence,
             surfaceCandidates: built.surfaceCandidates,
-            goalSession: nil)
+            goalSession: nil,
+            selectionText: selectionText)
     }
 }

@@ -26,6 +26,17 @@ enum StepDispatch {
     // wire name because `toolNameForStep` yields a String (it may be a raw model tool name).
     private static let clickToolNames: Set<String> = ["click", "right_click", "double_click"]
 
+    // Locally-handled tools the loop executes NATIVELY (U3) — never forwarded to `driver.call`.
+    // `write_note` is the compose-and-write surface (NoteWriter → ~/Documents/<title>.md + open);
+    // it has no cua-driver counterpart. The loop's dispatch checks `isLocalToolStep` and
+    // short-circuits these to their native handler.
+    static let localToolNames: Set<String> = [Contracts.DriverTool.writeNote.rawValue]
+
+    /// Whether a step dispatches a locally-handled tool (run natively, not via `driver.call`).
+    static func isLocalToolStep(_ step: Contracts.ActionStep) -> Bool {
+        localToolNames.contains(toolNameForStep(step))
+    }
+
     /// `driverToolForStep`: the driver tool each step dispatches as. A decoded `tool_call`
     /// carries its validated tool verbatim; the legacy six kinds map to their driver tool so
     /// the rule resolver + gate key on the same vocabulary.
@@ -105,22 +116,44 @@ enum StepDispatch {
         return nil
     }
 
-    /// `coordinateClickArgs`: the coordinate (CGEvent) variant of an element-targeted click — the
-    /// SAME flat args minus the AX addressing (`element_index`/`element_token`), plus `x`/`y` at the
-    /// element's frame center (window-local screenshot pixels, the space the driver's coordinate path
-    /// consumes). Nil unless the step is a click whose targeted element is in the snapshot WITH a
-    /// frame — the loop falls back to AX-only when there's no geometry to aim at.
+    /// `windowTargetForStep`: the (pid, window_id) a step addresses, read from its flat driver args —
+    /// the handle the coordinate fallback needs to screenshot the target window. Nil when either is
+    /// absent (an untargeted call).
+    static func windowTargetForStep(_ step: Contracts.ActionStep) -> (pid: Int, windowId: Int)? {
+        let (_, args) = driverCallForStep(step)
+        guard case let .number(pid)? = args["pid"], case let .number(window)? = args["window_id"]
+        else { return nil }
+        return (Int(pid), Int(window))
+    }
+
+    /// Convert an element's frame CENTER (driver global points) into the window-local SCREENSHOT
+    /// PIXELS the `click` tool's CGEvent path consumes (#158). The driver returns element frames in
+    /// global points but takes click coordinates in the pixel space of the window's screenshot, whose
+    /// scale (px ÷ points) is display/driver dependent — so it is derived from a live screenshot's
+    /// size vs the window bounds, not assumed. Verified live: System Settings Battery frame
+    /// (732,382,71.5,24) + bounds (718,38,715,875) + screenshot 1281×1568 → (89,638), which navigates.
+    static func coordinatePixel(
+        frame: Contracts.CuaElementFrame,
+        bounds: CuaWindowBounds,
+        screenshotWidth: Int,
+        screenshotHeight: Int
+    ) -> (x: Double, y: Double) {
+        let scaleX = bounds.width > 0 ? Double(screenshotWidth) / bounds.width : 1
+        let scaleY = bounds.height > 0 ? Double(screenshotHeight) / bounds.height : 1
+        return ((frame.centerX - bounds.x) * scaleX, (frame.centerY - bounds.y) * scaleY)
+    }
+
+    /// `coordinateClickArgs`: the coordinate (CGEvent) variant of an element-targeted click — the SAME
+    /// flat args minus the AX addressing (`element_index`/`element_token`), plus the already-converted
+    /// `x`/`y` (window-local screenshot pixels from `coordinatePixel`).
     static func coordinateClickArgs(
-        for step: Contracts.ActionStep,
-        _ observation: Contracts.GoalLoopObservation?
-    ) -> [String: Contracts.JSONValue]? {
-        guard isClickStep(step),
-              let frame = clickedElement(for: step, observation)?.frame else { return nil }
+        for step: Contracts.ActionStep, x: Double, y: Double
+    ) -> [String: Contracts.JSONValue] {
         var args = driverCallForStep(step).args
         args.removeValue(forKey: "element_index")
         args.removeValue(forKey: "element_token")
-        args["x"] = .number(frame.centerX)
-        args["y"] = .number(frame.centerY)
+        args["x"] = .number(x)
+        args["y"] = .number(y)
         return args
     }
 

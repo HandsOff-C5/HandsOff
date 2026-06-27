@@ -51,6 +51,16 @@ private actor FakeLoopDriver: CuaLoopDriver {
 
     func listWindows() -> CuaResult<[CuaWindow]> { .succeeded(windows) }
 
+    /// A scripted vision capture so the #158 coordinate fallback can read window bounds + pixel size.
+    /// Bounds (0,0)/size 200×400 with a 200×400 screenshot → a 1× scale, so a frame center maps to
+    /// itself (the conversion math is exercised in unit tests; here we just need the path to run).
+    func screenshot(pid: Int, windowId: Int) -> CuaResult<CuaScreenshot> {
+        let surface = windows.first(where: \.focused) ?? windows.first ?? focusedWindow()
+        return .succeeded(CuaScreenshot(
+            surface: surface, capturedAt: "2026-06-22T12:00:00.000Z",
+            mimeType: "image/png", width: 200, height: 400, pngBase64: ""))
+    }
+
     func getWindowState(pid: Int, windowId: Int) -> CuaResult<CuaWindowState> {
         if !stateSequence.isEmpty {
             let state = stateSequence[min(stateCursor, stateSequence.count - 1)]
@@ -114,7 +124,7 @@ private func finalTranscript(_ text: String) -> Contracts.FinalTranscript {
 private func focusedWindow(pid: Int = 42, windowId: Int = 7) -> CuaWindow {
     CuaWindow(id: "win-1", title: "Codex", app: "Codex", pid: pid, windowId: windowId,
               availability: .available, accessStatus: .accessible, focused: true,
-              bounds: nil, zIndex: 0)
+              bounds: CuaWindowBounds(x: 0, y: 0, width: 200, height: 400), zIndex: 0)
 }
 
 private func windowState(commitLabel: String = "Send Message") -> CuaWindowState {
@@ -123,6 +133,14 @@ private func windowState(commitLabel: String = "Send Message") -> CuaWindowState
         capturedAt: "2026-06-22T12:00:00.000Z",
         elementCount: 1,
         elements: [CuaElement(id: "e0", index: 0, role: "AXButton", label: commitLabel, value: nil)])
+}
+
+/// A window with an EMPTY AX tree (`elementCount == 0`) — the signature of a missing Screen Recording
+/// grant — used to assert the converge-or-ask clarify names that concrete stall cause (U4).
+private func emptyAxState() -> CuaWindowState {
+    CuaWindowState(
+        surface: focusedWindow(), capturedAt: "2026-06-22T12:00:00.000Z",
+        elementCount: 0, elements: [])
 }
 
 /// A reversible (auto-running) click target WITH a frame — a non-commit row like a System Settings
@@ -178,7 +196,15 @@ private func makeLoop(
     driver: FakeLoopDriver,
     resolver: ScriptedResolver,
     toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget,
-    sink: (any ToolCallSink)? = nil
+    sink: (any ToolCallSink)? = nil,
+    // Tests NEVER use the real NoteWriter: its default `open` is `NSWorkspace.shared.open`, which
+    // launches a real app per note (the "opens many parallel apps" symptom) and can block the headless
+    // test host. Default to a confined temp dir + a no-op open; the dedicated write_note test injects
+    // its own writer pointed at a unique temp dir.
+    noteWriter: NoteWriter = NoteWriter(
+        documentsDirectory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("director-notes-test", isDirectory: true),
+        open: { _ in })
 ) -> VoiceCuaLoop {
     VoiceCuaLoop(
         driver: driver,
@@ -186,7 +212,8 @@ private func makeLoop(
         now: { "2026-06-22T12:00:00.000Z" },
         targetResolveDelayMs: 0,
         toolCallBudget: toolCallBudget,
-        toolCallSink: sink)
+        toolCallSink: sink,
+        noteWriter: noteWriter)
 }
 
 /// An in-memory `ToolCallSink` capturing every persisted record, for the durable-sink assertions.
@@ -203,15 +230,6 @@ private func blockedReason(_ intent: Contracts.ResolvedIntent?) -> String? {
     switch intent {
     case let .blocked(pending), let .needsClarification(pending): return pending.reason
     default: return nil
-    }
-}
-
-private func resultReason(_ run: PlanRunResult?) -> String? {
-    guard let result = run?.result else { return nil }
-    switch result {
-    case let .blocked(reason, _): return reason
-    case let .failed(error, _): return error
-    case .succeeded: return nil
     }
 }
 
@@ -390,8 +408,9 @@ struct VoiceCuaLoopTests {
         #expect(loop.session?.status == .succeeded)
     }
 
-    // U3b BUG 4: the loop stops instead of re-dispatching a call that already failed.
-    @Test func stopsInsteadOfRedispatchingFailedCall() async {
+    // U4 converge-or-ask: the KD2 dedup floor now ASKS instead of terminating blocked — a re-issued
+    // failed call escalates to an actionable clarify naming the tool, not a dead-end block.
+    @Test func redispatchedFailedCallEscalatesToClarify() async {
         let driver = FakeLoopDriver(
             windows: [focusedWindow()], windowState: windowState(),
             callResults: ["launch_app": .failed(error: "FooBar.app not found")])
@@ -404,10 +423,13 @@ struct VoiceCuaLoopTests {
 
         await loop.handleFinalTranscript(finalTranscript("open foobar"))
 
-        // Dispatched exactly once; the repeat was blocked before reaching the driver.
+        // Dispatched exactly once; the repeat escalated to a clarify before reaching the driver.
         #expect(await driver.recordedCalls() == ["launch_app"])
         #expect(loop.session?.status == .blocked)
-        #expect(resultReason(loop.runResult)?.contains("already failed") == true)
+        #expect(isClarification(loop.intent))
+        // The ask names what was tried (the dead tool) — an actionable question, not a generic stall.
+        #expect(blockedReason(loop.intent)?.contains("launch_app") == true)
+        #expect(blockedReason(loop.intent)?.contains("What should I do?") == true)
     }
 
     // Budget: the goal loop stops at the per-goal action budget.
@@ -436,10 +458,10 @@ struct VoiceCuaLoopTests {
         #expect(await driver.recordedCalls().isEmpty)
     }
 
-    // #158 (a): an AX click the driver ACCEPTS but that leaves the window unchanged (Catalyst no-op)
-    // escalates the SAME target to a coordinate (CGEvent) click next turn, then the no-progress floor
-    // stops it — instead of spinning the identical element_index click to the budget (the 41-turn bug).
-    @Test func silentNoOpClickEscalatesToCoordinateThenStops() async {
+    // #158 (a) + U4: an AX click the driver ACCEPTS but that leaves the window unchanged (Catalyst
+    // no-op) escalates the SAME target to a coordinate (CGEvent) click next turn; then the no-progress
+    // floor ASKS (converge-or-ask) — far short of the 30-call budget (the 41-turn bug).
+    @Test func silentNoOpClickEscalatesToCoordinateThenAsks() async {
         let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: batteryState())
         // The resolver re-issues the identical reversible click each turn (it sees "succeeded" + an
         // unchanged screen, so it never self-corrects — exactly the observed failure mode).
@@ -456,7 +478,9 @@ struct VoiceCuaLoopTests {
         #expect(isCoordinateInput(inputs[1]) == true)   // coordinate fallback (x,y)
         #expect(isCoordinateInput(inputs[2]) == true)
         #expect(loop.session?.status == .blocked)
-        #expect(resultReason(loop.runResult)?.contains("no-op'd") == true)
+        // The stalled click now ASKS rather than dead-ending blocked, naming the dead tool.
+        #expect(isClarification(loop.intent))
+        #expect(blockedReason(loop.intent)?.contains("click") == true)
     }
 
     // #158 (b): an EXPLICIT AX failure (Catalyst AXConfirm → -25200) retries as a coordinate click at
@@ -514,5 +538,93 @@ struct VoiceCuaLoopTests {
         #expect(sink.entries.first?.tool == "scroll")
         #expect(sink.entries.first?.resultStatus == "succeeded")
         #expect(sink.entries.first?.sessionId == loop.session?.id)
+    }
+
+    // U3 compose-and-write: a `write_note` step runs NATIVELY via NoteWriter — the generated text lands
+    // in a real ~/Documents/<title>.md file (here a confined temp dir) and NEVER hits `driver.call`.
+    @Test func writeNoteRunsLocallyAndNeverHitsTheDriver() async throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("director-notes-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let writer = NoteWriter(documentsDirectory: tmp, open: { _ in })
+
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState())
+        let resolver = ScriptedResolver([
+            act("write_note", args: #"{"title":"Issue summary","text":"AC: the build must pass CI."}"#),
+            done(),
+        ])
+        let loop = makeLoop(driver: driver, resolver: resolver, noteWriter: writer)
+
+        await loop.handleFinalTranscript(finalTranscript("summarize this for me"))
+
+        // The compose-and-write surface executed locally — no driver passthrough, ever.
+        #expect(await driver.recordedCalls().isEmpty)
+        #expect(isSatisfied(loop.intent))
+        #expect(loop.session?.status == .succeeded)
+        // The generated text persisted to the confined Documents dir; the path lands in the Intention Log.
+        let body = try String(contentsOf: tmp.appendingPathComponent("Issue summary.md"), encoding: .utf8)
+        #expect(body == "AC: the build must pass CI.")
+        #expect(toolCallCount(loop.auditEvents, tool: .writeNote) == 1)
+    }
+
+    // U4 converge-or-ask: DISTINCT failing strategies escalate to a clarify after a small bound —
+    // well before the 30-budget — even though no single call ever repeats verbatim.
+    @Test func distinctFailedStrategiesEscalateToClarifyBeforeBudget() async {
+        let driver = FakeLoopDriver(
+            windows: [focusedWindow()], windowState: windowState(),
+            callResults: ["launch_app": .failed(error: "not found")])
+        // Four DISTINCT failing calls — none a verbatim repeat, so only the distinct-strategies floor
+        // can stop the flailing.
+        let resolver = ScriptedResolver([
+            act("launch_app", args: #"{"app_name":"Alpha"}"#),
+            act("launch_app", args: #"{"app_name":"Bravo"}"#),
+            act("launch_app", args: #"{"app_name":"Charlie"}"#),
+            act("launch_app", args: #"{"app_name":"Delta"}"#),
+        ])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("open the right app"))
+
+        // Three distinct strategies dispatched + failed; the fourth was asked-about, not run.
+        #expect(await driver.recordedCalls().count == VoiceCuaLoop.maxDistinctFailedStrategies)
+        #expect(loop.session?.status == .blocked)
+        #expect(isClarification(loop.intent))
+        #expect(blockedReason(loop.intent)?.contains("launch_app") == true)
+    }
+
+    // U4 converge-or-ask: a genuinely-progressing multi-step goal still completes — successes are never
+    // recorded as failed strategies, so the distinct-strategies floor never fires prematurely.
+    @Test func progressingMultiStepGoalCompletesWithoutClarify() async {
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState())
+        // Four successful actions (more than maxDistinctFailedStrategies) then done.
+        let resolver = ScriptedResolver([
+            act("scroll"), act("type_text", args: #"{"text":"a"}"#), act("scroll"),
+            act("type_text", args: #"{"text":"b"}"#), done(),
+        ])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("scroll and type a few times"))
+
+        #expect(await driver.recordedCalls() == ["scroll", "type_text", "scroll", "type_text"])
+        #expect(isSatisfied(loop.intent))
+        #expect(loop.session?.status == .succeeded)
+    }
+
+    // U4 converge-or-ask: when the stall cause is legible (empty AX tree → Screen Recording likely not
+    // granted), the clarify carries that concrete cause, not a generic "stuck".
+    @Test func clarifyNamesStallCauseWhenAxTreeIsEmpty() async {
+        let driver = FakeLoopDriver(
+            windows: [focusedWindow()], windowState: emptyAxState(),
+            callResults: ["launch_app": .failed(error: "not found")])
+        let resolver = ScriptedResolver([
+            act("launch_app", args: launchFooBarArgs),
+            act("launch_app", args: launchFooBarArgs),
+        ])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("open foobar"))
+
+        #expect(isClarification(loop.intent))
+        #expect(blockedReason(loop.intent)?.contains("Screen Recording") == true)
     }
 }

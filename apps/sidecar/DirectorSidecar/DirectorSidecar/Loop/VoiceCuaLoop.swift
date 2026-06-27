@@ -50,6 +50,9 @@ final class VoiceCuaLoop {
     private let defaultToolCallBudget: Int
     /// Durable on-disk sink for tool-call records (#158 observability). Nil → in-memory audit only.
     private let toolCallSink: (any ToolCallSink)?
+    /// The compose-and-write surface (U3): a `write_note` step is handled HERE (NoteWriter →
+    /// ~/Documents/<title>.md + open), never forwarded to `driver.call`.
+    private let noteWriter: NoteWriter
 
     // MARK: Engine singletons (the controller's useRef stores)
 
@@ -61,6 +64,10 @@ final class VoiceCuaLoop {
 
     /// Per-goal autonomous-loop ceiling on EXECUTED tool calls (U3 / KD6). Perception ticks are free.
     static let defaultToolCallBudget = 30
+    /// Converge-or-ask ceiling (U4 / R2): after this many DISTINCT failed (tool,args) strategies the
+    /// loop stops grinding toward `defaultToolCallBudget` and ASKS — an actionable clarify naming what
+    /// was tried — instead of running the dead loop to the hard budget (which stays the backstop).
+    static let maxDistinctFailedStrategies = 3
     /// Fixed retarget grace before intent resolution (the controller's DEFAULT_TARGET_RESOLVE_DELAY_MS).
     static let defaultTargetResolveDelayMs = 1500
 
@@ -71,7 +78,8 @@ final class VoiceCuaLoop {
         now: (@Sendable () -> String)? = nil,
         targetResolveDelayMs: Int = VoiceCuaLoop.defaultTargetResolveDelayMs,
         toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget,
-        toolCallSink: (any ToolCallSink)? = nil
+        toolCallSink: (any ToolCallSink)? = nil,
+        noteWriter: NoteWriter = NoteWriter()
     ) {
         self.driver = driver
         self.resolve = resolve
@@ -81,6 +89,7 @@ final class VoiceCuaLoop {
         self.targetResolveDelayMs = targetResolveDelayMs
         self.defaultToolCallBudget = toolCallBudget
         self.toolCallSink = toolCallSink
+        self.noteWriter = noteWriter
     }
 
     // MARK: Public surface (the controller's returned handle)
@@ -367,30 +376,44 @@ final class VoiceCuaLoop {
         let runningAt = timestamp()
         let approvalState: Contracts.SupervisionAuditEvent.ToolCallApproval = approved ? .approved : .auto
 
-        // Loop-dedup guard (KD2 recovery floor): refuse to re-dispatch a (tool,args) that already
-        // failed this goal — stop with a clear blocked reason instead of looping the dead action to
-        // the budget. Only verbatim-failed signatures are blocked, so a genuine alternative runs.
+        // Converge-or-ask (U4 / R2): a stalled goal ends by ASKING — an actionable clarify naming what
+        // was tried on which target (+ the cause when legible) — instead of grinding the dead loop to
+        // the budget. The hard `toolCallBudget` (continueGoal) stays the backstop; each arm still
+        // records the dead attempt to the Intention Log via `escalateToClarify`. Three stall signals:
+        //
+        //  • KD2 dedup floor: the resolver re-issued a (tool,args) that already failed this goal.
         if let repeated = run.failedSignatures.firstRepeated(in: readyIntent.actionPlan.actionPlan) {
-            let result = ActionDedup.repeatedCallBlock(repeated)
-            DirectorDiagnostics.loop.warning("dedup blocked repeated action session=\(run.sessionId, privacy: .public)")
-            session = sessions.run(run.sessionId, runningAt)
-            recordToolCalls(run, readyIntent, observation, approvalState, result, runningAt)
-            runResult = PlanRunResult(status: .blocked, result: result)
-            finishGoal(run, .blocked, runningAt)
+            DirectorDiagnostics.loop.warning("dedup floor → clarify (repeated action) session=\(run.sessionId, privacy: .public)")
+            escalateToClarify(
+                run, readyIntent, observation, approvalState,
+                tried: [StepDispatch.toolNameForStep(repeated)],
+                attemptResult: ActionDedup.repeatedCallBlock(repeated), at: runningAt)
             return
         }
 
-        // No-progress floor (#158): a click target that no-op'd through BOTH the AX action and a
-        // coordinate (CGEvent) click — the window never changed after `maxNoProgressRepeats` tries —
-        // is a dead action (a Catalyst sidebar that ignores programmatic clicks). Stop with a clear
-        // reason instead of spinning the same click to the budget. Sibling to the KD2 floor above.
+        //  • #158 no-progress floor: a click target no-op'd through BOTH the AX action and a coordinate
+        //    (CGEvent) click — the window never changed after `maxNoProgressRepeats` tries (a Catalyst
+        //    sidebar row that ignores programmatic clicks).
         if let stalled = run.clickEscalation.firstExhausted(in: readyIntent.actionPlan.actionPlan) {
-            let result = ActionDedup.stalledClickBlock(stalled)
-            DirectorDiagnostics.loop.warning("no-progress floor blocked stalled click session=\(run.sessionId, privacy: .public)")
-            session = sessions.run(run.sessionId, runningAt)
-            recordToolCalls(run, readyIntent, observation, approvalState, result, runningAt)
-            runResult = PlanRunResult(status: .blocked, result: result)
-            finishGoal(run, .blocked, runningAt)
+            DirectorDiagnostics.loop.warning("no-progress floor → clarify (stalled click) session=\(run.sessionId, privacy: .public)")
+            escalateToClarify(
+                run, readyIntent, observation, approvalState,
+                tried: [StepDispatch.toolNameForStep(stalled)],
+                attemptResult: ActionDedup.stalledClickBlock(stalled), at: runningAt)
+            return
+        }
+
+        //  • Distinct-strategies floor: enough DISTINCT (tool,args) have failed this goal that the
+        //    resolver is plainly flailing across alternatives — ask before trying yet another and
+        //    grinding to the budget (the failing-but-never-verbatim-repeating case the floors above miss).
+        if run.failedSignatures.signatures.count >= Self.maxDistinctFailedStrategies {
+            DirectorDiagnostics.loop.warning("distinct-strategies floor → clarify count=\(run.failedSignatures.signatures.count, privacy: .public) session=\(run.sessionId, privacy: .public)")
+            let attempt = Contracts.CuaActionResult.blocked(
+                reason: "Stopped after \(run.failedSignatures.signatures.count) distinct strategies failed without progress.",
+                state: nil)
+            escalateToClarify(
+                run, readyIntent, observation, approvalState,
+                tried: Self.triedToolNames(run.failedSignatures), attemptResult: attempt, at: runningAt)
             return
         }
 
@@ -479,6 +502,12 @@ final class VoiceCuaLoop {
         _ observation: Contracts.GoalLoopObservation?,
         _ escalation: ClickEscalation
     ) async -> (result: Contracts.CuaActionResult, executedClick: ExecutedClick?) {
+        // U3 compose-and-write: a `write_note` step is handled NATIVELY (NoteWriter → ~/Documents/
+        // <title>.md + open), never forwarded to `driver.call`. It is not a click — no executed click.
+        if StepDispatch.isLocalToolStep(step) {
+            return (writeNoteLocally(step), nil)
+        }
+
         let (tool, axArgs) = StepDispatch.driverCallForStep(step)
 
         guard StepDispatch.isClickStep(step), let key = StepDispatch.clickTargetKey(step) else {
@@ -487,24 +516,41 @@ final class VoiceCuaLoop {
             return (result, nil)
         }
 
-        let coordinateArgs = StepDispatch.coordinateClickArgs(for: step, observation)
-
         // Already-escalated target → coordinate (CGEvent) click at the element's frame center.
-        if escalation.usesCoordinate(key), let coordinateArgs {
-            DirectorDiagnostics.loop.notice("dispatch coordinate click key=\(key, privacy: .public)")
-            let result = await callDriver(tool, coordinateArgs, summary: "Called \(tool) at element center")
+        if escalation.usesCoordinate(key), let result = await coordinateClick(step, tool, observation) {
             return (result, succeededClick(result, key, .coordinate))
         }
 
         // AX path (default).
         DirectorDiagnostics.loop.info("dispatch tool=\(tool, privacy: .public) key=\(key, privacy: .public) path=ax")
         let axResult = await callDriver(tool, axArgs, summary: "Called \(tool)")
-        if case .failed = axResult, let coordinateArgs {
+        if case .failed = axResult, let result = await coordinateClick(step, tool, observation) {
             DirectorDiagnostics.loop.warning("AX click failed; coordinate fallback key=\(key, privacy: .public)")
-            let result = await callDriver(tool, coordinateArgs, summary: "Called \(tool) at element center")
             return (result, succeededClick(result, key, .coordinate))
         }
         return (axResult, succeededClick(axResult, key, .ax))
+    }
+
+    /// The #158 coordinate fallback: click the element's frame center as a real CGEvent. The driver
+    /// returns element frames in GLOBAL POINTS but takes click coordinates in WINDOW-LOCAL SCREENSHOT
+    /// PIXELS, so a one-off vision screenshot supplies the window bounds + pixel size needed to convert
+    /// (`StepDispatch.coordinatePixel`). Returns nil — leaving the caller on the AX path — when the
+    /// element has no frame, the (pid,window) is unknown, or the screenshot/bounds can't be read.
+    private func coordinateClick(
+        _ step: Contracts.ActionStep,
+        _ tool: String,
+        _ observation: Contracts.GoalLoopObservation?
+    ) async -> Contracts.CuaActionResult? {
+        guard let frame = StepDispatch.clickedElement(for: step, observation)?.frame,
+              let target = StepDispatch.windowTargetForStep(step) else { return nil }
+        guard case let .succeeded(shot) = await driver.screenshot(pid: target.pid, windowId: target.windowId),
+              let bounds = shot.surface.bounds else { return nil }
+        let (x, y) = StepDispatch.coordinatePixel(
+            frame: frame, bounds: bounds, screenshotWidth: shot.width, screenshotHeight: shot.height)
+        DirectorDiagnostics.loop.notice("coordinate click \(tool, privacy: .public) at (\(Int(x), privacy: .public),\(Int(y), privacy: .public)) px")
+        return await callDriver(
+            tool, StepDispatch.coordinateClickArgs(for: step, x: x, y: y),
+            summary: "Called \(tool) at element center")
     }
 
     /// Run one driver call and normalize the result, logging success/failure.
@@ -519,6 +565,30 @@ final class VoiceCuaLoop {
             DirectorDiagnostics.loop.error("dispatch failed tool=\(tool, privacy: .public) result=\(Self.actionResultSummary(result), privacy: .public)")
         }
         return result
+    }
+
+    /// U3: run a locally-handled `write_note` step — persist the model-generated `text` to
+    /// ~/Documents/<title>.md (confined, collision-safe) via `NoteWriter` and open it — returning a
+    /// succeeded result that carries the file path so the compose-and-write lands in the Intention Log.
+    /// A write failure surfaces as a normal failed result (fed forward for recovery), never a crash.
+    private func writeNoteLocally(_ step: Contracts.ActionStep) -> Contracts.CuaActionResult {
+        let (_, args) = StepDispatch.driverCallForStep(step)
+        let title = Self.stringArg(args, "title")
+        let text = Self.stringArg(args, "text")
+        do {
+            let url = try noteWriter.writeNote(title: title, text: text)
+            DirectorDiagnostics.loop.notice("write_note wrote \(url.lastPathComponent, privacy: .public)")
+            return .succeeded(summary: "Wrote note to \(url.path)", state: nil)
+        } catch {
+            DirectorDiagnostics.loop.error("write_note failed: \(error.localizedDescription, privacy: .public)")
+            return .failed(error: "write_note failed: \(error.localizedDescription)", state: nil)
+        }
+    }
+
+    /// A string-typed flat arg (`""` when absent or non-string) — for reading `write_note`'s title/text.
+    private static func stringArg(_ args: [String: Contracts.JSONValue], _ key: String) -> String {
+        if case let .string(value)? = args[key] { return value }
+        return ""
     }
 
     /// An `ExecutedClick` for a click that SUCCEEDED (so the next observe judges its progress); nil
@@ -585,6 +655,66 @@ final class VoiceCuaLoop {
     ) -> Contracts.ResolvedIntent {
         Contracts.ResolvedIntent.blockedIntent(
             status: .blocked, input: input, id: id, createdAt: createdAt, reason: reason)
+    }
+
+    /// Converge-or-ask (U4): end the goal by ASKING rather than grinding. Record the dead attempt to
+    /// the Intention Log (so the failure stays diagnosable), publish an actionable clarify that names
+    /// what was tried on which target (+ the stall cause when legible), and finish the session. The
+    /// session terminal status is `.blocked` (there is no clarify terminal status); the published
+    /// `intent` is the `needsClarification` ask the approval surface shows the user.
+    private func escalateToClarify(
+        _ run: GoalRunState,
+        _ readyIntent: Contracts.ResolvedIntent.Ready,
+        _ observation: Contracts.GoalLoopObservation?,
+        _ approval: Contracts.SupervisionAuditEvent.ToolCallApproval,
+        tried: [String],
+        attemptResult: Contracts.CuaActionResult,
+        at runningAt: String
+    ) {
+        session = sessions.run(run.sessionId, runningAt)
+        recordToolCalls(run, readyIntent, observation, approval, attemptResult, runningAt)
+        let clarify = clarifyIntent(
+            readyIntent.input, id: "intent-clarify-\(run.nextTick)", runningAt,
+            Self.convergeClarifyReason(tried: tried, observation: observation))
+        intent = clarify
+        runResult = nil
+        recordIntent(run.sessionId, runningAt, clarify)
+        finishGoal(run, .blocked, runningAt)
+    }
+
+    /// A terminal clarify intent (status "clarification_required"): like `blockedIntent` but it ASKS —
+    /// no gate, no agent, carrying the converge-or-ask reason.
+    private func clarifyIntent(
+        _ input: Contracts.IntentInput, id: String, _ createdAt: String, _ reason: String
+    ) -> Contracts.ResolvedIntent {
+        Contracts.ResolvedIntent.blockedIntent(
+            status: .clarificationRequired, input: input, id: id, createdAt: createdAt, reason: reason)
+    }
+
+    /// The actionable converge-or-ask reason: name the strategies tried and the surface they ran on,
+    /// plus the stall cause when one is legible — an empty AX tree (`state_elements=0`) usually means
+    /// Screen Recording isn't granted — so the user gets a concrete ask, not a generic "stuck".
+    private static func convergeClarifyReason(
+        tried: [String], observation: Contracts.GoalLoopObservation?
+    ) -> String {
+        let strategies = tried.isEmpty ? "several actions" : tried.joined(separator: ", ")
+        let target: String
+        if let surface = observation?.state?.surface {
+            target = surface.title.isEmpty ? surface.app : "\(surface.title) (\(surface.app))"
+        } else {
+            target = "the current window"
+        }
+        var reason = "I tried \(strategies) on \(target) without making progress. What should I do?"
+        if let state = observation?.state, state.elementCount == 0 {
+            reason += " The window exposes no readable accessibility elements — Screen Recording may not be granted."
+        }
+        return reason
+    }
+
+    /// Distinct tool names among the failed (tool,args) signatures this goal — the "what I tried" the
+    /// converge-or-ask clarify names. A signature is `tool:args`, so the tool is its leading segment.
+    private static func triedToolNames(_ memory: FailedActionMemory) -> [String] {
+        Set(memory.signatures.map { String($0.prefix { $0 != ":" }) }).sorted()
     }
 
     private func timestamp() -> String {

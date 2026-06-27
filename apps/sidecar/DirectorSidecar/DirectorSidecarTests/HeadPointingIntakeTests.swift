@@ -72,6 +72,7 @@ private actor FakeIntakeDriver: CuaLoopDriver {
 
     func listWindows() -> CuaResult<[CuaWindow]> { .succeeded(windows) }
     func getWindowState(pid: Int, windowId: Int) -> CuaResult<CuaWindowState> { .failed(error: "no state") }
+    func screenshot(pid: Int, windowId: Int) -> CuaResult<CuaScreenshot> { .failed(error: "no screenshot") }
     func listTools() -> CuaResult<[DriverToolDefinition]> { .succeeded([]) }
     func call(tool: String, input: JSONValue) -> CuaResult<JSONValue> { .succeeded(.object([:])) }
 }
@@ -254,6 +255,37 @@ struct HeadPointingIntakeTests {
         #expect(input.pointingEvidence.contains { $0.source == .head && $0.strategy == "face-tracker-position" })
         #expect(input.pointingEvidence.contains { $0.strategy == "head-neighborhood" && $0.surface?.id == "looked-at" })
         #expect(input.surfaceCandidates.map(\.id) == ["looked-at"])
+    }
+
+    // U9: the pointed selection reaches the input, read from the binder-resolved surface's pid — and
+    // the fused referent stays byte-for-byte unchanged (R5: fusion still decides the surface, the
+    // selection is purely additive). The reader is injected (a live AX tree can't run headless); it
+    // echoes the pid it was handed so the test proves the read is keyed to the bound surface (pid 42).
+    @Test func makeInputAttachesPointedSelectionWithoutPerturbingTheBoundReferent() async {
+        let driver = FakeIntakeDriver(windows: [window("looked-at", bounds(100, 100, 200, 200))])
+        let snapshot = HeadPointSnapshot()
+        snapshot.record(head(150, 150))
+
+        let withSelection = HeadPointingIntake(
+            snapshot: snapshot, driver: driver,
+            readSelection: { pid in "selection-from-pid-\(pid)" })
+        let withoutSelection = HeadPointingIntake(
+            snapshot: snapshot, driver: driver,
+            readSelection: { _ in nil })
+
+        let attached = await withSelection.makeInput(for: finalTranscript("summarize this"), sessionId: "s1")
+        let bare = await withoutSelection.makeInput(for: finalTranscript("summarize this"), sessionId: "s1")
+
+        // The pointed selection reaches the input, keyed to the binder-resolved surface's pid (42).
+        #expect(attached.selectionText == "selection-from-pid-42")
+        // No selection → nil, never a crash or empty string downstream.
+        #expect(bare.selectionText == nil)
+
+        // R5 regression guard: the fused referent is identical with or without the selection read —
+        // the binder stays authoritative; selection adds *the text within* the surface, nothing else.
+        #expect(attached.pointingEvidence == bare.pointingEvidence)
+        #expect(attached.surfaceCandidates == bare.surfaceCandidates)
+        #expect(attached.surfaceCandidates.map(\.id) == ["looked-at"])
     }
 
     // The whole point of the migration: a tracked head point reaches the RESOLVER's input at tick 0.

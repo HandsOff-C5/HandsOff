@@ -75,9 +75,15 @@ extension Contracts {
         let pointingEvidence: [PointingEvidence]
         let surfaceCandidates: [SurfaceSnapshot]
         let goalSession: GoalSessionInput?
+        /// U9: the on-screen text the user pointed at, read from the TemporalBinder-resolved
+        /// surface (AX focused-element selection, change-count-gated clipboard). The fusion stays
+        /// authoritative for *which* surface; this carries *the text within it* so a compose/act
+        /// goal ("summarize this") grounds on the pointed content instead of a guess. Optional —
+        /// absent when nothing was selected or the AX grant is missing.
+        let selectionText: String?
 
         private enum Key: String, CodingKey {
-            case sessionId, speech, pointingEvidence, surfaceCandidates, goalSession
+            case sessionId, speech, pointingEvidence, surfaceCandidates, goalSession, selectionText
         }
         private enum SpeechKey: String, CodingKey { case finalTranscript }
 
@@ -89,6 +95,7 @@ extension Contracts {
             pointingEvidence = try c.decode([PointingEvidence].self, forKey: .pointingEvidence)
             surfaceCandidates = try c.decode([SurfaceSnapshot].self, forKey: .surfaceCandidates)
             goalSession = try c.decodeIfPresent(GoalSessionInput.self, forKey: .goalSession)
+            selectionText = try c.decodeIfPresent(String.self, forKey: .selectionText)
         }
     }
 

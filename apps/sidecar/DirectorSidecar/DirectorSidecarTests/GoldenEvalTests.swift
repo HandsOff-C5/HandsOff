@@ -165,6 +165,46 @@ private struct VoiceGolden: Decodable {
     }
 }
 
+// MARK: - Quick Pass demo goldens (U8, Phase 1)
+
+/// The Quick Pass demo cases the plan authors test-first (`demo-quick-pass-goldens.json`):
+/// Q1 summarize→compose-and-write, Q3 reversible navigation click, Q4 reversible draft-type,
+/// Q8a pause (read-only interrupt/control), Q8b replay (read-only audit reveal). Q5
+/// ("Send this." → mutating commit) UPDATES the `unsupported send it` voice-cua golden above.
+///
+/// These cases reuse the `VoiceGolden` shape and the same TS fixture file. Swift asserts only
+/// the invariants locally derivable from the fixture TODAY — the approval gate is the one the
+/// risk tier derives, and every tier is one of the four canonical contract tiers. (Unlike the
+/// voice-cua goldens this does NOT couple a risk tier to `cua-driver`: a Quick Pass control
+/// intent — pause/replay — is a ready, read-only intent with an EMPTY plan and a `none` agent.)
+/// The behavioral assertions (exact actionKinds / typed text) are exercised by the TS runner
+/// driving the real resolver; they are expected RED until U2/U3/U6 + the parser/risk wiring
+/// land, then go green with no fixture edits.
+///
+/// TODO(Phase 2): Q2 (scroll-then-summarize), Q6 (two-referent terminal brief), Q7 (screenshot
+/// + multimodal Codex ask) gate on units that ship after Monday — carried as `it.todo` markers
+/// in `demo-quick-pass-goldens.test.ts`, not yet authored as fixtures here.
+@Test func quickPassGoldensGateConsistentlyAndUseCanonicalRiskTiers() throws {
+    let goldens: [VoiceGolden] = try GoldenSet.load("demo-quick-pass-goldens.json")
+    #expect(!goldens.isEmpty)
+
+    for golden in goldens {
+        if let raw = golden.expected.riskLevel {
+            // The approval gate the golden asserts is the one the tier derives — never the
+            // model's claim — and the tier is one of the four canonical contract tiers.
+            let risk = try #require(RiskLevel(rawValue: raw), "unknown risk tier \(raw) in \(golden.name)")
+            #expect(risk.requiresApproval == golden.expected.requiresApproval,
+                    "approval-gate drift for \(golden.name): \(raw) → \(risk.requiresApproval)")
+        } else {
+            // A non-ready Quick Pass golden never gates and names no agent.
+            #expect(golden.expected.requiresApproval == false,
+                    "non-ready quick-pass golden must not gate: \(golden.name)")
+            #expect(golden.expected.targetAgent == "none",
+                    "non-ready quick-pass golden has no agent: \(golden.name)")
+        }
+    }
+}
+
 // MARK: - head-intent LLM goldens (full resolved-intent shape)
 
 /// A head-intent-llm-goldens.json record. Unlike the voice goldens, the LLM goldens carry the

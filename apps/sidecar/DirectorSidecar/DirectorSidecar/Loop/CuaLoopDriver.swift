@@ -28,6 +28,10 @@ import Foundation
 protocol CuaLoopDriver: Sendable {
     func listWindows() async -> CuaResult<[CuaWindow]>
     func getWindowState(pid: Int, windowId: Int) async -> CuaResult<CuaWindowState>
+    /// A vision capture of a window — used by the #158 coordinate-click fallback to recover the
+    /// window's bounds (global points) + the screenshot's pixel size, the two factors that convert an
+    /// element's global-point frame into the window-local screenshot pixels the `click` tool expects.
+    func screenshot(pid: Int, windowId: Int) async -> CuaResult<CuaScreenshot>
     func listTools() async -> CuaResult<[DriverToolDefinition]>
     func call(tool: String, input: JSONValue) async -> CuaResult<JSONValue>
 }
@@ -51,6 +55,34 @@ final class ToolCatalog {
     /// activation is never needed, so dropping the tool is behavior-preserving.
     static let unsupportedTools: Set<String> = ["bring_to_front"]
 
+    /// Locally-handled tools (U3) appended to the driver's self-described surface so the resolver
+    /// can choose them. `write_note` is the compose-and-write DESTINATION (the loop runs it
+    /// natively via NoteWriter — `~/Documents/<title>.md` + open — never forwarding to the driver),
+    /// so it is offered even when the driver tool load fails. JSON-schema params: `title`, `text`.
+    static let localTools: [DriverToolDefinition] = [
+        DriverToolDefinition(
+            name: Contracts.DriverTool.writeNote.rawValue,
+            description: "Write generated content to a new note — the DESTINATION for a compose-and-write task "
+                + "(summarize / draft / rewrite / explain-in-writing): generate the deliverable yourself, then "
+                + "write that generated text here. Creates ~/Documents/<title>.md and opens it. NEVER type the "
+                + "user's request verbatim and NEVER hunt for a button named after the verb.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "title": .object([
+                        "type": .string("string"),
+                        "description": .string(
+                            "Short note title; becomes the .md filename (sanitized, confined to ~/Documents)."),
+                    ]),
+                    "text": .object([
+                        "type": .string("string"),
+                        "description": .string("The full generated content to write into the note."),
+                    ]),
+                ]),
+                "required": .array([.string("title"), .string("text")]),
+            ])),
+    ]
+
     init(driver: any CuaLoopDriver) { self.driver = driver }
 
     func load() async -> CuaResult<[DriverToolDefinition]> {
@@ -67,8 +99,9 @@ final class ToolCatalog {
     /// The tools the resolver is handed this tick — the loaded catalog, or `[]` on a failed load
     /// (the controller's `toolsResult.status === "succeeded" ? toolsResult.value : []`).
     func loadedTools() async -> [DriverToolDefinition] {
-        if case let .succeeded(value) = await load() { return value }
-        return []
+        let driverTools: [DriverToolDefinition]
+        if case let .succeeded(value) = await load() { driverTools = value } else { driverTools = [] }
+        return driverTools + Self.localTools
     }
 }
 

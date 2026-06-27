@@ -47,6 +47,24 @@ enum NextToolCallPrompt {
         "AND its `window_id` and `pid` — never a guessed token/index. Use the element `frame` to reason " +
         "about on-screen layout (relative position, what is above/below/inside what). Combine actions " +
         "across turns: to reveal hidden content, scroll or click a menu open, then act on what appears.\n" +
+        "COMPOSE TASKS: when the goal is to produce writing ABOUT what's on screen — summarize, draft, " +
+        "rewrite, reword, explain in writing, take notes, list the key points — do NOT hunt the UI. " +
+        "(1) READ the source content from the latest snapshot's `elements` (and from `selectionText` " +
+        "when the user pointed at a specific passage); (2) GENERATE the finished deliverable yourself " +
+        "from that content; (3) WRITE your generated text by calling the `write_note` tool with a " +
+        "`title` and the full `text` (or type it into a surface the user explicitly named). NEVER " +
+        "`type_text` the user's request verbatim (typing the word \"summarize\" is always wrong), and " +
+        "NEVER look for or click a button/menu named after the verb — there is no \"Summarize\" control; " +
+        "YOU are the one who composes. If the source text is not actually readable from the snapshot " +
+        "(or the pointed `selectionText` is empty), return `clarify` saying you can't read the content " +
+        "yet — never invent, guess, or fabricate a summary.\n" +
+        "DECOMPOSE a multi-step goal into ordered single-tool steps and carry them across turns — e.g. " +
+        "\"scroll this down then summarize it\" is: scroll to reveal the content, observe, then read→" +
+        "compose→write. Do the single next step toward the goal each turn, using `recentResults` to " +
+        "track what you've already done so you advance instead of restarting. NEVER re-issue a call " +
+        "that already failed or no-op'd for this goal (same tool on the same target with no observed " +
+        "change in the snapshot): change the target, the approach, or the tool — or `clarify` once you " +
+        "are out of distinct options. Don't grind the same action waiting for a different result.\n" +
         "Return status `done` with a `summary` when the goal is already satisfied. Return `clarify` " +
         "or `blocked` with a `reason` only when the target is genuinely ambiguous, impossible, or " +
         "unsafe. Always give a one-line `rationale` for an `act`. Prefer reversible/draft actions; " +
@@ -56,7 +74,9 @@ enum NextToolCallPrompt {
         "your own guess: when the goal says 'type X in this and Y in that', map the first deictic to " +
         "its bound surface and the second to its own — do NOT collapse them to one target or ask for " +
         "clarification when a referent is bound. `candidateSurfaces` carries the same pointing " +
-        "`confidence`/`source` per surface so you can pick the strongest when no deictic is bound."
+        "`confidence`/`source` per surface so you can pick the strongest when no deictic is bound. " +
+        "`selectionText`, when present, is the exact text the user had selected INSIDE the surface they " +
+        "pointed at — treat it as the precise source for the 'this'/'that' content (read it, don't re-find it)."
 
     /// `buildNextToolCallMessages`. Goal + perception snapshot (with element indices) + loop
     /// memory + bound deictic referents + candidates (with pointing confidence/source) + the
@@ -75,6 +95,7 @@ enum NextToolCallPrompt {
             "latestSnapshot": snapshot(for: observations.last) ?? .null,
             "recentResults": .array(recentResults(observations)),
             "boundReferents": .array(boundReferents(input)),
+            "selectionText": string(orNull: input.selectionText),
             "candidateSurfaces": .array(candidateSurfaces(input, evidence: input.pointingEvidence)),
             "availableTools": .array(toolMenu(tools)),
         ])

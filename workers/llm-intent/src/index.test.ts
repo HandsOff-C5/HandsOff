@@ -81,7 +81,7 @@ describe("llm intent Worker", () => {
     );
 
     const response = await worker.fetch(
-      request({ headers: { Authorization: "Bearer app-token" } }),
+      request({ headers: { Authorization: "Bearer app-token" }, body: { messages } }),
       env,
     );
 
@@ -104,11 +104,30 @@ describe("llm intent Worker", () => {
     expect(url).toBe("https://api.openai.com/v1/chat/completions");
     expect(init).toMatchObject({ method: "POST" });
     expect((init?.headers as Headers).get("authorization")).toBe("Bearer openai-key");
+    // KD4: with no request/env override, the upgraded OpenAI default is used.
+    expect(JSON.parse(String(init?.body))).toMatchObject({ model: "gpt-4o" });
+  });
+
+  it("honors the OPENAI_MODEL env override over the upgraded default", async () => {
+    const upstreamFetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(providerResponse("gpt-4.1")), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await worker.fetch(
+      request({ headers: { Authorization: "Bearer app-token" }, body: { messages } }),
+      { ...env, OPENAI_MODEL: "gpt-4.1" },
+    );
+
+    expect(response.status).toBe(200);
+    const [, init] = upstreamFetch.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body))).toMatchObject({ model: "gpt-4.1" });
   });
 
   it("uses Gemini when it is the configured provider", async () => {
     const upstreamFetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify(providerResponse("gemini-3.5-flash")), {
+      new Response(JSON.stringify(providerResponse("gemini-3.5-pro")), {
         headers: { "content-type": "application/json" },
       }),
     );
@@ -122,7 +141,7 @@ describe("llm intent Worker", () => {
     const [url, init] = upstreamFetch.mock.calls[0]!;
     expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions");
     expect((init?.headers as Headers).get("authorization")).toBe("Bearer gemini-key");
-    expect(JSON.parse(String(init?.body))).toMatchObject({ model: "gemini-3.5-flash" });
+    expect(JSON.parse(String(init?.body))).toMatchObject({ model: "gemini-3.5-pro" });
   });
 
   it("falls back to Gemini when the OpenAI key is rejected", async () => {
@@ -135,7 +154,7 @@ describe("llm intent Worker", () => {
         }),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify(providerResponse("gemini-3.5-flash")), {
+        new Response(JSON.stringify(providerResponse("gemini-3.5-pro")), {
           headers: { "content-type": "application/json" },
         }),
       );
@@ -152,7 +171,7 @@ describe("llm intent Worker", () => {
       "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     );
     expect(JSON.parse(String(upstreamFetch.mock.calls[1]?.[1]?.body))).toMatchObject({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.5-pro",
     });
   });
 

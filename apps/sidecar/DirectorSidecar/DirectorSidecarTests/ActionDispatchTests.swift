@@ -375,21 +375,37 @@ private func clickStep(index: Int? = nil, token: String? = nil, pid: Int = 42, w
     #expect(StepDispatch.clickTargetKey(scroll) == nil)
 }
 
-@Test func coordinateClickArgsAimAtFrameCenterAndDropAxAddressing() throws {
-    let observation = try framedObservation(index: 0, token: "s0001:0", x: 10, y: 40, width: 100, height: 20)
-    let args = try #require(StepDispatch.coordinateClickArgs(for: clickStep(index: 0, token: "s0001:0"), observation))
-    #expect(args["x"] == .number(60))   // 10 + 100/2
-    #expect(args["y"] == .number(50))   // 40 + 20/2
+@Test func windowTargetForStepReadsPidAndWindow() throws {
+    #expect(try StepDispatch.windowTargetForStep(clickStep(index: 0))?.pid == 42)
+    #expect(try StepDispatch.windowTargetForStep(clickStep(index: 0))?.windowId == 7)
+}
+
+@Test func coordinatePixelConvertsGlobalFrameToWindowLocalPixels() {
+    // The real System Settings Battery numbers measured live: global-point frame + window bounds +
+    // a downscaled screenshot → the window-local screenshot pixel that actually navigated (89,638).
+    let frame = Contracts.CuaElementFrame(x: 732, y: 382, width: 71.5, height: 24)
+    let bounds = CuaWindowBounds(x: 718, y: 38, width: 715, height: 875)
+    let (x, y) = StepDispatch.coordinatePixel(frame: frame, bounds: bounds, screenshotWidth: 1281, screenshotHeight: 1568)
+    #expect(abs(x - 89.13) < 0.1)   // (732 + 71.5/2 - 718) * 1281/715
+    #expect(abs(y - 637.95) < 0.1)  // (382 + 24/2 - 38) * 1568/875
+}
+
+@Test func coordinatePixelIsIdentityAtUnitScaleAndZeroOrigin() {
+    let frame = Contracts.CuaElementFrame(x: 10, y: 40, width: 100, height: 20)
+    let bounds = CuaWindowBounds(x: 0, y: 0, width: 200, height: 400)
+    let (x, y) = StepDispatch.coordinatePixel(frame: frame, bounds: bounds, screenshotWidth: 200, screenshotHeight: 400)
+    #expect(x == 60)  // 10 + 100/2
+    #expect(y == 50)  // 40 + 20/2
+}
+
+@Test func coordinateClickArgsDropAxAddressingAndAddConvertedXY() throws {
+    let args = try StepDispatch.coordinateClickArgs(for: clickStep(index: 0, token: "s0001:0"), x: 89, y: 638)
+    #expect(args["x"] == .number(89))
+    #expect(args["y"] == .number(638))
     #expect(args["pid"] == .number(42))
     #expect(args["window_id"] == .number(7))
     #expect(args["element_index"] == nil)
     #expect(args["element_token"] == nil)
-}
-
-@Test func coordinateClickArgsNilWithoutFrame() throws {
-    // Element present but no frame → cannot aim a coordinate click; the loop stays AX-only.
-    let observation = try observationWithElement(index: 0, label: "Battery")
-    #expect(try StepDispatch.coordinateClickArgs(for: clickStep(index: 0), observation) == nil)
 }
 
 @Test func windowChangedDetectsNoOpAndProgress() throws {

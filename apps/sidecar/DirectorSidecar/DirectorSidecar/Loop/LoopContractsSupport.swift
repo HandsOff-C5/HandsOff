@@ -22,17 +22,20 @@ extension Contracts.IntentInput {
         finalTranscript: Contracts.FinalTranscript,
         pointingEvidence: [Contracts.PointingEvidence],
         surfaceCandidates: [Contracts.SurfaceSnapshot],
-        goalSession: Contracts.GoalSessionInput?
+        goalSession: Contracts.GoalSessionInput?,
+        selectionText: String? = nil
     ) {
         self.sessionId = sessionId
         self.finalTranscript = finalTranscript
         self.pointingEvidence = pointingEvidence
         self.surfaceCandidates = surfaceCandidates
         self.goalSession = goalSession
+        self.selectionText = selectionText
     }
 
     /// An immutable copy overriding only the named fields — the controller's per-tick
-    /// `{ ...run.baseInput, pointingEvidence, surfaceCandidates, goalSession }` spread.
+    /// `{ ...run.baseInput, pointingEvidence, surfaceCandidates, goalSession }` spread. The U9
+    /// `selectionText` (resolved once at goal start from the bound surface) is carried unchanged.
     func with(
         pointingEvidence: [Contracts.PointingEvidence]? = nil,
         surfaceCandidates: [Contracts.SurfaceSnapshot]? = nil,
@@ -43,7 +46,8 @@ extension Contracts.IntentInput {
             finalTranscript: finalTranscript,
             pointingEvidence: pointingEvidence ?? self.pointingEvidence,
             surfaceCandidates: surfaceCandidates ?? self.surfaceCandidates,
-            goalSession: goalSession)
+            goalSession: goalSession,
+            selectionText: selectionText)
     }
 }
 

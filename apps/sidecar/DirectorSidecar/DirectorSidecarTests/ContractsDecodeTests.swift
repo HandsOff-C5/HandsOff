@@ -55,11 +55,15 @@ private let surfaceJSON = #"""
 
 // MARK: - Driver tools (driver-tools.ts)
 
-@Test func driverToolSurfaceIs36AndDecodes() throws {
-    #expect(Contracts.DriverTool.allCases.count == 36)
+// 37 = the 36 cua-driver passthrough tools + `write_note`, the locally-handled compose-and-write
+// surface (U3). It lives in the enum so a model `write_note` call parses as a known tool, but it
+// dispatches NATIVELY (StepDispatch.localToolNames → NoteWriter), never through `driver.call`.
+@Test func driverToolSurfaceIs37AndDecodes() throws {
+    #expect(Contracts.DriverTool.allCases.count == 37)
     #expect(try decode(Contracts.DriverTool.self, "\"get_window_state\"") == .getWindowState)
     #expect(try decode(Contracts.DriverTool.self, "\"type_text\"") == .typeText)
     #expect(try decode(Contracts.DriverTool.self, "\"kill_app\"") == .killApp)
+    #expect(try decode(Contracts.DriverTool.self, "\"write_note\"") == .writeNote)
 }
 
 @Test func unknownDriverToolFailsLoudly() {

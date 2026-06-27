@@ -5,8 +5,12 @@ import { zodResponseFormat } from "openai/helpers/zod";
 // completion with the next-tool-call schema (was the 6-kind action-plan schema).
 import { nextToolCallSchema } from "@handsoff/intent/src/llm/next-tool-call";
 
-const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
-const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+// KD4: defaults MUST support OpenAI strict structured outputs (the worker resolves
+// against nextToolCallSchema) AND vision. gpt-4o + the Gemini pro tier are
+// known-safe; OPENAI_MODEL / GEMINI_MODEL env overrides stay authoritative so the
+// id can be revised without an app rebuild.
+const DEFAULT_OPENAI_MODEL = "gpt-4o";
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-pro";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const encoder = new TextEncoder();
 

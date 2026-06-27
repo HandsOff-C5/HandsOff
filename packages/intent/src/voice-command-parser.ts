@@ -16,11 +16,19 @@ export function parseVoiceCommand(transcript: string): ParsedVoiceCommand {
   if (!text) {
     return { status: "unsupported", reason: "Empty transcript" };
   }
-  if (text === "pause" || text === "pause it") {
+  // Loop/run control. A leading "pause" verb is the interrupt regardless of the
+  // deictic tail ("pause", "pause it", "pause that agent") — Q8a routes here.
+  if (/^pause\b/.test(text)) {
     return { status: "parsed", intent_type: "pause" };
   }
   if (text === "stop" || text === "stop it") {
     return { status: "parsed", intent_type: "stop" };
+  }
+  // A commit verb on the pointed referent ("send this", "submit that") is a
+  // mutating click-commit (Q5). The deictic set stays {this,that,there}, so the
+  // vaguer "send it" remains unsupported — consistent with the rest of this parser.
+  if (/^(?:send|submit)\s+(?:this|that)\b/.test(text)) {
+    return { status: "parsed", intent_type: "click" };
   }
   const openAndType = command.match(/^(?:open|launch)\s+(.+?)\s+and\s+type\s+(.+)$/i);
   if (openAndType?.[1] && openAndType[2]) {

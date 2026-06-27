@@ -38,6 +38,7 @@ private actor FakeLoopDriver: CuaLoopDriver {
     func getWindowState(pid: Int, windowId: Int) -> CuaResult<CuaWindowState> {
         windowState.map { .succeeded($0) } ?? .failed(error: "no window state")
     }
+    func screenshot(pid: Int, windowId: Int) -> CuaResult<CuaScreenshot> { .failed(error: "no screenshot") }
     func listTools() -> CuaResult<[DriverToolDefinition]> { .succeeded([]) }
     func call(tool: String, input: JSONValue) -> CuaResult<JSONValue> {
         genericCalls.append(tool)

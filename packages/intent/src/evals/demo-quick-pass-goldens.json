@@ -1,0 +1,77 @@
+[
+  {
+    "name": "Q1 summarize compose-and-write",
+    "note": "Q1 (enabling units U2, U3, U6; Phase 1-2). Reads the pointed source, GENERATES a summary + acceptance criteria, then WRITES the generated text into a real surface via write_note. The read+write auto-runs (reversible). MUST NOT emit a literal type_text \"summarize ...\" (actionTexts stays empty) and MUST NOT click a Summarize button. Red until the compose-and-write capability + intent-aware prompt land.",
+    "transcript": "Summarize that issue and tell me the acceptance criteria.",
+    "expected": {
+      "status": "ready",
+      "intent_type": "compose_write",
+      "risk_level": "reversible",
+      "requires_approval": false,
+      "target_agent": "cua-driver",
+      "referentId": "surface-1",
+      "actionKinds": ["inspect_window_state", "write_note"],
+      "actionTexts": []
+    }
+  },
+  {
+    "name": "Q3 open that — reversible navigation click",
+    "note": "Q3 (existing element risk gate; Phase 1). A benign navigation / disclosure / tab click is reversible and auto-runs — it must NOT be over-gated as mutating. Red until non-commit clicks are tiered reversible and \"open that\" resolves to a click.",
+    "transcript": "Open that.",
+    "expected": {
+      "status": "ready",
+      "intent_type": "click",
+      "risk_level": "reversible",
+      "requires_approval": false,
+      "target_agent": "cua-driver",
+      "referentId": "surface-1",
+      "actionKinds": ["click_element"],
+      "actionTexts": []
+    }
+  },
+  {
+    "name": "Q4 draft type — reversible, no send",
+    "note": "Q4 (existing risk gate + U2; Phase 1). Types the draft CONTENT into the pointed input as a reversible draft and emits NO send/Enter step. actionTexts is the content only (\"QA smoke from Director\") — not the deictic \"here\" nor the \"do not send\" constraint. Diverges intentionally from the existing mutating \"type hello into that\" golden: a draft-type is reversible per the demo run sheet. Red until type drafts are tiered reversible and content is extracted cleanly.",
+    "transcript": "Type QA smoke from Director here, but do not send.",
+    "expected": {
+      "status": "ready",
+      "intent_type": "type_text",
+      "risk_level": "reversible",
+      "requires_approval": false,
+      "target_agent": "cua-driver",
+      "referentId": "surface-1",
+      "actionKinds": ["type_text"],
+      "actionTexts": ["QA smoke from Director"]
+    }
+  },
+  {
+    "name": "Q8a pause that agent — interrupt control",
+    "note": "Q8 pause (existing interrupt path; Phase 1). \"Pause that agent\" is a loop/run control interrupt, not a CUA action plan: read-only, auto-runs, dispatches no CUA step (actionKinds empty, target_agent none). Red until the parser recognizes the \"pause that agent\" phrasing (today only the exact \"pause\"/\"pause it\" parse).",
+    "transcript": "Pause that agent.",
+    "expected": {
+      "status": "ready",
+      "intent_type": "pause",
+      "risk_level": "read_only",
+      "requires_approval": false,
+      "target_agent": "none",
+      "referentId": "surface-1",
+      "actionKinds": [],
+      "actionTexts": []
+    }
+  },
+  {
+    "name": "Q8b replay what happened — read-only audit reveal",
+    "note": "Q8 replay (existing audit path; Phase 1). \"Replay what happened\" reveals the audit trail read-only — it auto-runs, mutates nothing, and dispatches no CUA action (actionKinds empty, target_agent none). The pointed surface (the Intention Log) is the referent. Red until a replay/audit-reveal vocabulary is parsed; the intent_type \"replay\" string is a placeholder for that vocabulary.",
+    "transcript": "Replay what happened.",
+    "expected": {
+      "status": "ready",
+      "intent_type": "replay",
+      "risk_level": "read_only",
+      "requires_approval": false,
+      "target_agent": "none",
+      "referentId": "surface-1",
+      "actionKinds": [],
+      "actionTexts": []
+    }
+  }
+]

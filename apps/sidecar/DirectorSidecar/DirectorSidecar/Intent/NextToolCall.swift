@@ -46,7 +46,10 @@ struct NextToolCall: Codable, Sendable, Equatable {
 /// The next-tool-call resolver + the pure mapping from a `NextToolCall` onto the
 /// `Contracts.ResolvedIntent` the controller/UI already speak.
 enum NextToolCallResolver {
-    static let defaultModel = "gpt-4o-mini"
+    // U1 (KD4): match the worker's DEFAULT_OPENAI_MODEL (workers/llm-intent/src/index.ts) — a
+    // stronger reasoning + vision + strict-structured-output tier than gpt-4o-mini. The worker's
+    // OPENAI_MODEL env override stays authoritative, so this id can be revised without an app rebuild.
+    static let defaultModel = "gpt-4o"
 
     /// `resolveNextToolCall`. Sends the goal + live state to the Worker (via `client`), then
     /// maps the model's decision onto a `ResolvedIntent`. Every failure mode the TS handles —
