@@ -68,11 +68,11 @@ struct DirectorMark: View {
 /// hover widen) can't capture the loop and freeze the bars at full height.
 struct ListeningWaveform: View {
     var tint: Color? = nil
-    var barCount: Int = 4
-    var barWidth: CGFloat = 3
+    var barCount: Int = 7
+    var barWidth: CGFloat = 2
     var maxHeight: CGFloat = 18
     var minHeight: CGFloat = 8
-    var spacing: CGFloat = 2.5
+    var spacing: CGFloat = 2
 
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -94,7 +94,7 @@ struct ListeningWaveform: View {
 
     private func height(bar i: Int, at t: TimeInterval) -> CGFloat {
         guard !reduceMotion else { return (minHeight + maxHeight) / 2 }
-        let phase = Double(i) * 0.55
+        let phase = Double(i) * 0.42 // gentle per-bar offset so more bars read as one smooth wave
         let norm = (sin((t / 0.9 + phase) * 2 * .pi) + 1) / 2 // 0…1, staggered per bar
         return minHeight + (maxHeight - minHeight) * norm
     }

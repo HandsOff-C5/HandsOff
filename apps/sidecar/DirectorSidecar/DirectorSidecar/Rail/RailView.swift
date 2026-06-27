@@ -80,7 +80,9 @@ private struct RowShell<Icon: View>: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            icon().frame(width: 36, alignment: .center)
+            // Fixed 36×36 icon box so every row (waveform, glyph, agent mark) is the same height —
+            // the icon's intrinsic height no longer drives the row.
+            icon().frame(width: 36, height: 36, alignment: .center)
             Text(label)
                 .font(theme.body)
                 .foregroundStyle(labelColor ?? theme.textPrimary)
