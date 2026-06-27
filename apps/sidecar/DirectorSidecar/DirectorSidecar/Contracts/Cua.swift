@@ -13,13 +13,49 @@
 import Foundation
 
 extension Contracts {
-    /// `cuaElementSchema`: one AX element in a window-state snapshot.
+    /// An AX element's frame in window-local screenshot-pixel space (top-left origin) — the SAME
+    /// space the driver `click` tool's `x,y` (CGEvent) path consumes. Carried so the loop can fall
+    /// back to a real coordinate click when an `element_index` AX action no-ops (#158: Catalyst
+    /// sidebar rows ignore `AXPress`), and so the LLM can reason about on-screen layout.
+    struct CuaElementFrame: Codable, Sendable, Equatable {
+        let x: Double
+        let y: Double
+        let width: Double
+        let height: Double
+
+        /// The frame center — the point a synthetic CGEvent click targets.
+        var centerX: Double { x + width / 2 }
+        var centerY: Double { y + height / 2 }
+    }
+
+    /// `cuaElementSchema`: one AX element in a window-state snapshot. `frame`/`parentIndex`/`depth`/
+    /// `token` are the per-element fields the driver returns that the audit/intent layer historically
+    /// dropped — `frame` for the coordinate-click fallback, `parentIndex`/`depth` for tree structure,
+    /// `token` for the driver's stable per-snapshot handle (preferred over `index` for dispatch).
     struct CuaElement: Codable, Sendable, Equatable {
         let id: String
         let index: Int?
         let role: String?
         let label: String?
         let value: String?
+        let frame: CuaElementFrame?
+        let parentIndex: Int?
+        let depth: Int?
+        let token: String?
+
+        init(id: String, index: Int?, role: String?, label: String?, value: String?,
+             frame: CuaElementFrame? = nil, parentIndex: Int? = nil, depth: Int? = nil,
+             token: String? = nil) {
+            self.id = id
+            self.index = index
+            self.role = role
+            self.label = label
+            self.value = value
+            self.frame = frame
+            self.parentIndex = parentIndex
+            self.depth = depth
+            self.token = token
+        }
     }
 
     /// `cuaWindowStateSchema`. `elementCount`/`elements` default to 0/[] when absent.

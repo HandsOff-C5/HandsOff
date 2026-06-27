@@ -66,12 +66,24 @@ struct DriverWindowList: Decodable {
     let windows: [DriverWindow]
 }
 
+/// An element's frame from the driver — window-local screenshot pixels, top-left origin (the space
+/// the `click` tool's `x,y` CGEvent path consumes). Wire keys are the single letters `x,y,w,h`.
+struct DriverElementFrame: Decodable {
+    let x: Double
+    let y: Double
+    let w: Double
+    let h: Double
+}
+
 struct DriverElement: Decodable {
     let elementIndex: Int?
     let elementToken: String?
     let role: String?
     let label: String?
     let value: JSONValue?
+    let frame: DriverElementFrame?
+    let parentIndex: Int?
+    let depth: Int?
 }
 
 /// The fields the adapter reads out of a `get_window_state` response (ax mode → `elements`;
@@ -197,7 +209,8 @@ enum CuaWire {
     }
 
     private static func map(element: DriverElement, fallbackIndex: Int) -> CuaElement {
-        let id = element.elementToken?.nilIfEmpty
+        let token = element.elementToken?.nilIfEmpty
+        let id = token
             ?? element.elementIndex.map { "element-\($0)" }
             ?? "element-\(fallbackIndex)"
         return CuaElement(
@@ -205,7 +218,13 @@ enum CuaWire {
             index: element.elementIndex,
             role: element.role,
             label: element.label,
-            value: element.value?.stringForElementValue
+            value: element.value?.stringForElementValue,
+            frame: element.frame.map {
+                Contracts.CuaElementFrame(x: $0.x, y: $0.y, width: $0.w, height: $0.h)
+            },
+            parentIndex: element.parentIndex,
+            depth: element.depth,
+            token: token
         )
     }
 

@@ -32,19 +32,21 @@ enum NextToolCallPrompt {
         "calling ONE cua-driver tool at a time, observing the result, and continuing across turns " +
         "until the goal is done. You drive a real macOS desktop without stealing keyboard focus.\n" +
         "Each turn you receive: the goal, the latest perception snapshot (the focused window + its " +
-        "accessibility elements, each with an `index`, plus its `pid`/`windowId`), the result of " +
-        "your previous tool call (recover from a failure by trying something else — never repeat a " +
-        "failed call), the ranked candidate surfaces, and the list of available tools with their " +
-        "JSON-Schema parameters. Use ONLY this supplied state — never invent windows, elements, or " +
-        "indices.\n" +
+        "accessibility elements — each with an `index`, a stable `token`, its `role`/`label`/`value`, " +
+        "a `frame` {x,y,w,h} in window pixels, and `parentIndex`/`depth` for tree position — plus the " +
+        "window's `pid`/`windowId`), the result of your previous tool call (recover from a failure by " +
+        "trying something else — never repeat a failed call), the ranked candidate surfaces, and the " +
+        "list of available tools with their JSON-Schema parameters. Use ONLY this supplied state — " +
+        "never invent windows, elements, indices, or tokens.\n" +
         "Return status `act` with `tool` (one of the listed tool names) and `args` — the tool's flat " +
-        "arguments (matching its parameter schema, e.g. pid, window_id, element_index, direction) " +
+        "arguments (matching its parameter schema, e.g. pid, window_id, element_token, direction) " +
         "encoded as a JSON object STRING (JSON.stringify'd, not a nested object). " +
         "Example — for launch_app, args is the string {\"appName\":\"Safari\"}, NOT the bare name Safari. " +
-        "Targeting calls (click, type_text, set_value, scroll, press_key, …) MUST cite " +
-        "an `element_index` AND `window_id` from the LATEST snapshot, plus its `pid` — never a " +
-        "guessed index. Combine actions across turns: to reveal hidden content, scroll or click a " +
-        "menu open, then act on what appears.\n" +
+        "Targeting calls (click, type_text, set_value, scroll, press_key, …) MUST cite an element from " +
+        "the LATEST snapshot by its `element_token` (preferred — a stable handle) or `element_index`, " +
+        "AND its `window_id` and `pid` — never a guessed token/index. Use the element `frame` to reason " +
+        "about on-screen layout (relative position, what is above/below/inside what). Combine actions " +
+        "across turns: to reveal hidden content, scroll or click a menu open, then act on what appears.\n" +
         "Return status `done` with a `summary` when the goal is already satisfied. Return `clarify` " +
         "or `blocked` with a `reason` only when the target is genuinely ambiguous, impossible, or " +
         "unsafe. Always give a one-line `rationale` for an `act`. Prefer reversible/draft actions; " +
@@ -90,12 +92,25 @@ enum NextToolCallPrompt {
         guard let observation else { return nil }
         guard let surface = observation.state?.surface ?? observation.windows.first else { return nil }
         let elements: [Contracts.JSONValue] = (observation.state?.elements ?? []).map { element in
-            .object([
+            var fields: [String: Contracts.JSONValue] = [
                 "index": number(orNull: element.index.map(Double.init)),
                 "role": string(orNull: element.role),
                 "label": string(orNull: element.label),
                 "value": string(orNull: element.value),
-            ])
+            ]
+            // The driver's per-element geometry + tree position, now surfaced to the model: a stable
+            // `token` (prefer over index for addressing), the `frame` for spatial reasoning, and
+            // `parentIndex`/`depth` for containment. Included only when present to keep the prompt lean.
+            if let token = element.token { fields["token"] = .string(token) }
+            if let frame = element.frame {
+                fields["frame"] = .object([
+                    "x": .number(frame.x), "y": .number(frame.y),
+                    "w": .number(frame.width), "h": .number(frame.height),
+                ])
+            }
+            if let parent = element.parentIndex { fields["parentIndex"] = .number(Double(parent)) }
+            if let depth = element.depth { fields["depth"] = .number(Double(depth)) }
+            return .object(fields)
         }
         return .object([
             "focusedWindow": surfaceObject(surface),

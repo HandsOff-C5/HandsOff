@@ -69,7 +69,9 @@ extension CuaWindowState {
             capturedAt: capturedAt,
             elementCount: elementCount,
             elements: elements.map {
-                Contracts.CuaElement(id: $0.id, index: $0.index, role: $0.role, label: $0.label, value: $0.value)
+                Contracts.CuaElement(
+                    id: $0.id, index: $0.index, role: $0.role, label: $0.label, value: $0.value,
+                    frame: $0.frame, parentIndex: $0.parentIndex, depth: $0.depth, token: $0.token)
             })
     }
 }

@@ -126,8 +126,8 @@ private let sampleSurface = CuaWindow(
 @Test func mapsDriverWindowStateElements() throws {
     let json = #"""
     {"element_count":3,"elements":[
-      {"element_index":0,"element_token":"s0001:0","role":"AXWindow","label":"Notes"},
-      {"element_index":5,"role":"AXButton","label":"Send","value":true},
+      {"element_index":0,"element_token":"s0001:0","role":"AXWindow","label":"Notes","frame":{"x":0,"y":120,"w":800,"h":600},"depth":0},
+      {"element_index":5,"role":"AXButton","label":"Send","value":true,"frame":{"x":40,"y":200,"w":80,"h":24},"parent_index":0,"depth":1},
       {"role":"AXStaticText","value":{"ignored":"object"}}
     ]}
     """#
@@ -141,6 +141,17 @@ private let sampleSurface = CuaWindow(
     #expect(state.elements[2].value == nil)
     #expect(state.surface.id == sampleSurface.id)
     #expect(state.capturedAt == "2026-06-25T00:00:00.000Z")
+
+    // Per-element geometry + tree position the driver returns are now carried through (#158).
+    #expect(state.elements[0].token == "s0001:0")
+    #expect(state.elements[0].frame == Contracts.CuaElementFrame(x: 0, y: 120, width: 800, height: 600))
+    #expect(state.elements[0].depth == 0)
+    #expect(state.elements[1].frame?.centerX == 80)   // 40 + 80/2
+    #expect(state.elements[1].frame?.centerY == 212)  // 200 + 24/2
+    #expect(state.elements[1].parentIndex == 0)
+    #expect(state.elements[1].depth == 1)
+    #expect(state.elements[1].token == nil)           // no element_token in the fixture row
+    #expect(state.elements[2].frame == nil)           // absent frame stays nil
 
     // Missing element_count falls back to the mapped element count.
     let countFromElements = try CuaWire.decodeWindowState(

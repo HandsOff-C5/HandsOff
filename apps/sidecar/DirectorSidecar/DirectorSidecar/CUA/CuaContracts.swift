@@ -109,13 +109,34 @@ struct CuaWindow: Codable, Sendable, Equatable, Identifiable {
 // MARK: - Window state & screenshot
 
 /// One accessibility element — @handsoff/contracts `cuaElementSchema` (cua.ts). The adapter keeps a
-/// top-level copy so `CuaWindowState` stays in the adapter's own surface family.
+/// top-level copy so `CuaWindowState` stays in the adapter's own surface family. `frame`/`parentIndex`/
+/// `depth`/`token` are the per-element fields the driver returns (`get_window_state` structured
+/// `elements`) — `frame` enables the coordinate-click fallback (#158), the rest enrich the LLM
+/// snapshot. Reuses `Contracts.CuaElementFrame` so the adapter and audit families share one geometry.
 struct CuaElement: Codable, Sendable, Equatable {
     let id: String
     let index: Int?
     let role: String?
     let label: String?
     let value: String?
+    let frame: Contracts.CuaElementFrame?
+    let parentIndex: Int?
+    let depth: Int?
+    let token: String?
+
+    init(id: String, index: Int?, role: String?, label: String?, value: String?,
+         frame: Contracts.CuaElementFrame? = nil, parentIndex: Int? = nil, depth: Int? = nil,
+         token: String? = nil) {
+        self.id = id
+        self.index = index
+        self.role = role
+        self.label = label
+        self.value = value
+        self.frame = frame
+        self.parentIndex = parentIndex
+        self.depth = depth
+        self.token = token
+    }
 }
 
 /// `cuaWindowStateSchema`. `capturedAt` is an ISO-8601 timestamp the adapter stamps at capture (the
