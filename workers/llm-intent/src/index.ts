@@ -47,6 +47,7 @@ const ERROR_CLASS_BY_CODE: Record<string, string> = {
   handsoff_app_token_missing: "HandsoffAppTokenMissingError",
   invalid_app_credential: "InvalidAppCredentialError",
   invalid_intent_request: "InvalidIntentRequestError",
+  internal_server_error: "InternalServerError",
   intent_provider_missing: "IntentProviderMissingError",
   intent_request_failed: "IntentRequestFailedError",
   method_not_allowed: "MethodNotAllowedError",
@@ -119,7 +120,12 @@ async function errorClassForResponse(response: Response): Promise<string | null>
 
 function emitRecord(sink: ObservabilitySink | undefined, record: ObservabilityRecord): void {
   const parsed = safeParseObservabilityRecord(record);
-  if (parsed.success) sink?.emit(parsed.data);
+  if (!parsed.success) return;
+  try {
+    sink?.emit(parsed.data);
+  } catch {
+    // Observability must never change the Worker's user-facing response.
+  }
 }
 
 async function emitRequestRecords(
@@ -206,10 +212,17 @@ async function observeRequest(
 ): Promise<Response> {
   const started = performance.now();
   const context = observabilityContext(request, route);
-  const response = await handler();
-  const durationMs = Math.max(0, Math.round((performance.now() - started) * 100) / 100);
-  await emitRequestRecords(env.OBSERVABILITY_SINK, context, response, durationMs);
-  return response;
+  try {
+    const response = await handler();
+    const durationMs = Math.max(0, Math.round((performance.now() - started) * 100) / 100);
+    await emitRequestRecords(env.OBSERVABILITY_SINK, context, response, durationMs);
+    return response;
+  } catch {
+    const response = json({ error: "internal_server_error" }, 500);
+    const durationMs = Math.max(0, Math.round((performance.now() - started) * 100) / 100);
+    await emitRequestRecords(env.OBSERVABILITY_SINK, context, response, durationMs);
+    return response;
+  }
 }
 
 function readSecret(value: string | undefined, name: string): string | Response {
@@ -354,6 +367,8 @@ async function handleIntentRequest(request: Request, env: Env): Promise<Response
 
   return json({ error: "intent_request_failed" }, 502);
 }
+
+export const __test = { observeRequest };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

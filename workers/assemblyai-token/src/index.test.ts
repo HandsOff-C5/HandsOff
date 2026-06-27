@@ -6,7 +6,7 @@ import {
   type ObservabilityRecord,
 } from "@handsoff/contracts";
 
-import worker, { type Env } from "./index";
+import worker, { __test, type Env } from "./index";
 
 const env: Env = {
   ASSEMBLYAI_API_KEY: "assemblyai-key",
@@ -247,5 +247,61 @@ describe("assemblyai token Worker", () => {
         (record) => record.kind === "metric" && record.name === "worker.request.error.count",
       )?.attributes,
     ).not.toHaveProperty("request_id");
+  });
+
+  it("captures unexpected Worker failures without leaking raw details", async () => {
+    const observed = observedEnv();
+
+    const response = await __test.observeRequest(
+      request(observedHeaders()),
+      observed.env,
+      "/v1/realtime-token",
+      async () => {
+        throw new Error("raw token app-token assemblyai-key");
+      },
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "internal_server_error" });
+    const records = observed.sink.records();
+    expectValidRecords(records);
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "error",
+          event: "request_failed",
+          errorClass: "InternalServerError",
+          handled: true,
+          attributes: expect.objectContaining({
+            route: "/v1/realtime-token",
+            http_status: 500,
+            status_class: "5xx",
+          }),
+        }),
+      ]),
+    );
+    const serialized = JSON.stringify(records);
+    expect(serialized).not.toContain("raw token");
+    expect(serialized).not.toContain("app-token");
+    expect(serialized).not.toContain("assemblyai-key");
+  });
+
+  it("keeps the user response stable when the observability sink fails", async () => {
+    const response = await __test.observeRequest(
+      request(observedHeaders()),
+      {
+        ...env,
+        OBSERVABILITY_SINK: {
+          emit() {
+            throw new Error("sink unavailable");
+          },
+        },
+      },
+      "/v1/realtime-token",
+      async () => Response.json({ ok: true }, { status: 202 }),
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({ ok: true });
   });
 });

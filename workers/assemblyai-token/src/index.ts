@@ -42,6 +42,7 @@ const ERROR_CLASS_BY_CODE: Record<string, string> = {
   invalid_app_credential: "InvalidAppCredentialError",
   invalid_assemblyai_token_response: "InvalidAssemblyAiTokenResponseError",
   invalid_expires_in_seconds: "InvalidExpiresInSecondsError",
+  internal_server_error: "InternalServerError",
   method_not_allowed: "MethodNotAllowedError",
   missing_app_credential: "MissingAppCredentialError",
   not_found: "NotFoundError",
@@ -112,7 +113,12 @@ async function errorClassForResponse(response: Response): Promise<string | null>
 
 function emitRecord(sink: ObservabilitySink | undefined, record: ObservabilityRecord): void {
   const parsed = safeParseObservabilityRecord(record);
-  if (parsed.success) sink?.emit(parsed.data);
+  if (!parsed.success) return;
+  try {
+    sink?.emit(parsed.data);
+  } catch {
+    // Observability must never change the Worker's user-facing response.
+  }
 }
 
 async function emitRequestRecords(
@@ -199,10 +205,17 @@ async function observeRequest(
 ): Promise<Response> {
   const started = performance.now();
   const context = observabilityContext(request, route);
-  const response = await handler();
-  const durationMs = Math.max(0, Math.round((performance.now() - started) * 100) / 100);
-  await emitRequestRecords(env.OBSERVABILITY_SINK, context, response, durationMs);
-  return response;
+  try {
+    const response = await handler();
+    const durationMs = Math.max(0, Math.round((performance.now() - started) * 100) / 100);
+    await emitRequestRecords(env.OBSERVABILITY_SINK, context, response, durationMs);
+    return response;
+  } catch {
+    const response = json({ error: "internal_server_error" }, 500);
+    const durationMs = Math.max(0, Math.round((performance.now() - started) * 100) / 100);
+    await emitRequestRecords(env.OBSERVABILITY_SINK, context, response, durationMs);
+    return response;
+  }
 }
 
 function readSecret(value: string | undefined, name: string): string | Response {
@@ -321,6 +334,8 @@ async function handleTokenRequest(request: Request, env: Env): Promise<Response>
   if (token instanceof Response) return token;
   return json(token);
 }
+
+export const __test = { observeRequest };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
