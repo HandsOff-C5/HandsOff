@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
+use tauri::State;
 
 const FORBIDDEN_ATTRIBUTE_KEY_PARTS: [&str; 8] = [
     "credential",
@@ -117,6 +118,7 @@ pub enum ObservabilityRecord {
 }
 
 impl ObservabilityRecord {
+    #[cfg(test)]
     pub fn attributes_mut(&mut self) -> &mut BTreeMap<String, ObservabilityAttributeValue> {
         &mut self.base_mut().attributes
     }
@@ -165,6 +167,7 @@ impl ObservabilityRecord {
         }
     }
 
+    #[cfg(test)]
     fn base_mut(&mut self) -> &mut ObservabilityBase {
         match self {
             Self::Log { base, .. }
@@ -194,18 +197,25 @@ impl Default for ObservabilitySink {
 }
 
 impl ObservabilitySink {
-    pub fn local_only() -> Self {
+    fn configured(remote_export_enabled: bool) -> Self {
+        let export_policy = if remote_export_enabled {
+            ExportPolicy::RemoteAllowed
+        } else {
+            ExportPolicy::LocalOnly
+        };
         Self {
-            export_policy: ExportPolicy::LocalOnly,
+            export_policy,
             records: Mutex::new(Vec::new()),
         }
     }
 
+    pub fn local_only() -> Self {
+        Self::configured(false)
+    }
+
+    #[cfg(test)]
     pub fn with_remote_export_enabled() -> Self {
-        Self {
-            export_policy: ExportPolicy::RemoteAllowed,
-            records: Mutex::new(Vec::new()),
-        }
+        Self::configured(true)
     }
 
     pub fn emit(&self, record: ObservabilityRecord) -> Result<(), String> {
@@ -226,6 +236,29 @@ impl ObservabilitySink {
 
     pub fn export_policy(&self) -> ExportPolicy {
         self.export_policy
+    }
+}
+
+#[tauri::command]
+pub fn observability_emit(
+    sink: State<'_, ObservabilitySink>,
+    record: ObservabilityRecord,
+) -> Result<(), String> {
+    sink.emit(record)
+}
+
+#[tauri::command]
+pub fn observability_records(
+    sink: State<'_, ObservabilitySink>,
+) -> Result<Vec<ObservabilityRecord>, String> {
+    Ok(sink.records())
+}
+
+#[tauri::command]
+pub fn observability_export_policy(sink: State<'_, ObservabilitySink>) -> &'static str {
+    match sink.export_policy() {
+        ExportPolicy::LocalOnly => "local",
+        ExportPolicy::RemoteAllowed => "remote",
     }
 }
 
