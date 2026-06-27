@@ -1,0 +1,5 @@
+// Config.xcconfig — committed base build config for the DirectorSidecar app target.
+// Per-developer signing (DEVELOPMENT_TEAM) lives in the gitignored Local.xcconfig and
+// is pulled in OPTIONALLY below: the `?` means "skip silently if the file is absent",
+// so CI and fresh checkouts (which have no Local.xcconfig) build without error.
+#include? "Local.xcconfig"
