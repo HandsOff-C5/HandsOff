@@ -190,7 +190,9 @@ struct DirectorSidecarApp: App {
         let loop = VoiceCuaLoop(
             driver: services.cua,
             resolve: IntentWorkerConfig.resolver(),
-            intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot)
+            intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot),
+            // Durable tool-call audit trail (#158) at ~/Library/Application Support/<bundleID>/tool-calls.jsonl.
+            toolCallSink: ToolCallJournal()
         )
         // Probe the cua-driver DAEMON's own TCC (accessibility/screen-recording) so readiness reflects
         // the process a task runs through — its missing grants would otherwise only surface mid-task as

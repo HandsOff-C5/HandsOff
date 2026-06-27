@@ -48,6 +48,8 @@ final class VoiceCuaLoop {
     private let nowProvider: (@Sendable () -> String)?
     private let targetResolveDelayMs: Int
     private let defaultToolCallBudget: Int
+    /// Durable on-disk sink for tool-call records (#158 observability). Nil → in-memory audit only.
+    private let toolCallSink: (any ToolCallSink)?
 
     // MARK: Engine singletons (the controller's useRef stores)
 
@@ -68,7 +70,8 @@ final class VoiceCuaLoop {
         intake: any IntentIntake = SpeechOnlyIntake(),
         now: (@Sendable () -> String)? = nil,
         targetResolveDelayMs: Int = VoiceCuaLoop.defaultTargetResolveDelayMs,
-        toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget
+        toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget,
+        toolCallSink: (any ToolCallSink)? = nil
     ) {
         self.driver = driver
         self.resolve = resolve
@@ -77,6 +80,7 @@ final class VoiceCuaLoop {
         self.nowProvider = now
         self.targetResolveDelayMs = targetResolveDelayMs
         self.defaultToolCallBudget = toolCallBudget
+        self.toolCallSink = toolCallSink
     }
 
     // MARK: Public surface (the controller's returned handle)
@@ -209,6 +213,7 @@ final class VoiceCuaLoop {
         for step in readyIntent.actionPlan.actionPlan {
             let tool = StepDispatch.driverToolForStep(step)
             let target = StepDispatch.toolCallTargetForStep(step, observation)
+            let risk = Contracts.ToolRisk.riskForToolName(StepDispatch.toolNameForStep(step), target: target)
             audit.record(.toolCall(
                 .init(sessionId: run.sessionId, actionId: readyIntent.actionPlan.id, recordedAt: recordedAt),
                 .init(
@@ -216,9 +221,24 @@ final class VoiceCuaLoop {
                     referent: readyIntent.referent ?? run.referent,
                     tool: tool,
                     target: target,
-                    risk: Contracts.ToolRisk.riskForToolName(StepDispatch.toolNameForStep(step), target: target),
+                    risk: risk,
                     approval: approval,
                     result: result)))
+            // Durable mirror (#158): persist the dispatched tool + flat args (free text redacted) +
+            // raw driver result so a non-converging failure stays diagnosable after the goal ends.
+            if let toolCallSink {
+                let (toolName, args) = StepDispatch.driverCallForStep(step)
+                toolCallSink.record(ToolCallJournalEntry(
+                    recordedAt: recordedAt,
+                    sessionId: run.sessionId,
+                    actionId: readyIntent.actionPlan.id,
+                    tool: toolName,
+                    args: ToolCallJournalEntry.redactingArgs(args),
+                    risk: risk.rawValue,
+                    approval: approval.rawValue,
+                    resultStatus: result.journalStatus,
+                    resultDetail: result.journalDetail))
+            }
         }
         auditEvents = audit.forSession(run.sessionId)
     }

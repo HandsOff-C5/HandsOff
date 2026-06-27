@@ -177,14 +177,24 @@ private let launchFooBarArgs = #"{"app_name":"FooBar"}"#
 private func makeLoop(
     driver: FakeLoopDriver,
     resolver: ScriptedResolver,
-    toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget
+    toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget,
+    sink: (any ToolCallSink)? = nil
 ) -> VoiceCuaLoop {
     VoiceCuaLoop(
         driver: driver,
         resolve: { input, createdAt, _ in await resolver.resolve(input, createdAt) },
         now: { "2026-06-22T12:00:00.000Z" },
         targetResolveDelayMs: 0,
-        toolCallBudget: toolCallBudget)
+        toolCallBudget: toolCallBudget,
+        toolCallSink: sink)
+}
+
+/// An in-memory `ToolCallSink` capturing every persisted record, for the durable-sink assertions.
+private final class RecordingSink: ToolCallSink, @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [ToolCallJournalEntry] = []
+    func record(_ entry: ToolCallJournalEntry) { lock.lock(); stored.append(entry); lock.unlock() }
+    var entries: [ToolCallJournalEntry] { lock.lock(); defer { lock.unlock() }; return stored }
 }
 
 // MARK: - Assertion helpers
@@ -488,5 +498,21 @@ struct VoiceCuaLoopTests {
         #expect(isCoordinateInput(inputs[0]) == false)        // on the AX path
         #expect(isSatisfied(loop.intent))
         #expect(loop.session?.status == .succeeded)
+    }
+
+    // #158 observability: every executed tool call is mirrored to the durable sink (args + result),
+    // not just the in-memory Intention Log.
+    @Test func persistsEachToolCallToTheDurableSink() async {
+        let sink = RecordingSink()
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState())
+        let resolver = ScriptedResolver([act("scroll"), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver, sink: sink)
+
+        await loop.handleFinalTranscript(finalTranscript("scroll"))
+
+        #expect(sink.entries.count == 1)
+        #expect(sink.entries.first?.tool == "scroll")
+        #expect(sink.entries.first?.resultStatus == "succeeded")
+        #expect(sink.entries.first?.sessionId == loop.session?.id)
     }
 }
