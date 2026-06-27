@@ -188,11 +188,17 @@ struct DirectorSidecarApp: App {
         // app's engine. The loop drives the SAME frames the socket used to deliver (engine.onFrame →
         // dispatch) and the UI's commands route to the loop (the models' command sink IS the engine).
         let replayStore = SupervisionReplayStore.applicationSupport()
+        let agentReplay = AgentReplayEmitter(
+            store: AgentReplayStore.applicationSupport(),
+            sender: AgentReplayWorkerConfig.client()
+        )
+        agentReplay.flushSoon()
         let loop = VoiceCuaLoop(
             driver: services.cua,
-            resolve: IntentWorkerConfig.resolver(),
+            resolve: IntentWorkerConfig.resolver(replay: agentReplay),
             intake: HeadPointingIntake(snapshot: headSnapshot, driver: services.cua, gesture: gestureSnapshot),
             replayStore: replayStore,
+            agentReplay: agentReplay,
             observability: ObservabilityClient(
                 component: "director.loop",
                 sink: ObservabilityOSLogSink(),

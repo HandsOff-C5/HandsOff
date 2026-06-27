@@ -28,10 +28,10 @@ protocol NextToolCallClient: Sendable {
 
 /// The Worker's response envelope — `{ choices: [...] }` (the OpenAI `chat.completions`
 /// choices the Worker forwards). Only the fields the resolver reads are modeled.
-struct NextToolCallCompletion: Decodable, Sendable, Equatable {
+struct NextToolCallCompletion: Codable, Sendable, Equatable {
     let choices: [Choice]
 
-    struct Choice: Decodable, Sendable, Equatable {
+    struct Choice: Codable, Sendable, Equatable {
         let finishReason: String?
         let message: Message
 
@@ -54,7 +54,7 @@ struct NextToolCallCompletion: Decodable, Sendable, Equatable {
 
     /// The completion message: the structured-output `parsed` payload (a `NextToolCall`) or a
     /// `refusal` string. Both optional — a truncated/empty completion carries neither.
-    struct Message: Decodable, Sendable, Equatable {
+    struct Message: Codable, Sendable, Equatable {
         let parsed: NextToolCall?
         let refusal: String?
 

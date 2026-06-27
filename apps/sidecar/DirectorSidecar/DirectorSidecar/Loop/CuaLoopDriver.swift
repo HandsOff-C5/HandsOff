@@ -110,10 +110,14 @@ typealias NextToolCallResolving = @Sendable (
 enum LoopResolver {
     /// The production resolver: forward to the Worker-backed `NextToolCallResolver` (Track C) with
     /// a long-lived client. Keeps Worker config out of the loop — the app wiring supplies the client.
-    static func worker(client: NextToolCallClient, model: String = NextToolCallResolver.defaultModel) -> NextToolCallResolving {
+    static func worker(
+        client: NextToolCallClient,
+        model: String = NextToolCallResolver.defaultModel,
+        replay: (any AgentReplayRecording)? = nil
+    ) -> NextToolCallResolving {
         { input, createdAt, tools in
             await NextToolCallResolver.resolveNextToolCall(
-                input, client: client, tools: tools, model: model, createdAt: createdAt)
+                input, client: client, tools: tools, model: model, createdAt: createdAt, replay: replay)
         }
     }
 }

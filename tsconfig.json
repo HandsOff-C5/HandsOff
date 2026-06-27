@@ -12,6 +12,7 @@
     { "path": "packages/speech" },
     { "path": "packages/supervision" },
     { "path": "packages/testkit" },
+    { "path": "workers/agent-replay" },
     { "path": "workers/assemblyai-token" },
     { "path": "workers/llm-intent" }
   ]

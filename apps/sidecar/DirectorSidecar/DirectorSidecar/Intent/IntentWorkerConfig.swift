@@ -58,12 +58,13 @@ enum IntentWorkerConfig {
     static func resolver(
         env: [String: String] = ProcessInfo.processInfo.environment,
         bundle: Bundle = .main,
-        model: String = NextToolCallResolver.defaultModel
+        model: String = NextToolCallResolver.defaultModel,
+        replay: (any AgentReplayRecording)? = nil
     ) -> NextToolCallResolving {
         guard let client = client(env: env, bundle: bundle) else {
             return notConfiguredResolver
         }
-        return LoopResolver.worker(client: client, model: model)
+        return LoopResolver.worker(client: client, model: model, replay: replay)
     }
 
     /// The degraded resolver: a clean `blocked` intent (no transport, no mock) naming the missing keys.

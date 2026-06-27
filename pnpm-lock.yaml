@@ -178,6 +178,15 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  workers/agent-replay:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260621.1
+        version: 4.20260621.1
+      wrangler:
+        specifier: ^4.103.0
+        version: 4.103.0(@cloudflare/workers-types@4.20260621.1)
+
   workers/assemblyai-token:
     devDependencies:
       '@cloudflare/workers-types':

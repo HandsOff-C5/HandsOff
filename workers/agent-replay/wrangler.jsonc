@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "handsoff-agent-replay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-22",
+  "workers_dev": true,
+  "kv_namespaces": [
+    {
+      "binding": "AGENT_REPLAY_DEDUP",
+      "id": "replace-with-agent-replay-dedup-kv-id",
+    },
+  ],
+  "secrets": {
+    "required": ["HANDSOFF_APP_TOKEN", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"],
+  },
+  "vars": {
+    "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
+  },
+}
