@@ -45,8 +45,10 @@ struct OnboardingView: View {
     }
 
     /// Finish the journey: open the Home dashboard window and close onboarding. Home only ever opens
-    /// here, so the dashboard never appears until onboarding is done.
+    /// here, so the dashboard never appears until onboarding is done. Clearing the latch FIRST lets
+    /// Home's appearance post enter-app and stops the delegate from closing it as a stray.
     private func goHome() {
+        OnboardingGate.isPresenting = false
         openWindow(id: "home")
         dismissWindow(id: OnboardingScene.id)
     }

@@ -18,10 +18,15 @@ import OSLog
 /// and app keyboard shortcuts (⌥⌘D) dead. Explicitly activate on launch so the window is interactive.
 final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        terminateOtherInstances() // newest wins — never two Director icons in the Dock
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        suppressRestoredHome()
         makeDashboardKey()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.makeDashboardKey() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            self.suppressRestoredHome()
+            self.makeDashboardKey()
+        }
     }
 
     // The overlay/HUD are non-key floating panels, so nothing claims key on its own — force the
@@ -30,10 +35,31 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
         makeDashboardKey()
     }
 
+    /// Single-instance: terminate any other running Director before this one takes over, so a stale
+    /// build (or a relaunch fork) can't leave two apps in the Dock. Newest launch wins.
+    private func terminateOtherInstances() {
+        guard let bid = Bundle.main.bundleIdentifier else { return }
+        let myPid = ProcessInfo.processInfo.processIdentifier
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: bid)
+        where app.processIdentifier != myPid {
+            app.forceTerminate()
+        }
+    }
+
+    /// macOS restores windows that were open at last quit. During onboarding that would pop the Home
+    /// dashboard up *behind* the onboarding window — close any such restored Home and mark it
+    /// non-restorable. Home legitimately reopens (via openWindow) only after onboarding finishes.
+    private func suppressRestoredHome() {
+        guard OnboardingGate.isPresenting else { return }
+        for window in NSApp.windows where window.title == "Director" {
+            window.isRestorable = false
+            window.close()
+        }
+    }
+
     private func makeDashboardKey() {
-        // While the onboarding window is up, don't yank Home to the front over it — onboarding is the
-        // intended front surface at first run.
-        if NSApp.windows.contains(where: { $0.title == "Welcome to Director" && $0.isVisible }) { return }
+        // While onboarding is the front surface, don't yank Home forward (it shouldn't even be open).
+        if OnboardingGate.isPresenting { return }
         let dashboard = NSApp.windows.first { $0.title == "Director" }
             ?? NSApp.windows.first { $0.canBecomeKey && !($0 is NSPanel) && !$0.className.contains("StatusBar") }
         dashboard?.makeKeyAndOrderFront(nil)
@@ -116,6 +142,10 @@ struct DirectorSidecarApp: App {
     private let fnHotkey: FnHotkeyService
 
     init() {
+        // Latch onboarding presentation BEFORE any scene appears, so a Home window macOS restores at
+        // launch is recognized as a stray (closed by the app delegate) and never posts enter-app.
+        OnboardingGate.isPresenting = OnboardingGate.shouldShowAtLaunch
+
         let store = BridgeStore()
         let hud = HUDModel()
         let micro = MicroHUDModel()
@@ -474,13 +504,18 @@ private struct HomeOpenWiring: ViewModifier {
                         NSApp.activate()
                     }
                 }
-                // Home is showing → its minimized echo (the rail) hides. (Home only ever appears once
-                // onboarding has finished and opened it, so no onboarding coordination is needed here.)
+                // Home is showing → its minimized echo (the rail) hides.
                 rail.setHomeOpen(true)
-                // Entering the app proper — now it's appropriate to install the fn capture tap (which
-                // prompts for Accessibility/Input Monitoring). Deferred from launch so onboarding owns
-                // the permission UX. Idempotent on the listener side.
-                NotificationCenter.default.post(name: .directorEnterApp, object: nil)
+                // Don't let macOS restore this window across launches — it should appear only when
+                // onboarding opens it, never behind the onboarding flow.
+                NSApp.windows.first { $0.title == "Director" }?.isRestorable = false
+                // Entering the app proper — install the fn capture tap (which prompts for
+                // Accessibility/Input Monitoring), deferred from launch so onboarding owns the
+                // permission UX. Guard against a stray/restored Home appearing during onboarding:
+                // only fire once onboarding is no longer the front surface.
+                if !OnboardingGate.isPresenting {
+                    NotificationCenter.default.post(name: .directorEnterApp, object: nil)
+                }
             }
             .onDisappear {
                 // Home closed (red-X) → the rail returns as the ambient edge summary.

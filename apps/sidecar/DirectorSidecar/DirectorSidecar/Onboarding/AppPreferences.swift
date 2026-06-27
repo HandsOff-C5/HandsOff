@@ -51,4 +51,9 @@ enum OnboardingGate {
     static var shouldShowAtLaunch: Bool {
         alwaysShow || !AppPreferences.onboardingCompleted
     }
+
+    /// Live latch: true while onboarding is the active first-run surface (from launch until the user
+    /// finishes or it redirects to Home). Gates Home so a window macOS *restores* at launch can't show
+    /// behind onboarding, and so entering-the-app side effects (the fn capture tap) don't fire early.
+    @MainActor static var isPresenting = false
 }
