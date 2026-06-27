@@ -364,7 +364,7 @@ struct ObservabilityOSLogSink: ObservabilitySink {
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(envelope)
         guard let line = String(data: data, encoding: .utf8) else { return }
-        logger.info("\(line, privacy: .public)")
+        logger.info("\(line, privacy: .private)")
     }
 }
 
