@@ -149,9 +149,11 @@ struct HeadPointingFusionTests {
             windows: [target, other],
             perceptionTarget: (surface: target.surface, confidence: 0.9))
 
-        // The point-to-window referent leads the evidence list.
+        // The point-to-window referent leads the evidence list, attributed to HEAD (not gesture):
+        // the perception aligner is the head-tracking / face-gaze path, not the hand-gesture lane.
         let first = built.pointingEvidence.first
         #expect(first?.strategy == "point-to-window")
+        #expect(first?.source == .head)
         #expect(first?.surface?.id == "textedit")
         #expect(first?.confidence == 0.9)
 

@@ -18,10 +18,17 @@ struct VoiceActionCoordinatorTests {
         var frameUnderGaze: CGRect? = CGRect(x: 10, y: 20, width: 300, height: 80)
         var ownerDecision: OwnerGate.Decision = .bypassed
 
+        /// When false, `focusElement` reports it could NOT place the caret (best-effort failure path).
+        var focusSucceeds = true
+
         var clipboardWrites: [ClipboardContent] = []
         var pasteCount = 0
         var brackets: [(rect: CGRect, confirmed: Bool)] = []
         var logs: [String] = []
+        var focusedPoints: [CGPoint] = []
+        var auditEvents: [String] = []
+        /// An ordered trace of the side effects whose RELATIVE order matters (focus must precede paste).
+        var callOrder: [String] = []
 
         func makeEnvironment() -> VoiceActionEnvironment {
             VoiceActionEnvironment(
@@ -29,10 +36,16 @@ struct VoiceActionCoordinatorTests {
                 readText: { _ in self.textUnderGaze },
                 elementFrame: { _ in self.frameUnderGaze },
                 writeClipboard: { self.clipboardWrites.append($0) },
-                paste: { self.pasteCount += 1 },
+                focusElement: { point in
+                    self.focusedPoints.append(point)
+                    self.callOrder.append("focus")
+                    return self.focusSucceeds
+                },
+                paste: { self.pasteCount += 1; self.callOrder.append("paste") },
                 showBrackets: { self.brackets.append((rect: $0, confirmed: $1)) },
                 ownerVerify: { self.ownerDecision },
-                log: { self.logs.append($0) }
+                log: { self.logs.append($0) },
+                audit: { self.auditEvents.append($0) }
             )
         }
     }
@@ -95,6 +108,22 @@ struct VoiceActionCoordinatorTests {
         #expect(rec.clipboardWrites.count == 1)
         #expect(rec.clipboardWrites.first == .codeBlock(heading: nil, code: "x", language: nil))
         #expect(rec.pasteCount == 1)
+        // Finding 4: keyboard focus is shifted to the gazed drop target BEFORE the paste fires, so
+        // Cmd+V lands in it and not whatever control was previously focused.
+        #expect(rec.focusedPoints.count == 1)
+        #expect(rec.callOrder == ["focus", "paste"])
+    }
+
+    @Test func paste_focusFailure_stillPastes_andLogs() {
+        let (coord, rec) = make()
+        rec.textUnderGaze = "x"
+        _ = coord.handle(transcript: "hey director copy this")
+
+        rec.focusSucceeds = false  // focus is best-effort — a failure must NOT abort the paste
+        #expect(coord.handle(transcript: "hey director drop it here"))
+        #expect(rec.pasteCount == 1)
+        #expect(rec.callOrder == ["focus", "paste"])
+        #expect(rec.logs.contains { $0.contains("focus") })
     }
 
     @Test func paste_withNoPriorCapture_consumed_logsNothingCaptured_noEffects() {
@@ -134,6 +163,8 @@ struct VoiceActionCoordinatorTests {
         #expect(coord.pending == nil)
         #expect(rec.clipboardWrites.isEmpty)
         #expect(rec.logs.contains { $0.contains("owner-gate denied") })
+        // Finding 3: a denial is recorded in the tamper-evident audit chain too, not just OSLog.
+        #expect(rec.auditEvents.contains("owner-gate-denied"))
     }
 
     @Test func ownerBypassed_proceeds_andLogsBypassMarker() {
@@ -144,6 +175,9 @@ struct VoiceActionCoordinatorTests {
         #expect(coord.pending == .codeBlock(heading: nil, code: "code", language: nil))
         // The bypass must be visible in the log — never a silent admit.
         #expect(rec.logs.contains { $0.contains("bypass") })
+        // Finding 3: and it must ALSO go through the SHA-256 hash-chained audit, so the bypass is
+        // tamper-evident — proving it is not OSLog-only (a forgeable trace).
+        #expect(rec.auditEvents.contains("owner-gate-bypass"))
     }
 
     // MARK: - Sleep
@@ -166,7 +200,37 @@ struct VoiceActionCoordinatorTests {
         #expect(VoiceActionCoordinator.classify("drop it here") == .paste)
         #expect(VoiceActionCoordinator.classify("paste") == .paste)
         #expect(VoiceActionCoordinator.classify("put it there") == .paste)
-        #expect(VoiceActionCoordinator.classify("here") == .paste)
+        // Finding 5: an explicit verbless deictic "it here"/"it there" still pastes …
+        #expect(VoiceActionCoordinator.classify("it here") == .paste)
+        #expect(VoiceActionCoordinator.classify("it there") == .paste)
+        // … but a BARE "here"/"there" no longer does (it over-matched questions like "what is here").
+        #expect(VoiceActionCoordinator.classify("here") == .none)
+        #expect(VoiceActionCoordinator.classify("there") == .none)
         #expect(VoiceActionCoordinator.classify("open safari") == .none)
+    }
+
+    // MARK: - Classifier narrowing (Finding 5) — end-to-end through `handle`
+
+    @Test func bareHereQuestion_isNotPaste_soNotConsumed() {
+        let (coord, rec) = make()
+        rec.textUnderGaze = "x"
+        _ = coord.handle(transcript: "hey director copy this")  // arm a pending capture
+        rec.pasteCount = 0
+
+        // "what is here" is a question, not a drop — it must NOT trigger a paste, and (being a wake
+        // command we don't own) falls through for other routing.
+        #expect(coord.handle(transcript: "hey director what is here") == false)
+        #expect(rec.pasteCount == 0)
+        #expect(rec.clipboardWrites.isEmpty)
+    }
+
+    @Test func verbPaste_overHere_stillPastes() {
+        let (coord, rec) = make()
+        rec.textUnderGaze = "x"
+        _ = coord.handle(transcript: "hey director copy this")
+
+        // An explicit paste verb ("put") pastes even with extra words around "here".
+        #expect(coord.handle(transcript: "hey director put it over here"))
+        #expect(rec.pasteCount == 1)
     }
 }

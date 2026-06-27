@@ -67,7 +67,7 @@ enum ClipboardRepresentationBuilder {
                 attributed: attributed,
                 rtf: rtf(from: attributed),
                 html: codeBlockHTML(heading: heading, code: code, language: language),
-                plainText: codeBlockPlainText(heading: heading, code: code)
+                plainText: codeBlockPlainText(heading: heading, code: code, language: language)
             )
         }
     }
@@ -130,10 +130,14 @@ enum ClipboardRepresentationBuilder {
 
     // MARK: - Plain text
 
-    private static func codeBlockPlainText(heading: String?, code: String) -> String {
+    private static func codeBlockPlainText(heading: String?, code: String, language: String? = nil) -> String {
+        // Preserve the fenced-code structure so plain-text paste targets can still recognise
+        // the block as code. Include the language info-string when present.
+        let openFence = language.flatMap { $0.isEmpty ? nil : $0 }.map { "```\($0)" } ?? "```"
+        let fenced = "\(openFence)\n\(code)\n```"
         if let heading, !heading.isEmpty {
-            return heading + "\n\n" + code
+            return heading + "\n\n" + fenced
         }
-        return code
+        return fenced
     }
 }

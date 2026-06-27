@@ -93,7 +93,7 @@ enum HeadPointingFusion {
         // below is unchanged — this is purely additive.
         if let perceptionTarget {
             evidence.append(Contracts.PointingEvidence(
-                source: .gesture, confidence: perceptionTarget.confidence, strategy: "point-to-window",
+                source: .head, confidence: perceptionTarget.confidence, strategy: "point-to-window",
                 surface: perceptionTarget.surface, cursor: nil))
         }
 
@@ -212,9 +212,16 @@ struct HeadPointingIntake: IntentIntake {
 
         // Resolve the perception aligner's fused top window back to a real surface (id → driver
         // window). Nil unless the live bus ranked a window under the bias-corrected hit.
+        // Resolution order: (1) the FRESHLY FETCHED windows list — avoids a stale screen-cache
+        // miss when the just-retrieved window hasn't propagated to the provider yet; (2) the
+        // ScreenSnapshotProvider cache as a secondary fallback for windows not in the live fetch.
         var perceptionTarget: (surface: Contracts.SurfaceSnapshot, confidence: Double)? = nil
-        if let aligner, let screen, let top = aligner.top(), let win = screen.surface(forId: top.id) {
-            perceptionTarget = (win.surface, perceptionConfidence)
+        if let aligner, let top = aligner.top() {
+            let win: CuaWindow? = windows.first(where: { $0.id == top.id })
+                ?? screen.flatMap { $0.surface(forId: top.id) }
+            if let win {
+                perceptionTarget = (win.surface, perceptionConfidence)
+            }
         }
 
         let built = HeadPointingFusion.build(

@@ -67,7 +67,13 @@ enum NativeAXActuation {
     private static func performClick(_ request: NativeActionRequest, pid: Int) -> NativeActionOutcome {
         // Point→element (the (0,0) fix): resolve the element under the point; a real control's own
         // press is the most reliable activation, else click the point directly.
-        if let point = request.point, let element = AXElementResolver.element(at: point) {
+        // `element(at:)` is a SYSTEM-WIDE hit test, so the point can land on a window owned by a
+        // DIFFERENT process (an overlapping app); only trust it when the hit element belongs to the
+        // requested pid — otherwise fall through to the pid-scoped element_index path (which returns
+        // .notResolved when absent) so the caller falls back instead of clicking the wrong surface.
+        if let point = request.point,
+           let element = AXElementResolver.element(at: point),
+           ownerPid(of: element) == pid {
             if request.kind == .click, AXElementResolver.press(element) {
                 return .verified(summary: "native-ax: pressed element at point")
             }
@@ -122,7 +128,15 @@ enum NativeAXActuation {
             return .verified(summary: "native-ax: set value (\(value.count) chars)")
         }
 
-        // AX value-set did not land → CGEvent keystroke fallback through the same surface.
+        // AX value-set did not land → CGEvent keystroke fallback. Keystrokes have NO addressed
+        // target: they land on whatever currently holds focus, which (for an explicit element_index)
+        // may be a DIFFERENT control than `element`. Only keystroke when `element` is — or can be made
+        // — the focused element; otherwise abandon the fallback, roll back, and report a failure
+        // (never type into the wrong control and call it a success).
+        guard ensureFocused(element, pid: pid) else {
+            rollback(element, to: prior)
+            return .failedVerify(reason: "native-ax: set_value target not focusable for keystroke fallback (rolled back)")
+        }
         postKeystrokes(value)
         usleep(settleMicroseconds)
         if NativeActionPolicy.verifySetValue(
@@ -149,6 +163,27 @@ enum NativeAXActuation {
         _ = AXElementResolver.setValue(element, prior)
     }
 
+    /// The pid that owns an AX element, or nil if it cannot be read. Used to confirm a system-wide
+    /// point hit-test landed on the REQUESTED process before activating it.
+    private static func ownerPid(of element: AXUIElement) -> Int? {
+        var owner: pid_t = 0
+        guard AXUIElementGetPid(element, &owner) == .success else { return nil }
+        return Int(owner)
+    }
+
+    /// True when `element` already holds, or can be given, the app's keyboard focus — so a CGEvent
+    /// keystroke fallback lands on the intended target rather than whatever else is focused. The
+    /// common (no element_index) case already targets the focused element, so this is a no-op there.
+    private static func ensureFocused(_ element: AXUIElement, pid: Int) -> Bool {
+        if let focused = AXElementResolver.focusedElement(ofPid: pid), CFEqual(focused, element) {
+            return true
+        }
+        _ = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        usleep(settleMicroseconds)
+        guard let focused = AXElementResolver.focusedElement(ofPid: pid) else { return false }
+        return CFEqual(focused, element)
+    }
+
     // MARK: In-process get_window_state (the live read path, not the driver)
 
     /// The focused/targeted window's AX state, read IN-PROCESS. Returns nil when there is no trust or
@@ -160,6 +195,17 @@ enum NativeAXActuation {
         guard let surface = windows.first(where: { $0.pid == pid && $0.windowId == windowId }) else {
             return nil
         }
+        // HONEST-MINIMAL windowId fix: `enumerateElements(ofPid:)` reads the pid's FRONT window only
+        // (CGWindowList's numeric windowId has no stable AX counterpart — see AXElementResolver), so
+        // its element indices describe the front surface, NOT necessarily the requested one. Serving
+        // them for a non-front window would return indices that point at the wrong surface. Until an
+        // exact AX-window mapping exists, reject reads for any window that is not the pid's frontmost
+        // (max-zIndex) surface and let the driver — which CAN target a specific window — handle it.
+        let frontmostWindowId = windows
+            .filter { $0.pid == pid }
+            .max(by: { $0.zIndex < $1.zIndex })?
+            .windowId
+        guard frontmostWindowId == windowId else { return nil }
         let resolved = AXElementResolver.enumerateElements(ofPid: pid)
         guard !resolved.isEmpty else { return nil }
         let elements = resolved.map {

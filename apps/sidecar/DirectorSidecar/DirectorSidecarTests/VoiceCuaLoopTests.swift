@@ -370,4 +370,78 @@ struct VoiceCuaLoopTests {
         #expect(loop.session?.status == .succeeded)
         #expect(await driver.recordedCalls().isEmpty)
     }
+
+    // FINDING 1 (gate): an attacker-influenceable arg flows into the RiskGate. The first (voice-only)
+    // tick auto-runs an arg-less reversible action, advancing to a screen-grounded tick where the
+    // next action's arg is derived from the live `active_window` observation. That tainted arg
+    // escalates an otherwise-reversible `type_text` to approval (raise-never-lower) and the loop
+    // blocks before dispatch — proving the real args (with taint) reach the gate, not `args: []`.
+    @Test func taintedScreenDerivedArgEscalatesViaRiskGate() async {
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState())
+        let resolver = ScriptedResolver([act("scroll"), act("type_text", args: #"{"text":"hello"}"#), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("scroll then type"))
+
+        // scroll ran (tick-0, trusted); the tainted reversible type_text was gated before dispatch.
+        #expect(await driver.recordedCalls() == ["scroll"])
+        #expect(loop.session?.status == .blocked)
+        #expect(resultReason(loop.runResult)?.contains("RiskGate requires approval") == true)
+    }
+
+    // FINDING 1 (audit): a tainted arg rides into the tamper-evident hash chain as committed
+    // evidence. The first tick auto-runs (trusted, no args); the screen-grounded second tick's
+    // destructive `kill_app` pauses for approval, then on approve() its `active_window`-derived
+    // `pid` arg commits with `.attacker_influenceable` taint and a real per-step verify outcome —
+    // proving `actionArgs` preserves taint instead of hardcoding `.trusted`.
+    @Test func taintedArgIsCommittedToAuditChain() async {
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState())
+        let resolver = ScriptedResolver([act("scroll"), act("kill_app", args: #"{"pid":42}"#), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("clean up then quit it"))
+        // Destructive kill_app paused for approval at the screen-grounded tick.
+        #expect(isReady(loop.intent))
+
+        await loop.approve()
+
+        #expect(await driver.recordedCalls() == ["scroll", "kill_app"])
+        // tick-0 scroll committed trusted; tick-1 kill_app committed with the tainted screen arg.
+        #expect(loop.committedAuditChain.count == 2)
+        let scrollEntry = loop.committedAuditChain.first
+        #expect(scrollEntry?.action == "scroll")
+        #expect(scrollEntry?.taint == .trusted)
+        let killEntry = loop.committedAuditChain.last
+        #expect(killEntry?.action == "kill_app")
+        #expect(killEntry?.taint == .attacker_influenceable)
+        #expect(killEntry?.args.contains { $0.name == "pid" && $0.taint == .attacker_influenceable } == true)
+        #expect(killEntry?.verified == true)
+        // The chain stays internally consistent (tamper-evident link unbroken).
+        #expect(loop.committedAuditChain.first?.prevHash == "")
+    }
+
+    // FINDING 2 (audit prefix): a failed dispatch commits only the steps that actually ran, each with
+    // its real verify outcome — never the unexecuted tail. With the current resolver every tick is a
+    // single-step plan, so the executed prefix == the one dispatched step: a failing call records
+    // exactly that step as verified=false (not a phantom committed success). A true multi-step
+    // partial-failure (some steps in ONE plan run, the rest don't) is not reachable through the
+    // ScriptedResolver fake, which emits one `tool_call` step per tick — see the gap note in the
+    // task report; the per-outcome audit loop is what makes that case correct once such a plan exists.
+    @Test func failedDispatchCommitsOnlyExecutedStepUnverified() async {
+        let driver = FakeLoopDriver(
+            windows: [focusedWindow()], windowState: windowState(),
+            callResults: ["launch_app": .failed(error: "FooBar.app not found")])
+        let resolver = ScriptedResolver([act("launch_app", args: launchFooBarArgs), act("scroll"), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("open foobar then scroll"))
+
+        // launch_app failed then the loop recovered with scroll: two committed entries, the failed
+        // one recorded verified=false, the recovery verified=true — and nothing unrun in between.
+        #expect(loop.committedAuditChain.count == 2)
+        #expect(loop.committedAuditChain.first?.action == "launch_app")
+        #expect(loop.committedAuditChain.first?.verified == false)
+        #expect(loop.committedAuditChain.last?.action == "scroll")
+        #expect(loop.committedAuditChain.last?.verified == true)
+    }
 }

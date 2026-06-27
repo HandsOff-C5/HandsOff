@@ -59,9 +59,20 @@ private func rtfString(_ data: Data) -> String {
 
 @Test func codeBlockPlainTextFallbackPresent() {
     let reps = ClipboardRepresentationBuilder.make(.codeBlock(heading: kHeading, code: kCode))
-    #expect(reps.plainText == kHeading + "\n\n" + kCode)
+    // No language tag → plain fence.
+    let expected = kHeading + "\n\n" + "```\n" + kCode + "\n```"
+    #expect(reps.plainText == expected)
     // Plain text is verbatim — never escaped.
     #expect(reps.plainText.contains("a > b && c < d"))
+}
+
+@Test func codeBlockPlainTextPreservesFenceAndLanguageTag() {
+    let reps = ClipboardRepresentationBuilder.make(.codeBlock(heading: kHeading, code: kCode, language: "swift"))
+    // The opening fence must carry the language info-string.
+    #expect(reps.plainText.hasPrefix(kHeading + "\n\n```swift\n"))
+    #expect(reps.plainText.hasSuffix("\n```"))
+    // The code body is still present verbatim.
+    #expect(reps.plainText.contains(kCode))
 }
 
 @Test func codeBlockAttributedUsesMonospacedFontForCodeRun() {
@@ -78,7 +89,8 @@ private func rtfString(_ data: Data) -> String {
     let reps = ClipboardRepresentationBuilder.make(.codeBlock(heading: nil, code: kCode))
     #expect(!reps.html.contains("<h3>"))
     #expect(reps.html.contains("<pre"))
-    #expect(reps.plainText == kCode)
+    // No heading → fence only, no heading prefix.
+    #expect(reps.plainText == "```\n" + kCode + "\n```")
 }
 
 @Test func plainTextContentProducesAllThreeRepresentations() {
@@ -104,5 +116,5 @@ private func rtfString(_ data: Data) -> String {
 
     #expect(pb.data(forType: .rtf) == reps.rtf)
     #expect(pb.string(forType: .html) == reps.html)
-    #expect(pb.string(forType: .string) == kHeading + "\n\n" + kCode)
+    #expect(pb.string(forType: .string) == kHeading + "\n\n" + "```swift\n" + kCode + "\n```")
 }

@@ -63,6 +63,11 @@ final class VoiceCuaLoop {
     /// Armed by the user interrupt; the loop checks it at every await boundary and stops cleanly.
     private var interrupted = false
 
+    /// Verification seam (NFR-8): the committed entries of the tamper-evident hash chain, read-only.
+    /// Lets the audit/UI layer and tests confirm WHAT was committed (action, taint-tagged args, and
+    /// each step's verify outcome) without widening the AuditLog's append-only writer surface.
+    var committedAuditChain: [AuditEntry] { auditChain.entries }
+
     /// Per-goal autonomous-loop ceiling on EXECUTED tool calls (U3 / KD6). Perception ticks are free.
     static let defaultToolCallBudget = 30
     /// Fixed retarget grace before intent resolution (the controller's DEFAULT_TARGET_RESOLVE_DELAY_MS).
@@ -343,6 +348,11 @@ final class VoiceCuaLoop {
         if stopIfInterrupted(run, readyIntent.input, at: timestamp()) { return }
         let runningAt = timestamp()
         let approvalState: Contracts.SupervisionAuditEvent.ToolCallApproval = approved ? .approved : .auto
+        // Phase 4 safety (FINDING 1): the provenance taint for THIS action's args, derived from how
+        // the tick was grounded — a screen-scraped `active_window` observation is attacker-controllable,
+        // on-device perception is trusted. Feeds both the RiskGate (a tainted arg escalates to approval)
+        // and the hash-chained audit (the committed evidence carries the real, taint-tagged inputs).
+        let inputTaint = Self.inputTaint(readyIntent.input)
 
         // Loop-dedup guard (KD2 recovery floor): refuse to re-dispatch a (tool,args) that already
         // failed this goal — stop with a clear blocked reason instead of looping the dead action to
@@ -366,7 +376,10 @@ final class VoiceCuaLoop {
         if !approved {
             for step in readyIntent.actionPlan.actionPlan {
                 let verb = riskGateVerb(for: step)
-                let call = ToolCall(verb: verb, args: [], modelClaimedRisk: readyIntent.actionPlan.riskLevel)
+                let call = ToolCall(
+                    verb: verb,
+                    args: actionArgs(for: step, taint: inputTaint),
+                    modelClaimedRisk: readyIntent.actionPlan.riskLevel)
                 if riskGate.gateToolCall(call).decision == .requiresApproval {
                     let blocked = Contracts.CuaActionResult.blocked(
                         reason: "RiskGate requires approval for \(verb)", state: nil)
@@ -396,24 +409,25 @@ final class VoiceCuaLoop {
         runResult = PlanRunResult(status: .running)
         // Dispatch every step through the GENERIC driver passthrough (`driver.call`, U1) so the full
         // 36-tool surface is reachable. Stop at the first failure and feed it forward for recovery.
-        let (actionResult, failedSignature) = await dispatchPlan(readyIntent.actionPlan.actionPlan)
+        let (actionResult, failedSignature, outcomes) = await dispatchPlan(readyIntent.actionPlan.actionPlan)
         recordToolCalls(run, readyIntent, observation, approvalState, actionResult, runningAt)
         runResult = PlanRunResult.fromActionResult(actionResult)
         auditEvents = audit.forSession(run.sessionId)
 
-        // Phase 4 safety: mirror each committed step into the hash-chained, append-only AuditLog
-        // (NFR-8 tamper-evidence) alongside the existing ActionAuditStore. `append` stamps the chain
-        // link, so we pass empty prevHash/hash and let it fill them. `verified` is the dispatch's
-        // success; `conf` carries the bound referent's confidence (else 1.0).
-        let verified: Bool = { if case .succeeded = actionResult { return true } else { return false } }()
+        // FINDING 2 / Phase 4 safety: mirror ONLY the steps that ACTUALLY executed into the
+        // hash-chained, append-only AuditLog (NFR-8 tamper-evidence) — never the unexecuted tail of
+        // a plan that stopped at a failed step. Each entry's `verified` is THAT step's real dispatch
+        // outcome, not one shared batch flag, so a partial dispatch never logs an unrun step as a
+        // committed success. `append` stamps the chain link, so we pass empty prevHash/hash and let
+        // it fill them; `conf` carries the bound referent's confidence (else 1.0).
         let conf = readyIntent.referent?.confidence ?? run.referent?.confidence ?? 1.0
-        for step in readyIntent.actionPlan.actionPlan {
-            let verb = riskGateVerb(for: step)
-            let args = auditArgs(for: step)
+        for outcome in outcomes {
+            let verb = riskGateVerb(for: outcome.step)
+            let args = actionArgs(for: outcome.step, taint: inputTaint)
             let taint: Taint = args.contains { $0.taint == .attacker_influenceable } ? .attacker_influenceable : .trusted
             auditChain.append(AuditEntry(
-                action: verb, args: args, taint: taint, conf: conf, verified: verified,
-                undoToken: UndoToken(id: run.sessionId + step.id, action: verb),
+                action: verb, args: args, taint: taint, conf: conf, verified: outcome.succeeded,
+                undoToken: UndoToken(id: run.sessionId + outcome.step.id, action: verb),
                 prevHash: "", hash: ""))
         }
 
@@ -438,26 +452,41 @@ final class VoiceCuaLoop {
             actionId: readyIntent.actionPlan.id, result: actionResult))
     }
 
+    /// The per-step result of a dispatch — the step and the typed result it produced. The audit
+    /// mirror appends one entry per executed outcome (FINDING 2), so a partial dispatch never logs
+    /// the unrun tail of a plan as committed.
+    private struct StepOutcome {
+        let step: Contracts.ActionStep
+        let result: Contracts.CuaActionResult
+        var succeeded: Bool {
+            if case .succeeded = result { return true }
+            return false
+        }
+    }
+
     /// Execute a tick's steps in order through `driver.call`, normalizing each driver result. Stops
     /// at the first non-success so a failed step is surfaced for recovery; the last step's result
-    /// represents the tick. The contract `tool_call.args` are bridged onto the driver-passthrough
-    /// `JSONValue` family at the boundary (PORTING.md notes 4/6).
+    /// represents the tick. Returns the executed-prefix `outcomes` (one per step actually dispatched,
+    /// ending at the failed step) so the caller audits only what ran. The contract `tool_call.args`
+    /// are bridged onto the driver-passthrough `JSONValue` family at the boundary (PORTING.md notes 4/6).
     private func dispatchPlan(
         _ steps: [Contracts.ActionStep]
-    ) async -> (result: Contracts.CuaActionResult, failedSignature: String?) {
+    ) async -> (result: Contracts.CuaActionResult, failedSignature: String?, outcomes: [StepOutcome]) {
+        var outcomes: [StepOutcome] = []
         var last = Contracts.CuaActionResult.succeeded(summary: "No action", state: nil)
         for step in steps {
             let (tool, args) = StepDispatch.driverCallForStep(step)
             DirectorDiagnostics.loop.info("dispatch tool=\(tool, privacy: .public) arg_keys=\(args.keys.sorted().joined(separator: ","), privacy: .public)")
             let callResult = await driver.call(tool: tool, input: .object(args.mapValues(\.asDriverValue)))
             last = cuaResultToActionResult(callResult, summary: "Called \(tool)")
+            outcomes.append(StepOutcome(step: step, result: last))
             guard case .succeeded = last else {
                 DirectorDiagnostics.loop.error("dispatch failed tool=\(tool, privacy: .public) result=\(Self.actionResultSummary(last), privacy: .public)")
-                return (last, ActionDedup.callSignature(step))
+                return (last, ActionDedup.callSignature(step), outcomes)
             }
             DirectorDiagnostics.loop.info("dispatch succeeded tool=\(tool, privacy: .public)")
         }
-        return (last, nil)
+        return (last, nil, outcomes)
     }
 
     // MARK: Approval surface
@@ -524,13 +553,41 @@ final class VoiceCuaLoop {
         }
     }
 
-    /// Phase 4 safety: the audit-log args for a committed step. Only a `tool_call` carries readily
-    /// ActionArg-typed flat args (mapped trusted — on-device perception); the typed kinds commit with
-    /// no arg list here ([] is acceptable per NFR-8's evidence shape).
-    private func auditArgs(for step: Contracts.ActionStep) -> [ActionArg] {
-        guard case let .toolCall(_, _, _, args) = step else { return [] }
-        return args.keys.sorted().map { key in
-            ActionArg(name: key, value: Self.auditArgValue(args[key]!), taint: .trusted)
+    /// Phase 4 safety (FINDING 1): the provenance taint for an action's args, derived from how the
+    /// tick was grounded. On-device perception (voice ASR, gesture/gaze/head body tracking) is
+    /// `.trusted`; a live `active_window` AX/OCR scrape is content an attacker can place on screen,
+    /// so any arg the resolver derived from a screen-grounded tick is `.attacker_influenceable`.
+    /// Over-tainting only ever gates MORE — the safe direction (mirrors RiskGate's destructive-token
+    /// policy). No screen grounding → the args trace only to on-device perception → `.trusted`.
+    private static func inputTaint(_ input: Contracts.IntentInput) -> Taint {
+        input.pointingEvidence.contains { $0.source == .activeWindow }
+            ? .attacker_influenceable : .trusted
+    }
+
+    /// Phase 4 safety (FINDING 1): the gate/audit args for one step, each tagged with the action's
+    /// provenance `taint`. The generic `tool_call` carries flat snake_case args; the typed kinds
+    /// expose their value-bearing payload (`text`/`value`/`app_name`/`bundle_id`). Pure target
+    /// references (click/inspect/screenshot element indices) carry no attacker payload, so they
+    /// commit with no arg list ([] is acceptable per NFR-8's evidence shape). Feeds BOTH
+    /// `RiskGate.gateToolCall` (so a tainted arg escalates to approval) and the hash-chained audit
+    /// (so committed evidence records the real, taint-tagged inputs) — never an empty / hardcoded
+    /// `.trusted` stand-in.
+    private func actionArgs(for step: Contracts.ActionStep, taint: Taint) -> [ActionArg] {
+        switch step {
+        case let .toolCall(_, _, _, args):
+            return args.keys.sorted().map { key in
+                ActionArg(name: key, value: Self.auditArgValue(args[key]!), taint: taint)
+            }
+        case let .typeText(_, _, _, text):
+            return [ActionArg(name: "text", value: text, taint: taint)]
+        case let .setValue(_, _, _, value):
+            return [ActionArg(name: "value", value: value, taint: taint)]
+        case let .launchApp(_, _, appName, bundleId):
+            var args = [ActionArg(name: "app_name", value: appName, taint: taint)]
+            if let bundleId { args.append(ActionArg(name: "bundle_id", value: bundleId, taint: taint)) }
+            return args
+        case .clickElement, .inspectWindowState, .captureScreenshot:
+            return []
         }
     }
 

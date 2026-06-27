@@ -228,6 +228,10 @@ struct DirectorSidecarApp: App {
         // embedding source (a speaker-encoder over the STT audio) is the remaining live-backend
         // dependency before this gates on the owner's voice.
         let beat1OwnerGate = OwnerGate(mode: .auditedBypass)
+        // The tamper-evident sink for owner-gate decisions: an `.auditedBypass` (or a denial) is
+        // appended to the SHA-256 hash-chained AuditLog in ADDITION to OSLog, so the bypass is
+        // discoverable in an immutable chain — not only in a forgeable log stream.
+        let beat1AuditLog = AuditLog()
         let voiceCoordinator = VoiceActionCoordinator(environment: VoiceActionEnvironment(
             currentPoint: {
                 guard let p = headSnapshot.current else { return nil }
@@ -243,6 +247,20 @@ struct DirectorSidecarApp: App {
                 return AXElementResolver.frame(of: element)
             },
             writeClipboard: { content in FormattedClipboard.write(content) },
+            focusElement: { point in
+                // Shift keyboard focus to the gazed element so Cmd+V lands in it. Prefer AX focus
+                // (places the caret in a text field); fall back to the element's native press, then to
+                // a synthesized left-click at the point (mirrors NativeAXActuation's CGEvent style).
+                // Best-effort — a `false` is logged by the coordinator but never aborts the paste.
+                guard let element = AXElementResolver.element(at: point) else {
+                    return postFocusClick(at: point)
+                }
+                if AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success {
+                    return true
+                }
+                if AXElementResolver.press(element) { return true }
+                return postFocusClick(at: point)
+            },
             paste: { NativeAXActuation.postPaste() },
             showBrackets: { rect, _ in
                 // Render element-sized gaze brackets over the captured/targeted region. AX frames are
@@ -255,7 +273,22 @@ struct DirectorSidecarApp: App {
                 dispatch(.gaze(focus))
             },
             ownerVerify: { beat1OwnerGate.verify([]) },
-            log: { message in DirectorDiagnostics.loop.info("\(message, privacy: .public)") }
+            log: { message in DirectorDiagnostics.loop.info("\(message, privacy: .public)") },
+            audit: { action in
+                // Append a tamper-evident record of the owner-gate decision. The id is a deterministic
+                // sequence (the current chain length) — NOT a clock/random value — so it's stable and
+                // unique per commit. `append` stamps prevHash/hash, so "" placeholders are fine here.
+                let seq = beat1AuditLog.count
+                beat1AuditLog.append(AuditEntry(
+                    action: action,
+                    args: [],
+                    taint: .trusted,
+                    conf: 0,
+                    verified: false,
+                    undoToken: UndoToken(id: "owner-gate-\(seq)", action: "owner-gate"),
+                    prevHash: "",
+                    hash: ""))
+            }
         ))
         // A consumed Beat 1 command does not also start a goal (see LoopEngine.ingestSpeech). The hook
         // is invoked from the main-actor speech intake; the coordinator is @MainActor.
@@ -536,6 +569,21 @@ extension Notification.Name {
     /// the deferred startup of permission-prompting services (the fn capture tap) so first launch is
     /// only the Welcome window.
     static let directorEnterApp = Notification.Name("DirectorEnterApp")
+}
+
+/// Best-effort focus click — a synthesized left-click at a CG-global point to place the keyboard caret
+/// when AX focus/press is unavailable (mirrors `NativeAXActuation`'s CGEvent style). Returns whether
+/// the events were posted; the Beat 1 paste path treats a `false` as non-fatal (logged, not aborting).
+private func postFocusClick(at point: CGPoint) -> Bool {
+    guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
+                             mouseCursorPosition: point, mouseButton: .left),
+          let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
+                           mouseCursorPosition: point, mouseButton: .left) else {
+        return false
+    }
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+    return true
 }
 
 /// Wires `store.onOpenHome` (rail ⤢ + menu "Open Home") to SwiftUI's `openWindow`, captured from an

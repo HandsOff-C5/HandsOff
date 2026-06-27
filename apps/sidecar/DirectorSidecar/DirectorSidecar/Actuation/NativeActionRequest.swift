@@ -97,7 +97,14 @@ private extension JSONValue {
         return nil
     }
     var intValue: Int? {
-        guard let value = doubleValue, value.isFinite else { return nil }
+        // Fail closed: the wire value is a Double, so only convert when it is finite, has no
+        // fractional part (an `Int(3.7)` truncation would silently mis-index an element), and sits
+        // within Int's representable range (`Int(1e300)` traps). Anything else → nil (no native id).
+        guard let value = doubleValue,
+              value.isFinite,
+              value == value.rounded(.towardZero),
+              value >= Double(Int.min),
+              value < Double(Int.max) else { return nil }
         return Int(value)
     }
     var stringValue: String? {

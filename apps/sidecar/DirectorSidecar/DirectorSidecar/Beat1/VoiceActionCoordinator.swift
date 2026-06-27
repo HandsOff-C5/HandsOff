@@ -37,6 +37,10 @@ struct VoiceActionEnvironment {
     var elementFrame: (CGPoint) -> CGRect?
     /// Stage formatted content (RTF/HTML/plain) on the system pasteboard.
     var writeClipboard: (ClipboardContent) -> Void
+    /// Move keyboard focus to the element under a point (AX focus/press, else a synthesized click) so a
+    /// subsequent Cmd+V lands in the gazed control, not whatever happened to be focused. Best-effort:
+    /// `false` means focus could not be placed — the caller logs it but does NOT abort the paste.
+    var focusElement: (CGPoint) -> Bool
     /// Synthesize a paste (Cmd+V) into the focused field.
     var paste: () -> Void
     /// Render gaze brackets over a rect; `confirmed` settles them on the captured/targeted referent.
@@ -46,6 +50,10 @@ struct VoiceActionEnvironment {
     var ownerVerify: () -> OwnerGate.Decision
     /// Diagnostics + audit-bypass logging.
     var log: (String) -> Void
+    /// Record a tamper-evident audit event (the SHA-256 hash-chained `AuditLog`). Owner-gate bypass and
+    /// denial both go through here in ADDITION to `log` — so a bypass is discoverable in the immutable
+    /// chain, not only in OSLog. The string is the audit action label (e.g. "owner-gate-bypass").
+    var audit: (String) -> Void
 }
 
 /// Drives the Beat 1 capture→drop flow from final STT transcripts. Holds the cross-utterance pending
@@ -123,10 +131,16 @@ final class VoiceActionCoordinator {
         }
         guard authorize(action: "paste") else { return true }
 
-        // Settle the brackets on the drop target if we can resolve one (best-effort; the paste does
-        // not depend on it).
-        if let point = env.currentPoint(), let frame = env.elementFrame(point) {
-            env.showBrackets(frame, true)
+        // Settle the brackets on the drop target if we can resolve one, AND shift keyboard focus to
+        // the gazed element so Cmd+V lands in it (not whatever was last focused). Both are best-effort:
+        // the paste does not depend on the brackets, and a failed focus is logged but never aborts it.
+        if let point = env.currentPoint() {
+            if let frame = env.elementFrame(point) {
+                env.showBrackets(frame, true)
+            }
+            if !env.focusElement(point) {
+                env.log("beat1: focus — could not place caret on drop target (paste proceeds)")
+            }
         }
 
         env.writeClipboard(content)
@@ -146,10 +160,14 @@ final class VoiceActionCoordinator {
         case .admitted:
             return true
         case .bypassed:
+            // Record in BOTH the OSLog stream and the hash-chained audit, so the bypass is
+            // tamper-evident — never an OSLog-only (forgeable) trace.
             env.log("beat1: owner-gate bypassed (no voiceprint source) for \(action)")
+            env.audit("owner-gate-bypass")
             return true
         case let .denied(reason):
             env.log("beat1: owner-gate denied \(action): \(reason)")
+            env.audit("owner-gate-denied")
             return false
         }
     }
@@ -169,13 +187,15 @@ final class VoiceActionCoordinator {
 
     /// Classify a (post-wake) command by simple keyword matching. Capture verbs win when both appear,
     /// since "copy" is the explicit capture intent; a deictic ("this"/"that"/"it") is typical but not
-    /// required. Paste is a paste verb, or a bare drop-sense deictic ("it here"/"here"/"there").
+    /// required. Paste is an explicit paste verb, OR the strict drop-sense deictic "it here"/"it there".
+    /// A BARE "here"/"there" is deliberately NOT paste — it over-matched questions like "what is here".
     static func classify(_ command: String) -> Intent {
-        let words = Set(WakePhrase.normalize(command).split(separator: " ").map(String.init))
+        let normalized = WakePhrase.normalize(command)
+        let words = Set(normalized.split(separator: " ").map(String.init))
         if captureVerbs.contains(where: words.contains) { return .capture }
         if pasteVerbs.contains(where: words.contains) { return .paste }
-        // Bare drop-sense: "here"/"there" (optionally with "it") with no explicit verb.
-        if words.contains("here") || words.contains("there") { return .paste }
+        // Strict drop-sense deictic: explicit "it here"/"it there" with no verb (e.g. "it here").
+        if normalized.contains("it here") || normalized.contains("it there") { return .paste }
         return .none
     }
 }

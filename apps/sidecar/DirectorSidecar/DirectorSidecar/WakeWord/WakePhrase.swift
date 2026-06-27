@@ -39,8 +39,20 @@ nonisolated enum WakePhrase {
     /// Whether `raw` is a spoken stop command (only consulted while awake).
     static func isSleep(_ raw: String) -> Bool {
         let norm = normalize(raw)
+        // Fast path: entire utterance exactly equals a known stop phrase.
         if sleepExact.contains(norm) { return true }
-        return norm.contains("stop listening") || norm.contains("go to sleep") || norm.contains("director off")
+        // For multi-token phrases, match at the TRAILING token boundary: a stop command is a
+        // trailing imperative ("please stop listening"), so the utterance must END with the phrase.
+        // This (a) rejects a sleep word embedded as a substring of another word ("off" in "offline")
+        // and (b) rejects the phrase buried mid-utterance in a different intent ("go to sleep mode
+        // settings"). Single-token stop words require an exact whole-utterance match (see above).
+        let tokens = norm.split(separator: " ").map(String.init)
+        for phrase in sleepExact where phrase.contains(" ") {
+            let phraseTokens = phrase.split(separator: " ").map(String.init)
+            if tokens.count >= phraseTokens.count,
+               Array(tokens.suffix(phraseTokens.count)) == phraseTokens { return true }
+        }
+        return false
     }
 
     /// "director" or a near-mishear of it (STT often returns "directer"/"directory").
