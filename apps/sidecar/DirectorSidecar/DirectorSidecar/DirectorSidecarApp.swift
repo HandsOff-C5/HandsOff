@@ -18,10 +18,15 @@ import OSLog
 /// and app keyboard shortcuts (⌥⌘D) dead. Explicitly activate on launch so the window is interactive.
 final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        terminateOtherInstances() // newest wins — never two Director icons in the Dock
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        suppressRestoredHome()
         makeDashboardKey()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.makeDashboardKey() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            self.suppressRestoredHome()
+            self.makeDashboardKey()
+        }
     }
 
     // The overlay/HUD are non-key floating panels, so nothing claims key on its own — force the
@@ -30,10 +35,34 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
         makeDashboardKey()
     }
 
+    /// Single-instance: terminate any other running Director before this one takes over, so a stale
+    /// build (or a relaunch fork) can't leave two apps in the Dock. Newest launch wins.
+    private func terminateOtherInstances() {
+        // NEVER under XCTest: parallel test runs launch multiple host clones, and force-terminating
+        // "other instances" would SIGTERM sibling test hosts mid-bootstrap (crashes the suite + CI).
+        if NSClassFromString("XCTestCase") != nil { return }
+        guard let bid = Bundle.main.bundleIdentifier else { return }
+        let myPid = ProcessInfo.processInfo.processIdentifier
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: bid)
+        where app.processIdentifier != myPid {
+            app.forceTerminate()
+        }
+    }
+
+    /// macOS restores windows that were open at last quit. During onboarding that would pop the Home
+    /// dashboard up *behind* the onboarding window — close any such restored Home and mark it
+    /// non-restorable. Home legitimately reopens (via openWindow) only after onboarding finishes.
+    private func suppressRestoredHome() {
+        guard OnboardingGate.isPresenting else { return }
+        for window in NSApp.windows where window.title == "Director" {
+            window.isRestorable = false
+            window.close()
+        }
+    }
+
     private func makeDashboardKey() {
-        // While the onboarding window is up, don't yank Home to the front over it — onboarding is the
-        // intended front surface at first run.
-        if NSApp.windows.contains(where: { $0.title == "Welcome to Director" && $0.isVisible }) { return }
+        // While onboarding is the front surface, don't yank Home forward (it shouldn't even be open).
+        if OnboardingGate.isPresenting { return }
         let dashboard = NSApp.windows.first { $0.title == "Director" }
             ?? NSApp.windows.first { $0.canBecomeKey && !($0 is NSPanel) && !$0.className.contains("StatusBar") }
         dashboard?.makeKeyAndOrderFront(nil)
@@ -119,8 +148,14 @@ struct DirectorSidecarApp: App {
     /// works while ANOTHER app is frontmost (the whole hands-off entry point). Replaces the old local
     /// `NSEvent` monitor that only fired while Director itself was the active app. Held for the run.
     private let fnHotkey: FnHotkeyService
+    /// Local notifications for the supervision model — held for the app's life (owns the UN delegate).
+    private let notifications: NotificationService
 
     init() {
+        // Latch onboarding presentation BEFORE any scene appears, so a Home window macOS restores at
+        // launch is recognized as a stray (closed by the app delegate) and never posts enter-app.
+        OnboardingGate.isPresenting = OnboardingGate.shouldShowAtLaunch
+
         let store = BridgeStore()
         let hud = HUDModel()
         let micro = MicroHUDModel()
@@ -129,10 +164,15 @@ struct DirectorSidecarApp: App {
         let home = HomeDashboardModel()
         let rail = RailModel()
 
+        // Local notifications for the supervision model (agent needs you / finished). Reads every
+        // frame off the same fan-out.
+        let notifications = NotificationService()
+
         // One fan-out of every frame to every model.
         let dispatch: (BridgeFrame) -> Void = { frame in
             store.apply(frame); hud.apply(frame); micro.apply(frame)
             overlay.apply(frame); gaze.apply(frame); home.apply(frame); rail.apply(frame)
+            notifications.apply(frame)
         }
 
         // Track F: own the ported engine services and bind them to the lifecycle. Head-pointer
@@ -308,6 +348,7 @@ struct DirectorSidecarApp: App {
         self.rail = rail
         self.services = services
         self.coordinator = coordinator
+        self.notifications = notifications
         self.perception = perception
 
         // C1 fix: own the global fn capture trigger. Started at launch (its CGEventTap + permission
@@ -370,7 +411,13 @@ struct DirectorSidecarApp: App {
                 }
                 NotificationCenter.default.addObserver(
                     forName: .directorEnterApp, object: nil, queue: .main
-                ) { _ in MainActor.assumeIsolated { startFnCapture() } }
+                ) { _ in MainActor.assumeIsolated {
+                    startFnCapture()
+                    // Entering the app: ask for notification permission (once) and reflect the
+                    // launch-at-login preference (ON by default) into the system login item.
+                    notifications.requestAuthorization()
+                    LoginItemService.syncToPreference()
+                } }
                 // Track F: begin consuming the head-pointer feed for the app's life (camera stays
                 // off until Listening turns sensing on). Deferred to launch alongside the surfaces.
                 coordinator.start()
@@ -508,10 +555,16 @@ private struct HomeOpenWiring: ViewModifier {
                 // Home is showing → its minimized echo (the rail) hides. (Home only ever appears once
                 // onboarding has finished and opened it, so no onboarding coordination is needed here.)
                 rail.setHomeOpen(true)
-                // Entering the app proper — now it's appropriate to install the fn capture tap (which
-                // prompts for Accessibility/Input Monitoring). Deferred from launch so onboarding owns
-                // the permission UX. Idempotent on the listener side.
-                NotificationCenter.default.post(name: .directorEnterApp, object: nil)
+                // Don't let macOS restore this window across launches — it should appear only when
+                // onboarding opens it, never behind the onboarding flow.
+                NSApp.windows.first { $0.title == "Director" }?.isRestorable = false
+                // Entering the app proper — install the fn capture tap (which prompts for
+                // Accessibility/Input Monitoring), deferred from launch so onboarding owns the
+                // permission UX. Guard against a stray/restored Home appearing during onboarding:
+                // only fire once onboarding is no longer the front surface.
+                if !OnboardingGate.isPresenting {
+                    NotificationCenter.default.post(name: .directorEnterApp, object: nil)
+                }
             }
             .onDisappear {
                 // Home closed (red-X) → the rail returns as the ambient edge summary.

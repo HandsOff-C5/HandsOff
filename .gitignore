@@ -36,3 +36,6 @@ HANDOFFS/
 # Local tooling
 .gstack/
 .worktrees
+
+# Per-developer Xcode signing (DEVELOPMENT_TEAM); see *.example
+Local.xcconfig

@@ -87,7 +87,11 @@ Worker deploy + a curl smoke test live in `workers/assemblyai-token/README.md`; 
 
 ## Building & running the Director sidecar (native Swift app)
 
-`apps/sidecar/DirectorSidecar` is a **separate** native SwiftUI app (Xcode project, product `Director.app`) — not the Tauri bundle above. Its hands-off triggers need macOS privacy grants that ad-hoc signing keeps wiping on every rebuild, so the preferred loop is **build → re-sign with a stable identity → launch non-mock**:
+`apps/sidecar/DirectorSidecar` is a **separate** native SwiftUI app (Xcode project, product `Director.app`) — not the Tauri bundle above.
+
+> **First-time signing setup (each developer):** the project uses automatic signing but keeps each person's team out of the shared `project.pbxproj`. Copy `apps/sidecar/DirectorSidecar/Local.xcconfig.example` to `Local.xcconfig` (gitignored) and set `DEVELOPMENT_TEAM` to your team id (`security find-identity -v -p codesigning` → the `(XXXXXXXXXX)` value). With that in place, a plain `xcodebuild … -allowProvisioningUpdates build` signs with your Apple Development cert — no manual re-sign step needed, and TCC grants persist across rebuilds. (The manual re-sign loop below still works if you prefer it.)
+
+Its hands-off triggers need macOS privacy grants that ad-hoc signing keeps wiping on every rebuild, so the alternative loop is **build → re-sign with a stable identity → launch non-mock**:
 
 ```bash
 PROJ=apps/sidecar/DirectorSidecar

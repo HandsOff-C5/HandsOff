@@ -1,0 +1,4 @@
+// Copy this file to `Local.xcconfig` (which is gitignored) and set your team id.
+// Find yours: security find-identity -v -p codesigning  →  the (XXXXXXXXXX) value.
+// This keeps each developer's signing team out of the shared project.pbxproj.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
