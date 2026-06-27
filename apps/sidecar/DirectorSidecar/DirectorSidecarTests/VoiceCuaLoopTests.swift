@@ -26,18 +26,25 @@ import Foundation
 private actor FakeLoopDriver: CuaLoopDriver {
     private let windows: [CuaWindow]
     private let windowState: CuaWindowState?
+    /// When non-empty, `getWindowState` walks this sequence (repeating the last) so a test can model a
+    /// window that DOES change after an action — proving the #158 no-progress detection clears.
+    private let stateSequence: [CuaWindowState]
+    private var stateCursor = 0
     private let tools: [DriverToolDefinition]
     private let callResults: [String: CuaResult<JSONValue>]
     private(set) var genericCalls: [String] = []
+    private(set) var genericInputs: [JSONValue] = []
 
     init(
         windows: [CuaWindow],
         windowState: CuaWindowState?,
+        stateSequence: [CuaWindowState] = [],
         tools: [DriverToolDefinition] = [],
         callResults: [String: CuaResult<JSONValue>] = [:]
     ) {
         self.windows = windows
         self.windowState = windowState
+        self.stateSequence = stateSequence
         self.tools = tools
         self.callResults = callResults
     }
@@ -45,17 +52,32 @@ private actor FakeLoopDriver: CuaLoopDriver {
     func listWindows() -> CuaResult<[CuaWindow]> { .succeeded(windows) }
 
     func getWindowState(pid: Int, windowId: Int) -> CuaResult<CuaWindowState> {
-        windowState.map { .succeeded($0) } ?? .failed(error: "no window state")
+        if !stateSequence.isEmpty {
+            let state = stateSequence[min(stateCursor, stateSequence.count - 1)]
+            stateCursor += 1
+            return .succeeded(state)
+        }
+        return windowState.map { .succeeded($0) } ?? .failed(error: "no window state")
     }
 
     func listTools() -> CuaResult<[DriverToolDefinition]> { .succeeded(tools) }
 
     func call(tool: String, input: JSONValue) -> CuaResult<JSONValue> {
         genericCalls.append(tool)
-        return callResults[tool] ?? .succeeded(.object([:]))
+        genericInputs.append(input)
+        // Route a click by its addressing mode so a test can script different AX vs coordinate
+        // results: a coordinate click (carries `x`) looks up `<tool>@coord` first.
+        let key = Self.isCoordinate(input) ? "\(tool)@coord" : tool
+        return callResults[key] ?? callResults[tool] ?? .succeeded(.object([:]))
     }
 
     func recordedCalls() -> [String] { genericCalls }
+    func recordedInputs() -> [JSONValue] { genericInputs }
+
+    static func isCoordinate(_ input: JSONValue) -> Bool {
+        if case let .object(fields) = input { return fields["x"] != nil || fields["y"] != nil }
+        return false
+    }
 }
 
 /// A scripted resolver: hand back the next `NextToolCall` decision (mapped through the real
@@ -102,6 +124,39 @@ private func windowState(commitLabel: String = "Send Message") -> CuaWindowState
         elementCount: 1,
         elements: [CuaElement(id: "e0", index: 0, role: "AXButton", label: commitLabel, value: nil)])
 }
+
+/// A reversible (auto-running) click target WITH a frame — a non-commit row like a System Settings
+/// sidebar entry. `capturedAt` is fixed so a repeated observation is byte-identical (the #158 no-op).
+private func batteryState() -> CuaWindowState {
+    CuaWindowState(
+        surface: focusedWindow(),
+        capturedAt: "2026-06-22T12:00:00.000Z",
+        elementCount: 1,
+        elements: [CuaElement(
+            id: "s0001:0", index: 0, role: "AXStaticText", label: "Battery", value: nil,
+            frame: Contracts.CuaElementFrame(x: 10, y: 40, width: 100, height: 20),
+            parentIndex: nil, depth: 1, token: "s0001:0")])
+}
+
+/// A DIFFERENT window state — used after a click to prove a navigation (window changed) clears the
+/// no-progress escalation instead of falling back to a coordinate click.
+private func settingsPaneState() -> CuaWindowState {
+    CuaWindowState(
+        surface: focusedWindow(),
+        capturedAt: "2026-06-22T12:00:05.000Z",
+        elementCount: 1,
+        elements: [CuaElement(
+            id: "s0002:0", index: 0, role: "AXStaticText", label: "Battery Health", value: "Good",
+            frame: Contracts.CuaElementFrame(x: 10, y: 40, width: 200, height: 20),
+            parentIndex: nil, depth: 1, token: "s0002:0")])
+}
+
+/// A reversible click that cites the battery row by token AND index + pid/window_id (so risk derives
+/// the element and it auto-runs, and `clickTargetKey`/coordinate fallback can resolve it).
+private let clickBatteryArgs = #"{"element_index":0,"element_token":"s0001:0","pid":42,"window_id":7}"#
+
+/// Whether a recorded driver input addressed an element by coordinates (the CGEvent fallback path).
+private func isCoordinateInput(_ input: JSONValue) -> Bool { FakeLoopDriver.isCoordinate(input) }
 
 private func act(_ tool: String, args: String? = nil) -> NextToolCall {
     NextToolCall(status: .act, tool: tool, args: args, rationale: "do \(tool)", summary: nil, reason: nil)
@@ -369,5 +424,69 @@ struct VoiceCuaLoopTests {
         #expect(isSatisfied(loop.intent))
         #expect(loop.session?.status == .succeeded)
         #expect(await driver.recordedCalls().isEmpty)
+    }
+
+    // #158 (a): an AX click the driver ACCEPTS but that leaves the window unchanged (Catalyst no-op)
+    // escalates the SAME target to a coordinate (CGEvent) click next turn, then the no-progress floor
+    // stops it — instead of spinning the identical element_index click to the budget (the 41-turn bug).
+    @Test func silentNoOpClickEscalatesToCoordinateThenStops() async {
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: batteryState())
+        // The resolver re-issues the identical reversible click each turn (it sees "succeeded" + an
+        // unchanged screen, so it never self-corrects — exactly the observed failure mode).
+        let resolver = ScriptedResolver(Array(repeating: act("click", args: clickBatteryArgs), count: 6))
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("go to battery"))
+
+        let inputs = await driver.recordedInputs()
+        // First dispatch AX; after the no-op the loop escalates the same target to the coordinate
+        // path; the floor stops it at maxNoProgressRepeats — far short of the 30-call budget.
+        #expect(await driver.recordedCalls() == ["click", "click", "click"])
+        #expect(isCoordinateInput(inputs[0]) == false)  // AX (element_index)
+        #expect(isCoordinateInput(inputs[1]) == true)   // coordinate fallback (x,y)
+        #expect(isCoordinateInput(inputs[2]) == true)
+        #expect(loop.session?.status == .blocked)
+        #expect(resultReason(loop.runResult)?.contains("no-op'd") == true)
+    }
+
+    // #158 (b): an EXPLICIT AX failure (Catalyst AXConfirm → -25200) retries as a coordinate click at
+    // the element's frame center SAME turn — the refused AX action can't have acted, so a real mouse
+    // click can't double-fire. The coordinate click succeeds and the loop proceeds, no spin.
+    @Test func explicitAxClickFailureRetriesCoordinateSameTurn() async {
+        let driver = FakeLoopDriver(
+            windows: [focusedWindow()], windowState: batteryState(),
+            callResults: [
+                "click": .failed(error: "AX action failed: AXUIElementPerformAction(AXConfirm) returned -25200"),
+                "click@coord": .succeeded(.object([:])),
+            ])
+        let resolver = ScriptedResolver([act("click", args: clickBatteryArgs), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("go to battery"))
+
+        let inputs = await driver.recordedInputs()
+        #expect(await driver.recordedCalls() == ["click", "click"])
+        #expect(isCoordinateInput(inputs[0]) == false)  // AX attempt, refused
+        #expect(isCoordinateInput(inputs[1]) == true)   // coordinate retry, same turn
+        #expect(isSatisfied(loop.intent))
+        #expect(loop.session?.status == .succeeded)
+    }
+
+    // #158 (c): a click that DOES change the window stays on the AX path — no coordinate fallback, no
+    // floor. Proves the escalation only fires on a real no-op and doesn't regress working clicks.
+    @Test func clickThatChangesWindowStaysOnAxPath() async {
+        let driver = FakeLoopDriver(
+            windows: [focusedWindow()], windowState: nil,
+            stateSequence: [batteryState(), settingsPaneState(), settingsPaneState()])
+        let resolver = ScriptedResolver([act("click", args: clickBatteryArgs), done()])
+        let loop = makeLoop(driver: driver, resolver: resolver)
+
+        await loop.handleFinalTranscript(finalTranscript("go to battery"))
+
+        let inputs = await driver.recordedInputs()
+        #expect(await driver.recordedCalls() == ["click"])   // one dispatch only
+        #expect(isCoordinateInput(inputs[0]) == false)        // on the AX path
+        #expect(isSatisfied(loop.intent))
+        #expect(loop.session?.status == .succeeded)
     }
 }

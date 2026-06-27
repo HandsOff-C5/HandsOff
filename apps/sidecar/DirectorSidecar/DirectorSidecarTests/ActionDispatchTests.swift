@@ -344,3 +344,98 @@ private func readyIntent(stepsJSON: String, risk: String) throws -> Contracts.Re
     #expect(reason.contains("kept retrying a call that already failed"))
     #expect(reason.contains("launch_app"))
 }
+
+// MARK: - #158 coordinate-click fallback + no-progress escalation
+
+// An observation whose element carries a frame + token, so the coordinate-fallback / target-key
+// helpers can resolve it.
+private func framedObservation(
+    index: Int, token: String, x: Double, y: Double, width: Double, height: Double, label: String = "Battery"
+) throws -> Contracts.GoalLoopObservation {
+    let json = """
+    {"tick":0,"capturedAt":"t","windows":[],"state":{"surface":\(surfaceJSON(pid: 42, windowId: 7)),"capturedAt":"t","elementCount":1,"elements":[{"id":"\(token)","index":\(index),"token":"\(token)","role":"AXStaticText","label":"\(label)","frame":{"x":\(x),"y":\(y),"width":\(width),"height":\(height)}}]}}
+    """
+    return try decode(Contracts.GoalLoopObservation.self, json)
+}
+
+private func clickStep(index: Int? = nil, token: String? = nil, pid: Int = 42, window: Int = 7) throws -> Contracts.ActionStep {
+    var args = "\"pid\":\(pid),\"window_id\":\(window)"
+    if let index { args += ",\"element_index\":\(index)" }
+    if let token { args += ",\"element_token\":\"\(token)\"" }
+    return try step("{\"id\":\"c\",\"kind\":\"tool_call\",\"label\":\"Click\",\"tool\":\"click\",\"args\":{\(args)}}")
+}
+
+@Test func clickTargetKeyPrefersTokenOverIndex() throws {
+    #expect(try StepDispatch.clickTargetKey(clickStep(index: 0, token: "s0001:0")) == "42:7:tok=s0001:0")
+    #expect(try StepDispatch.clickTargetKey(clickStep(index: 3)) == "42:7:idx=3")
+}
+
+@Test func clickTargetKeyNilForNonClick() throws {
+    let scroll = try step(#"{"id":"1","kind":"tool_call","label":"Scroll","tool":"scroll","args":{"pid":42,"direction":"down"}}"#)
+    #expect(StepDispatch.clickTargetKey(scroll) == nil)
+}
+
+@Test func coordinateClickArgsAimAtFrameCenterAndDropAxAddressing() throws {
+    let observation = try framedObservation(index: 0, token: "s0001:0", x: 10, y: 40, width: 100, height: 20)
+    let args = try #require(StepDispatch.coordinateClickArgs(for: clickStep(index: 0, token: "s0001:0"), observation))
+    #expect(args["x"] == .number(60))   // 10 + 100/2
+    #expect(args["y"] == .number(50))   // 40 + 20/2
+    #expect(args["pid"] == .number(42))
+    #expect(args["window_id"] == .number(7))
+    #expect(args["element_index"] == nil)
+    #expect(args["element_token"] == nil)
+}
+
+@Test func coordinateClickArgsNilWithoutFrame() throws {
+    // Element present but no frame → cannot aim a coordinate click; the loop stays AX-only.
+    let observation = try observationWithElement(index: 0, label: "Battery")
+    #expect(try StepDispatch.coordinateClickArgs(for: clickStep(index: 0), observation) == nil)
+}
+
+@Test func windowChangedDetectsNoOpAndProgress() throws {
+    let before = try framedObservation(index: 0, token: "s0001:0", x: 10, y: 40, width: 100, height: 20, label: "Battery").state
+    let same = try framedObservation(index: 0, token: "s0001:0", x: 10, y: 40, width: 100, height: 20, label: "Battery").state
+    let changed = try framedObservation(index: 0, token: "s0002:0", x: 10, y: 40, width: 100, height: 20, label: "Wi-Fi").state
+    #expect(ActionDedup.windowChanged(from: before, to: same) == false)    // no-op: identical content
+    #expect(ActionDedup.windowChanged(from: before, to: changed) == true)  // navigated: labels changed
+    #expect(ActionDedup.windowChanged(from: nil, to: same) == true)        // unknown → assume progress
+}
+
+@Test func clickEscalationEscalatesAxThenExhausts() {
+    let key = "42:7:tok=s0001:0"
+    var escalation = ClickEscalation()
+    #expect(escalation.usesCoordinate(key) == false)
+    // First AX no-op → escalate the target to the coordinate path.
+    escalation = escalation.recordingNoProgress(key, mode: .ax)
+    #expect(escalation.usesCoordinate(key) == true)
+    #expect(escalation.isExhausted(key) == false)
+    // Coordinate no-ops climb to the floor (maxNoProgressRepeats == 3).
+    escalation = escalation.recordingNoProgress(key, mode: .coordinate)
+    escalation = escalation.recordingNoProgress(key, mode: .coordinate)
+    #expect(escalation.isExhausted(key) == true)
+}
+
+@Test func clickEscalationClearsOnProgress() {
+    let key = "42:7:idx=0"
+    let escalation = ClickEscalation().recordingNoProgress(key, mode: .ax).clearing(key)
+    #expect(escalation.usesCoordinate(key) == false)
+    #expect(escalation.isExhausted(key) == false)
+}
+
+@Test func firstExhaustedFindsStalledClickStep() throws {
+    let step = try clickStep(index: 0, token: "s0001:0")
+    let key = try #require(StepDispatch.clickTargetKey(step))
+    var escalation = ClickEscalation()
+    for _ in 0..<ClickEscalation.maxNoProgressRepeats {
+        escalation = escalation.recordingNoProgress(key, mode: .coordinate)
+    }
+    #expect(escalation.firstExhausted(in: [step])?.id == "c")
+}
+
+@Test func stalledClickBlockNamesTheTool() throws {
+    guard case let .blocked(reason, _) = try ActionDedup.stalledClickBlock(clickStep(index: 0)) else {
+        Issue.record("expected a blocked result"); return
+    }
+    #expect(reason.contains("no-op'd"))
+    #expect(reason.contains("click"))
+}

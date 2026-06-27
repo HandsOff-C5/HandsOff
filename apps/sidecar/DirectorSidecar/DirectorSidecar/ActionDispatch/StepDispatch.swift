@@ -58,6 +58,72 @@ enum StepDispatch {
         return step.actionTarget?.elementIndex
     }
 
+    /// `elementTokenForStep`: the driver's stable per-snapshot element handle a `tool_call` targets
+    /// (`element_token`), preferred over `element_index` for addressing. Only the generic tool_call
+    /// carries it; the legacy kinds address by index only.
+    static func elementTokenForStep(_ step: Contracts.ActionStep) -> String? {
+        if case let .toolCall(_, _, _, args) = step, case let .string(token) = args["element_token"] {
+            return token.isEmpty ? nil : token
+        }
+        return nil
+    }
+
+    /// Whether the step calls a click tool (the tools that get coordinate-fallback escalation).
+    static func isClickStep(_ step: Contracts.ActionStep) -> Bool {
+        clickToolNames.contains(toolNameForStep(step))
+    }
+
+    /// `clickTargetKey`: a stable identity for the clicked ELEMENT, shared by its AX and coordinate
+    /// variants so the escalation memory (#158) tracks one target across both addressing paths. Built
+    /// from the surface (pid/window_id) + the element handle (token preferred, else index). Nil for a
+    /// non-click step or a click that cites neither a token nor an index (untrackable).
+    static func clickTargetKey(_ step: Contracts.ActionStep) -> String? {
+        guard isClickStep(step) else { return nil }
+        let (_, args) = driverCallForStep(step)
+        let pid = args["pid"].map(\.signatureJSON) ?? "?"
+        let window = args["window_id"].map(\.signatureJSON) ?? "?"
+        if let token = elementTokenForStep(step) { return "\(pid):\(window):tok=\(token)" }
+        if let index = elementIndexForStep(step) { return "\(pid):\(window):idx=\(index)" }
+        return nil
+    }
+
+    /// The observed element a click step targets — matched by `element_token` (preferred) or
+    /// `element_index` against the latest snapshot. Nil when the element isn't in the observation.
+    static func clickedElement(
+        for step: Contracts.ActionStep,
+        _ observation: Contracts.GoalLoopObservation?
+    ) -> Contracts.CuaElement? {
+        guard let elements = observation?.state?.elements else { return nil }
+        if let token = elementTokenForStep(step),
+           let match = elements.first(where: { $0.token == token }) {
+            return match
+        }
+        if let index = elementIndexForStep(step),
+           let match = elements.first(where: { $0.index == index }) {
+            return match
+        }
+        return nil
+    }
+
+    /// `coordinateClickArgs`: the coordinate (CGEvent) variant of an element-targeted click — the
+    /// SAME flat args minus the AX addressing (`element_index`/`element_token`), plus `x`/`y` at the
+    /// element's frame center (window-local screenshot pixels, the space the driver's coordinate path
+    /// consumes). Nil unless the step is a click whose targeted element is in the snapshot WITH a
+    /// frame — the loop falls back to AX-only when there's no geometry to aim at.
+    static func coordinateClickArgs(
+        for step: Contracts.ActionStep,
+        _ observation: Contracts.GoalLoopObservation?
+    ) -> [String: Contracts.JSONValue]? {
+        guard isClickStep(step),
+              let frame = clickedElement(for: step, observation)?.frame else { return nil }
+        var args = driverCallForStep(step).args
+        args.removeValue(forKey: "element_index")
+        args.removeValue(forKey: "element_token")
+        args["x"] = .number(frame.centerX)
+        args["y"] = .number(frame.centerY)
+        return args
+    }
+
     /// `toolCallTargetForStep`: the risk-relevant target for a click-ish step, looked up by
     /// index in the latest snapshot's perceived AX elements so `riskForToolCall` can escalate
     /// a *commit* click (Send/Delete/…) to mutating. Only clicks get a target; absent element

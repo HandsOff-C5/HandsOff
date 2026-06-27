@@ -100,6 +100,10 @@ final class VoiceCuaLoop {
         let toolCallBudget: Int
         let referent: Contracts.SelectedReferent?
         let failedSignatures: FailedActionMemory
+        /// Per-click-target coordinate-fallback / no-progress state (#158).
+        let clickEscalation: ClickEscalation
+        /// The click executed last tick, so the next observation can judge whether it made progress.
+        let lastClick: ExecutedClick?
     }
 
     // MARK: Intake
@@ -120,7 +124,9 @@ final class VoiceCuaLoop {
             toolCalls: 0,
             toolCallBudget: defaultToolCallBudget,
             referent: nil,
-            failedSignatures: FailedActionMemory())
+            failedSignatures: FailedActionMemory(),
+            clickEscalation: ClickEscalation(),
+            lastClick: nil)
         goalRun = run
         session = started
         await continueGoal(run, createdAt)
@@ -258,6 +264,22 @@ final class VoiceCuaLoop {
 
         let observation = await observeGoalTick(run.nextTick, previousAction)
         let observations = run.observations + [observation]
+
+        // No-progress detection (#158): did the click executed last tick actually change the window?
+        // An AX click the driver ACCEPTED (→ succeeded) that left the window byte-identical is a no-op
+        // (a Catalyst sidebar row ignoring AXPress). Record it against the click's target so the next
+        // dispatch escalates to the coordinate path, and so the floor can stop a target that no-ops
+        // through BOTH paths. A click that DID change the window clears its target's escalation state.
+        var clickEscalation = run.clickEscalation
+        if let last = run.lastClick {
+            if ActionDedup.windowChanged(from: run.observations.last?.state, to: observation.state) {
+                clickEscalation = clickEscalation.clearing(last.key)
+            } else {
+                clickEscalation = clickEscalation.recordingNoProgress(last.key, mode: last.mode)
+                DirectorDiagnostics.loop.warning("click no-op (window unchanged) key=\(last.key, privacy: .public) mode=\(last.mode == .ax ? "ax" : "coordinate", privacy: .public)")
+            }
+        }
+
         let input = inputForTick(run, run.nextTick, observations)
         if stopIfInterrupted(run, input, at: timestamp()) { return }
 
@@ -301,7 +323,9 @@ final class VoiceCuaLoop {
             toolCalls: run.toolCalls,
             toolCallBudget: run.toolCallBudget,
             referent: readyNext.referent ?? run.referent,
-            failedSignatures: run.failedSignatures)
+            failedSignatures: run.failedSignatures,
+            clickEscalation: clickEscalation,
+            lastClick: run.lastClick)
         goalRun = nextRun
 
         // Read-only / reversible auto-run; mutating / destructive pause for approval. The pause is
@@ -336,6 +360,20 @@ final class VoiceCuaLoop {
             return
         }
 
+        // No-progress floor (#158): a click target that no-op'd through BOTH the AX action and a
+        // coordinate (CGEvent) click — the window never changed after `maxNoProgressRepeats` tries —
+        // is a dead action (a Catalyst sidebar that ignores programmatic clicks). Stop with a clear
+        // reason instead of spinning the same click to the budget. Sibling to the KD2 floor above.
+        if let stalled = run.clickEscalation.firstExhausted(in: readyIntent.actionPlan.actionPlan) {
+            let result = ActionDedup.stalledClickBlock(stalled)
+            DirectorDiagnostics.loop.warning("no-progress floor blocked stalled click session=\(run.sessionId, privacy: .public)")
+            session = sessions.run(run.sessionId, runningAt)
+            recordToolCalls(run, readyIntent, observation, approvalState, result, runningAt)
+            runResult = PlanRunResult(status: .blocked, result: result)
+            finishGoal(run, .blocked, runningAt)
+            return
+        }
+
         // Per-call gate (U2): ask the gate for EVERY step before dispatch, deriving the gate from
         // the real tool + target, never the model's claim. A commit step with no matching approval
         // blocks the whole tick here — the typed dispatch never runs.
@@ -352,7 +390,9 @@ final class VoiceCuaLoop {
         runResult = PlanRunResult(status: .running)
         // Dispatch every step through the GENERIC driver passthrough (`driver.call`, U1) so the full
         // 36-tool surface is reachable. Stop at the first failure and feed it forward for recovery.
-        let (actionResult, failedSignature) = await dispatchPlan(readyIntent.actionPlan.actionPlan)
+        // Element clicks are AX-first with a coordinate fallback (#158): see `dispatchStep`.
+        let (actionResult, failedSignature, executedClick) = await dispatchPlan(
+            readyIntent.actionPlan.actionPlan, observation, run.clickEscalation)
         recordToolCalls(run, readyIntent, observation, approvalState, actionResult, runningAt)
         runResult = PlanRunResult.fromActionResult(actionResult)
         auditEvents = audit.forSession(run.sessionId)
@@ -366,7 +406,10 @@ final class VoiceCuaLoop {
             toolCallBudget: run.toolCallBudget,
             referent: run.referent,
             // Remember a failed (tool,args) so the dedup guard won't re-dispatch it next turn.
-            failedSignatures: run.failedSignatures.recording(failedSignature))
+            failedSignatures: run.failedSignatures.recording(failedSignature),
+            // Carry the escalation memory; the NEXT observe judges this click's progress and updates it.
+            clickEscalation: run.clickEscalation,
+            lastClick: executedClick)
         goalRun = ranRun
 
         if stopIfInterrupted(ranRun, readyIntent.input, at: timestamp()) { return }
@@ -381,23 +424,90 @@ final class VoiceCuaLoop {
     /// Execute a tick's steps in order through `driver.call`, normalizing each driver result. Stops
     /// at the first non-success so a failed step is surfaced for recovery; the last step's result
     /// represents the tick. The contract `tool_call.args` are bridged onto the driver-passthrough
-    /// `JSONValue` family at the boundary (PORTING.md notes 4/6).
+    /// `JSONValue` family at the boundary (PORTING.md notes 4/6). Element clicks route through
+    /// `dispatchStep` for the #158 coordinate fallback; `executedClick` carries the last successful
+    /// click (its target + addressing mode) so the next observe can judge whether it made progress.
     private func dispatchPlan(
-        _ steps: [Contracts.ActionStep]
-    ) async -> (result: Contracts.CuaActionResult, failedSignature: String?) {
+        _ steps: [Contracts.ActionStep],
+        _ observation: Contracts.GoalLoopObservation?,
+        _ escalation: ClickEscalation
+    ) async -> (result: Contracts.CuaActionResult, failedSignature: String?, executedClick: ExecutedClick?) {
         var last = Contracts.CuaActionResult.succeeded(summary: "No action", state: nil)
+        var executedClick: ExecutedClick?
         for step in steps {
-            let (tool, args) = StepDispatch.driverCallForStep(step)
-            DirectorDiagnostics.loop.info("dispatch tool=\(tool, privacy: .public) arg_keys=\(args.keys.sorted().joined(separator: ","), privacy: .public)")
-            let callResult = await driver.call(tool: tool, input: .object(args.mapValues(\.asDriverValue)))
-            last = cuaResultToActionResult(callResult, summary: "Called \(tool)")
+            let (result, click) = await dispatchStep(step, observation, escalation)
+            last = result
+            executedClick = click
             guard case .succeeded = last else {
-                DirectorDiagnostics.loop.error("dispatch failed tool=\(tool, privacy: .public) result=\(Self.actionResultSummary(last), privacy: .public)")
-                return (last, ActionDedup.callSignature(step))
+                return (last, ActionDedup.callSignature(step), nil)
             }
-            DirectorDiagnostics.loop.info("dispatch succeeded tool=\(tool, privacy: .public)")
         }
-        return (last, nil)
+        return (last, nil, executedClick)
+    }
+
+    /// Dispatch one step. Non-click steps (and clicks we can't reduce to coordinates) go through the
+    /// generic passthrough verbatim. Element clicks are AX-first (`element_token`/`element_index` — no
+    /// cursor move, no focus steal), with the driver's coordinate (CGEvent) path as the #158 fallback:
+    ///  • a target already escalated (its AX action no-op'd a prior tick) dispatches by coordinate;
+    ///  • an EXPLICIT AX failure (e.g. Catalyst `AXConfirm` → -25200) retries by coordinate same-turn —
+    ///    safe because a refused AX action can't have acted, so a real click won't double-fire.
+    /// (A SILENT no-op — succeeded but unchanged — is caught next observe and escalated cross-turn,
+    /// not retried same-turn, to avoid double-clicking an app whose AX click merely settled slowly.)
+    /// Returns the executed click (target key + mode) only when the step is a click that SUCCEEDED.
+    private func dispatchStep(
+        _ step: Contracts.ActionStep,
+        _ observation: Contracts.GoalLoopObservation?,
+        _ escalation: ClickEscalation
+    ) async -> (result: Contracts.CuaActionResult, executedClick: ExecutedClick?) {
+        let (tool, axArgs) = StepDispatch.driverCallForStep(step)
+
+        guard StepDispatch.isClickStep(step), let key = StepDispatch.clickTargetKey(step) else {
+            DirectorDiagnostics.loop.info("dispatch tool=\(tool, privacy: .public) arg_keys=\(axArgs.keys.sorted().joined(separator: ","), privacy: .public)")
+            let result = await callDriver(tool, axArgs, summary: "Called \(tool)")
+            return (result, nil)
+        }
+
+        let coordinateArgs = StepDispatch.coordinateClickArgs(for: step, observation)
+
+        // Already-escalated target → coordinate (CGEvent) click at the element's frame center.
+        if escalation.usesCoordinate(key), let coordinateArgs {
+            DirectorDiagnostics.loop.notice("dispatch coordinate click key=\(key, privacy: .public)")
+            let result = await callDriver(tool, coordinateArgs, summary: "Called \(tool) at element center")
+            return (result, succeededClick(result, key, .coordinate))
+        }
+
+        // AX path (default).
+        DirectorDiagnostics.loop.info("dispatch tool=\(tool, privacy: .public) key=\(key, privacy: .public) path=ax")
+        let axResult = await callDriver(tool, axArgs, summary: "Called \(tool)")
+        if case .failed = axResult, let coordinateArgs {
+            DirectorDiagnostics.loop.warning("AX click failed; coordinate fallback key=\(key, privacy: .public)")
+            let result = await callDriver(tool, coordinateArgs, summary: "Called \(tool) at element center")
+            return (result, succeededClick(result, key, .coordinate))
+        }
+        return (axResult, succeededClick(axResult, key, .ax))
+    }
+
+    /// Run one driver call and normalize the result, logging success/failure.
+    private func callDriver(
+        _ tool: String, _ args: [String: Contracts.JSONValue], summary: String
+    ) async -> Contracts.CuaActionResult {
+        let result = cuaResultToActionResult(
+            await driver.call(tool: tool, input: .object(args.mapValues(\.asDriverValue))), summary: summary)
+        if case .succeeded = result {
+            DirectorDiagnostics.loop.info("dispatch succeeded tool=\(tool, privacy: .public)")
+        } else {
+            DirectorDiagnostics.loop.error("dispatch failed tool=\(tool, privacy: .public) result=\(Self.actionResultSummary(result), privacy: .public)")
+        }
+        return result
+    }
+
+    /// An `ExecutedClick` for a click that SUCCEEDED (so the next observe judges its progress); nil
+    /// otherwise — a failed click is surfaced as a `failedSignature`, not a progress candidate.
+    private func succeededClick(
+        _ result: Contracts.CuaActionResult, _ key: String, _ mode: ClickMode
+    ) -> ExecutedClick? {
+        if case .succeeded = result { return ExecutedClick(key: key, mode: mode) }
+        return nil
     }
 
     // MARK: Approval surface
