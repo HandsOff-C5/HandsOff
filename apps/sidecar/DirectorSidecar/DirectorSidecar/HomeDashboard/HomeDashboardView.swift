@@ -43,8 +43,34 @@ struct HomeDashboardView: View {
         tabContent
             .navigationTitle(model.tab.rawValue) // the active tab's name on the left
             // Persistent across tabs, on the right: the Activate/Deactivate control (system-level),
-            // with the listening waveform appearing to its left while active.
-            .toolbar { ToolbarItem(placement: .primaryAction) { ActivateControl(store: store) } }
+            // with the listening waveform appearing to its left while active. Each is its OWN toolbar
+            // item. On macOS 26 the window toolbar wraps custom content in a shared glass capsule,
+            // which double-stacks behind our gold pill — `.sharedBackgroundVisibility(.hidden)` drops
+            // it so the gold capsule is the single, intentional container and the waveform floats
+            // bare. Pre-26 toolbars don't add that glass, so the plain items are already correct.
+            .toolbar {
+                if #available(macOS 26.0, *) {
+                    if store.isListening {
+                        ToolbarItem(placement: .primaryAction) {
+                            ListeningWaveform(maxHeight: 13, minHeight: 4)
+                        }
+                        .sharedBackgroundVisibility(.hidden)
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        ActivateButton(store: store)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    if store.isListening {
+                        ToolbarItem(placement: .primaryAction) {
+                            ListeningWaveform(maxHeight: 13, minHeight: 4)
+                        }
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        ActivateButton(store: store)
+                    }
+                }
+            }
     }
 
     @ViewBuilder private var tabContent: some View {
@@ -138,21 +164,6 @@ struct HomeDashboardView: View {
 }
 
 // MARK: - Components
-
-/// The persistent right-side toolbar control: the system listening waveform (only while active)
-/// to the LEFT of the Activate/Deactivate button — listening is system-level, not per-agent.
-private struct ActivateControl: View {
-    let store: BridgeStore
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if store.isListening {
-                ListeningWaveform(maxHeight: 13, minHeight: 4)
-            }
-            ActivateButton(store: store)
-        }
-    }
-}
 
 /// The toolbar's primary control — toggles listening with the same copy + action as the menu's
 /// "Activate/Deactivate Director". On-brand gold (dark ink on gold, never white-on-gold).

@@ -46,6 +46,14 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
     /// it in the end-user experience. Flip to `true` to bring it (and its idle edge-reveal) back.
     static let showsMicroHUD = false
 
+    /// The full Listening HUD (G2 floating "LISTENING / Intent / esc" panel) is parked — it surfaced
+    /// on active-agent selection where it served no purpose, so it's archived out of every visible
+    /// flow. `HUDModel`, `HUDPanel`, and `ListeningHUDView` stay in the tree (still fanned frames,
+    /// still under test); only the panel controller is withheld. Flip to `true` to bring it back.
+    static let showsFullHUD = false
+
+    private var started = false
+
     private var hud: HUDPanelController?
     private var micro: MicroHUDController?
     private var overlay: OverlayController?
@@ -56,8 +64,11 @@ final class DirectorAppDelegate: NSObject, NSApplicationDelegate {
                overlay overlayModel: OverlayModel, gaze: GazeBracketModel,
                rail railModel: RailModel, store: BridgeStore,
                onOpenHome: @escaping () -> Void) {
-        guard hud == nil else { return }   // once only
-        hud = HUDPanelController(model: hudModel, edge: .trailing)
+        guard !started else { return }   // once only
+        started = true
+        if Self.showsFullHUD {
+            hud = HUDPanelController(model: hudModel, edge: .trailing)
+        }
         if Self.showsMicroHUD {
             micro = MicroHUDController(model: microModel, fullHUD: hudModel, onOpenHome: onOpenHome)
         }
