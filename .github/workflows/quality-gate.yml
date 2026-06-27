@@ -102,14 +102,18 @@ jobs:
       # The shared `DirectorSidecar` scheme builds only the app + the unit-test target — the
       # XCUITest target (which hangs unattended) is excluded, so it is never compiled here.
       - name: Build + run unit tests (no signing; unit target only)
-        # Per-test time allowances turn a hung test into a named failure (instead of wedging the
-        # whole job): any test exceeding the allowance fails by name and the run continues.
+        # Run SERIALLY (-parallel-testing-enabled NO): the hosted @MainActor Swift Testing suite
+        # deadlocked under parallel execution on the headless runner. Serial avoids the main-actor
+        # contention and makes any remaining hang unambiguous (one test in flight at a time). The
+        # -test-timeouts flags only bound XCTest tests (Swift Testing ignores them), so the job-level
+        # timeout-minutes backstop is the real ceiling.
         run: |
           xcodebuild test \
             -project DirectorSidecar.xcodeproj \
             -scheme DirectorSidecar \
             -destination 'platform=macOS' \
             -only-testing:DirectorSidecarTests \
+            -parallel-testing-enabled NO \
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 60 \
             -maximum-test-execution-time-allowance 120 \
