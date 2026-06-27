@@ -322,17 +322,25 @@ struct DirectorSidecarApp: App {
                 surfaces.start(hud: hud, micro: micro, overlay: overlay, gaze: gaze, rail: rail,
                                store: store, railEdge: AppPreferences.railEdge.controllerEdge,
                                onOpenHome: { store.send(.openHome) })
-                // C1 fix: install the global fn capture tap and route its phases to the listening
-                // commands — press-hold → start/stop, double-tap → toggle. Session-wide, so this fires
-                // while another app is frontmost (the entire hands-off entry point), unlike the old
-                // local monitor. Falls back gracefully (logs to stderr) if Accessibility/Input
-                // Monitoring aren't granted yet.
-                fnHotkey.start()
-                Task { @MainActor in
-                    for await phase in fnHotkey.phases {
-                        store.send(listeningCommand(for: phase, isListening: store.isListening))
+                // The global fn capture tap needs Accessibility + Input Monitoring, so installing it
+                // PROMPTS the user. DEFER it until they've actually entered the app (Home appeared,
+                // i.e. onboarding finished or was skipped) — so first launch shows ONLY the Welcome
+                // window, never a system permission dialog over it. Permissions during onboarding come
+                // exclusively from its own Allow buttons. Idempotent; one consumer of the phase stream.
+                var fnStarted = false
+                let startFnCapture = {
+                    guard !fnStarted else { return }
+                    fnStarted = true
+                    fnHotkey.start()
+                    Task { @MainActor in
+                        for await phase in fnHotkey.phases {
+                            store.send(listeningCommand(for: phase, isListening: store.isListening))
+                        }
                     }
                 }
+                NotificationCenter.default.addObserver(
+                    forName: .directorEnterApp, object: nil, queue: .main
+                ) { _ in MainActor.assumeIsolated { startFnCapture() } }
                 // Track F: begin consuming the head-pointer feed for the app's life (camera stays
                 // off until Listening turns sensing on). Deferred to launch alongside the surfaces.
                 coordinator.start()
@@ -444,6 +452,13 @@ struct DirectorSidecarApp: App {
     }
 }
 
+extension Notification.Name {
+    /// Posted when the user enters the app proper (the Home window appears, post-onboarding). Gates
+    /// the deferred startup of permission-prompting services (the fn capture tap) so first launch is
+    /// only the Welcome window.
+    static let directorEnterApp = Notification.Name("DirectorEnterApp")
+}
+
 /// Wires `store.onOpenHome` (rail ⤢ + menu "Open Home") to SwiftUI's `openWindow`, captured from an
 /// in-scene view so it re-creates the single-instance Home window even after the red-X destroys it.
 private struct HomeOpenWiring: ViewModifier {
@@ -462,6 +477,10 @@ private struct HomeOpenWiring: ViewModifier {
                 // Home is showing → its minimized echo (the rail) hides. (Home only ever appears once
                 // onboarding has finished and opened it, so no onboarding coordination is needed here.)
                 rail.setHomeOpen(true)
+                // Entering the app proper — now it's appropriate to install the fn capture tap (which
+                // prompts for Accessibility/Input Monitoring). Deferred from launch so onboarding owns
+                // the permission UX. Idempotent on the listener side.
+                NotificationCenter.default.post(name: .directorEnterApp, object: nil)
             }
             .onDisappear {
                 // Home closed (red-X) → the rail returns as the ambient edge summary.
