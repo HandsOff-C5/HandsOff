@@ -644,7 +644,7 @@ final class VoiceCuaLoop {
         do {
             try await emit(observability)
         } catch {
-            DirectorDiagnostics.loop.error("observability emit failed \(String(describing: error), privacy: .public)")
+            DirectorDiagnostics.loop.error("observability emit failed type=\(String(reflecting: type(of: error)), privacy: .public)")
         }
     }
 
