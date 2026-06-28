@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "handsoff-email-capture",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-22",
+  "workers_dev": true,
+  "secrets": {
+    "required": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "LOOPS_API_KEY",
+      "HANDSOFF_APP_TOKEN",
+    ],
+  },
+  "vars": {
+    "LOOPS_TRANSACTIONAL_ID": "cmqwz53xe0z5h0jyig41a7pbb",
+    "CONFIRM_BASE_URL": "https://forthedirector.com/confirmed",
+  },
+}
