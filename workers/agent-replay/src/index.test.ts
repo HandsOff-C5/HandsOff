@@ -477,4 +477,22 @@ describe("agent replay Worker", () => {
       },
     });
   });
+
+  it("defaults Langfuse ingestion to the self-hosted Railway instance", async () => {
+    const upstreamFetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response("{}"));
+    const replayEnv = env({
+      AGENT_REPLAY_TEST_SINK: undefined,
+      LANGFUSE_PUBLIC_KEY: "public-key",
+      LANGFUSE_SECRET_KEY: "secret-key",
+    });
+
+    const response = await worker.fetch(
+      replayRequest({ events: [representativeEvents[0]] }),
+      replayEnv,
+    );
+
+    expect(response.status).toBe(200);
+    const [url] = upstreamFetch.mock.calls[0]!;
+    expect(url).toBe("https://web-production-88cc3.up.railway.app/api/public/ingestion");
+  });
 });

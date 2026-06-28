@@ -1,6 +1,6 @@
 const REPLAY_EVENTS_PATH = "/v1/agent-replay/events";
 const TEST_SINK_PATH_PREFIX = "/v1/agent-replay/test-sink/";
-const DEFAULT_LANGFUSE_BASE_URL = "https://cloud.langfuse.com";
+const DEFAULT_LANGFUSE_BASE_URL = "https://web-production-88cc3.up.railway.app";
 const DEFAULT_RETENTION_DAYS = 30;
 const RETENTION_MS = DEFAULT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 const LAST_SEQ_KEY = "last_seq";
