@@ -1,11 +1,10 @@
-// Hands-Off email-capture Worker.
-// Collects customer emails into Supabase and sends a Resend confirmation email.
-// All provider credentials (Supabase service-role key, Resend key) live ONLY here
+// Director email-capture Worker.
+// Collects customer emails into Supabase and sends a Loops confirmation email.
+// All provider credentials (Supabase service-role key, Loops key) live ONLY here
 // as Worker secrets — the desktop app ships none, it presents HANDSOFF_APP_TOKEN.
 
-const DEFAULT_FROM = "Hands-Off <onboarding@resend.dev>";
-const DEFAULT_CONFIRM_BASE = "https://handsoff.dev/confirmed";
-const RESEND_ENDPOINT = "https://api.resend.com/emails";
+const DEFAULT_CONFIRM_BASE = "https://forthedirector.com/confirmed";
+const LOOPS_TRANSACTIONAL_ENDPOINT = "https://app.loops.so/api/v1/transactional";
 const MAX_EMAIL_LENGTH = 254;
 // Pragmatic single-line email check — good enough for capture, real validation is the confirm click.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -14,9 +13,9 @@ const encoder = new TextEncoder();
 export interface Env {
   readonly SUPABASE_URL: string;
   readonly SUPABASE_SERVICE_ROLE_KEY: string;
-  readonly RESEND_API_KEY: string;
+  readonly LOOPS_API_KEY: string;
   readonly HANDSOFF_APP_TOKEN: string;
-  readonly EMAIL_FROM?: string;
+  readonly LOOPS_TRANSACTIONAL_ID: string;
   readonly CONFIRM_BASE_URL?: string;
 }
 
@@ -132,35 +131,34 @@ async function upsertSubscriber(
   return json({ error: "supabase_insert_failed" }, 502);
 }
 
+// Loops owns the subject/HTML/from in a dashboard template; the call only carries
+// the recipient and the confirmation link as a `{{confirmationUrl}}` variable.
 async function sendConfirmation(
   env: Env,
-  resendKey: string,
+  loopsKey: string,
   email: string,
   token: string,
 ): Promise<Response | null> {
   const confirmBase = (env.CONFIRM_BASE_URL ?? DEFAULT_CONFIRM_BASE).replace(/\/+$/, "");
   const confirmUrl = `${confirmBase}?token=${encodeURIComponent(token)}`;
-  const from = env.EMAIL_FROM ?? DEFAULT_FROM;
 
   let resp: Response;
   try {
-    resp = await fetch(RESEND_ENDPOINT, {
+    resp = await fetch(LOOPS_TRANSACTIONAL_ENDPOINT, {
       method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "content-type": "application/json" },
+      headers: { Authorization: `Bearer ${loopsKey}`, "content-type": "application/json" },
       body: JSON.stringify({
-        from,
-        to: [email],
-        subject: "Confirm your Hands-Off signup",
-        html: `<p>Thanks for signing up for Hands-Off.</p>
-<p><a href="${confirmUrl}">Confirm your email</a> to finish.</p>
-<p>If you didn't request this, ignore this email.</p>`,
-        text: `Thanks for signing up for Hands-Off.\nConfirm your email: ${confirmUrl}\nIf you didn't request this, ignore this email.`,
+        transactionalId: env.LOOPS_TRANSACTIONAL_ID,
+        email,
+        dataVariables: { confirmationUrl: confirmUrl },
       }),
     });
   } catch {
-    return json({ error: "resend_unreachable" }, 502);
+    return json({ error: "loops_unreachable" }, 502);
   }
-  if (!resp.ok) return json({ error: "resend_send_failed" }, 502);
+  // Loops can return 200 with { success: false } on a template/recipient problem.
+  const body = (await resp.json().catch(() => null)) as { success?: boolean } | null;
+  if (!resp.ok || body?.success === false) return json({ error: "loops_send_failed" }, 502);
   return null;
 }
 
@@ -176,8 +174,8 @@ async function handleSubscribe(request: Request, env: Env): Promise<Response> {
   if (supabaseUrl instanceof Response) return supabaseUrl;
   const serviceKey = readSecret(env.SUPABASE_SERVICE_ROLE_KEY, "SUPABASE_SERVICE_ROLE_KEY");
   if (serviceKey instanceof Response) return serviceKey;
-  const resendKey = readSecret(env.RESEND_API_KEY, "RESEND_API_KEY");
-  if (resendKey instanceof Response) return resendKey;
+  const loopsKey = readSecret(env.LOOPS_API_KEY, "LOOPS_API_KEY");
+  if (loopsKey instanceof Response) return loopsKey;
 
   let body: SubscribeBody;
   try {
@@ -196,7 +194,7 @@ async function handleSubscribe(request: Request, env: Env): Promise<Response> {
   // Already confirmed → nothing to send, treat as success (idempotent).
   if (row.confirmed) return json({ status: "already_confirmed" });
 
-  const sendError = await sendConfirmation(env, resendKey, email, row.confirmation_token);
+  const sendError = await sendConfirmation(env, loopsKey, email, row.confirmation_token);
   if (sendError) return sendError;
 
   return json({ status: "confirmation_sent" }, 202);

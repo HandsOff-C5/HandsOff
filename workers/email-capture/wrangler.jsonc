@@ -8,12 +8,12 @@
     "required": [
       "SUPABASE_URL",
       "SUPABASE_SERVICE_ROLE_KEY",
-      "RESEND_API_KEY",
+      "LOOPS_API_KEY",
       "HANDSOFF_APP_TOKEN",
     ],
   },
   "vars": {
-    "EMAIL_FROM": "Director <hi@forthedirector.com>",
+    "LOOPS_TRANSACTIONAL_ID": "cmqwz53xe0z5h0jyig41a7pbb",
     "CONFIRM_BASE_URL": "https://forthedirector.com/confirmed",
   },
 }

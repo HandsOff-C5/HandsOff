@@ -5,10 +5,10 @@ import worker, { type Env } from "./index";
 const env: Env = {
   SUPABASE_URL: "https://proj.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "service-key",
-  RESEND_API_KEY: "re_test",
+  LOOPS_API_KEY: "loops_test",
   HANDSOFF_APP_TOKEN: "app-token",
-  EMAIL_FROM: "Hands-Off <onboarding@resend.dev>",
-  CONFIRM_BASE_URL: "https://handsoff.dev/confirmed",
+  LOOPS_TRANSACTIONAL_ID: "test-transactional-id",
+  CONFIRM_BASE_URL: "https://forthedirector.com/confirmed",
 };
 
 function subscribe(body: unknown, headers: HeadersInit = {}): Request {
@@ -59,7 +59,7 @@ describe("email-capture Worker", () => {
           status: 201,
         }),
       )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "email-1" }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
 
     const res = await worker.fetch(
       subscribe({ email: "New@Example.com", source: "desktop" }, AUTH),
@@ -77,12 +77,13 @@ describe("email-capture Worker", () => {
       source: "desktop",
     });
 
-    // Second call: Resend with the token link.
-    const [resendUrl, resendInit] = fetchSpy.mock.calls[1]!;
-    expect(String(resendUrl)).toBe("https://api.resend.com/emails");
-    const sent = JSON.parse(String(resendInit?.body));
-    expect(sent.to).toEqual(["new@example.com"]);
-    expect(sent.html).toContain("token=tok-123");
+    // Second call: Loops transactional with the token link as a data variable.
+    const [loopsUrl, loopsInit] = fetchSpy.mock.calls[1]!;
+    expect(String(loopsUrl)).toBe("https://app.loops.so/api/v1/transactional");
+    const sent = JSON.parse(String(loopsInit?.body));
+    expect(sent.email).toBe("new@example.com");
+    expect(sent.transactionalId).toBe("test-transactional-id");
+    expect(sent.dataVariables.confirmationUrl).toContain("token=tok-123");
   });
 
   it("treats an already-confirmed duplicate as success without sending", async () => {
@@ -98,7 +99,7 @@ describe("email-capture Worker", () => {
     const res = await worker.fetch(subscribe({ email: "dup@example.com" }, AUTH), env);
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ status: "already_confirmed" });
-    expect(fetchSpy).toHaveBeenCalledTimes(2); // no Resend call
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // no Loops call
   });
 
   it("confirms via token", async () => {
