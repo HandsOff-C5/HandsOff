@@ -48,6 +48,7 @@ final class VoiceCuaLoop {
     private let nowProvider: (@Sendable () -> String)?
     private let targetResolveDelayMs: Int
     private let defaultToolCallBudget: Int
+    private let agentReplay: (any AgentReplayRecording)?
     private let observability: ObservabilityClient?
 
     // MARK: Engine singletons (the controller's useRef stores)
@@ -59,9 +60,9 @@ final class VoiceCuaLoop {
     private var interrupted = false
 
     /// Per-goal autonomous-loop ceiling on EXECUTED tool calls (U3 / KD6). Perception ticks are free.
-    static let defaultToolCallBudget = 30
+    nonisolated static let defaultToolCallBudget = 30
     /// Fixed retarget grace before intent resolution (the controller's DEFAULT_TARGET_RESOLVE_DELAY_MS).
-    static let defaultTargetResolveDelayMs = 1500
+    nonisolated static let defaultTargetResolveDelayMs = 1500
 
     init(
         driver: any CuaLoopDriver,
@@ -71,6 +72,7 @@ final class VoiceCuaLoop {
         targetResolveDelayMs: Int = VoiceCuaLoop.defaultTargetResolveDelayMs,
         toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget,
         replayStore: SupervisionReplayStore? = nil,
+        agentReplay: (any AgentReplayRecording)? = nil,
         observability: ObservabilityClient? = nil
     ) {
         self.driver = driver
@@ -80,6 +82,7 @@ final class VoiceCuaLoop {
         self.nowProvider = now
         self.targetResolveDelayMs = targetResolveDelayMs
         self.defaultToolCallBudget = toolCallBudget
+        self.agentReplay = agentReplay
         self.observability = observability
         self.sessions = SupervisionSessionStore(replay: replayStore)
         self.audit = ActionAuditStore(replay: replayStore)
@@ -129,6 +132,21 @@ final class VoiceCuaLoop {
             failedSignatures: FailedActionMemory())
         goalRun = run
         session = started
+        recordAgentReplay(
+            sessionId: started.id,
+            type: .sessionStarted,
+            timestamp: createdAt,
+            payload: .object([
+                "startedAt": .string(started.startedAt),
+                "toolCallBudget": .number(Double(defaultToolCallBudget)),
+            ])
+        )
+        recordAgentReplay(
+            sessionId: started.id,
+            type: .transcriptFinal,
+            timestamp: createdAt,
+            payload: AgentReplayPayloads.transcript(finalTranscript)
+        )
         let startedSessionId = started.id
         let startedAttributes: [String: ObservabilityAttributeValue] = [
             "speech_chars": .number(Double(finalTranscript.text.count)),
@@ -246,6 +264,16 @@ final class VoiceCuaLoop {
         runResult = nil
         recordIntent(run.sessionId, at, next)
         finishGoal(run, .blocked, at)
+        recordAgentReplay(
+            sessionId: run.sessionId,
+            type: .loopFailed,
+            timestamp: at,
+            payload: AgentReplayPayloads.loopTerminal(
+                status: "blocked",
+                errorClass: "Interrupted",
+                finalResponse: nil,
+                reason: "Interrupted")
+        )
         return true
     }
 
@@ -266,6 +294,16 @@ final class VoiceCuaLoop {
             runResult = nil
             recordIntent(run.sessionId, createdAt, next)
             finishGoal(run, .blocked, createdAt)
+            recordAgentReplay(
+                sessionId: run.sessionId,
+                type: .loopFailed,
+                timestamp: createdAt,
+                payload: AgentReplayPayloads.loopTerminal(
+                    status: "blocked",
+                    errorClass: "ActionBudgetExceeded",
+                    finalResponse: nil,
+                    reason: "Goal loop reached the action budget of \(run.toolCallBudget)")
+            )
             return
         }
 
@@ -294,6 +332,12 @@ final class VoiceCuaLoop {
         intent = next
         if !next.isSatisfied { runResult = nil }
         recordIntent(run.sessionId, createdAt, next)
+        recordAgentReplay(
+            sessionId: run.sessionId,
+            type: .intentResolved,
+            timestamp: createdAt,
+            payload: AgentReplayPayloads.intent(next, tick: run.nextTick, durationMs: resolveDurationMs)
+        )
         let resolverSessionId = run.sessionId
         let resolverTick = run.nextTick
         let resolverToolCount = tools.count
@@ -302,6 +346,16 @@ final class VoiceCuaLoop {
         if next.isSatisfied {
             DirectorDiagnostics.loop.info("goal satisfied session=\(run.sessionId, privacy: .public)")
             finishGoal(run, .succeeded, createdAt)
+            recordAgentReplay(
+                sessionId: run.sessionId,
+                type: .loopFinished,
+                timestamp: createdAt,
+                payload: AgentReplayPayloads.loopTerminal(
+                    status: "succeeded",
+                    errorClass: nil,
+                    finalResponse: AgentReplayPayloads.satisfiedSummary(next),
+                    reason: nil)
+            )
             await recordResolverObservability(
                 sessionId: resolverSessionId,
                 tick: resolverTick,
@@ -314,6 +368,16 @@ final class VoiceCuaLoop {
         guard case let .ready(readyNext) = next else {
             DirectorDiagnostics.loop.warning("goal blocked session=\(run.sessionId, privacy: .public) \(Self.intentSummary(next), privacy: .public)")
             finishGoal(run, .blocked, createdAt)
+            recordAgentReplay(
+                sessionId: run.sessionId,
+                type: .loopFailed,
+                timestamp: createdAt,
+                payload: AgentReplayPayloads.loopTerminal(
+                    status: AgentReplayPayloads.intentStatus(next),
+                    errorClass: AgentReplayPayloads.intentErrorClass(next),
+                    finalResponse: nil,
+                    reason: AgentReplayPayloads.intentReason(next))
+            )
             await recordResolverObservability(
                 sessionId: resolverSessionId,
                 tick: resolverTick,
@@ -380,6 +444,16 @@ final class VoiceCuaLoop {
             recordToolCalls(run, readyIntent, observation, approvalState, result, runningAt)
             runResult = PlanRunResult(status: .blocked, result: result)
             finishGoal(run, .blocked, runningAt)
+            recordAgentReplay(
+                sessionId: run.sessionId,
+                type: .loopFailed,
+                timestamp: runningAt,
+                payload: AgentReplayPayloads.loopTerminal(
+                    status: "blocked",
+                    errorClass: "RepeatedActionBlocked",
+                    finalResponse: nil,
+                    reason: "The same tool call already failed in this goal.")
+            )
             await recordActionObservability(
                 sessionId: run.sessionId,
                 actionCount: readyIntent.actionPlan.actionPlan.count,
@@ -401,6 +475,16 @@ final class VoiceCuaLoop {
             recordToolCalls(run, readyIntent, observation, approvalState, blocked, runningAt)
             runResult = PlanRunResult(status: .blocked, result: blocked)
             finishGoal(run, .blocked, runningAt)
+            recordAgentReplay(
+                sessionId: run.sessionId,
+                type: .loopFailed,
+                timestamp: runningAt,
+                payload: AgentReplayPayloads.loopTerminal(
+                    status: "blocked",
+                    errorClass: "CuaActionBlocked",
+                    finalResponse: nil,
+                    reason: AgentReplayPayloads.actionResultMessage(blocked))
+            )
             await recordActionObservability(
                 sessionId: run.sessionId,
                 actionCount: readyIntent.actionPlan.actionPlan.count,
@@ -417,7 +501,10 @@ final class VoiceCuaLoop {
         runResult = PlanRunResult(status: .running)
         // Dispatch every step through the GENERIC driver passthrough (`driver.call`, U1) so the full
         // 36-tool surface is reachable. Stop at the first failure and feed it forward for recovery.
-        let (actionResult, failedSignature) = await dispatchPlan(readyIntent.actionPlan.actionPlan)
+        let (actionResult, failedSignature) = await dispatchPlan(
+            readyIntent.actionPlan.actionPlan,
+            sessionId: run.sessionId
+        )
         recordToolCalls(run, readyIntent, observation, approvalState, actionResult, runningAt)
         runResult = PlanRunResult.fromActionResult(actionResult)
         auditEvents = audit.forSession(run.sessionId)
@@ -457,14 +544,32 @@ final class VoiceCuaLoop {
     /// represents the tick. The contract `tool_call.args` are bridged onto the driver-passthrough
     /// `JSONValue` family at the boundary (PORTING.md notes 4/6).
     private func dispatchPlan(
-        _ steps: [Contracts.ActionStep]
+        _ steps: [Contracts.ActionStep],
+        sessionId: String
     ) async -> (result: Contracts.CuaActionResult, failedSignature: String?) {
         var last = Contracts.CuaActionResult.succeeded(summary: "No action", state: nil)
         for step in steps {
             let (tool, args) = StepDispatch.driverCallForStep(step)
             DirectorDiagnostics.loop.info("dispatch tool=\(tool, privacy: .public) arg_keys=\(args.keys.sorted().joined(separator: ","), privacy: .public)")
+            let startedAt = timestamp()
+            recordAgentReplay(
+                sessionId: sessionId,
+                type: .toolCallStarted,
+                timestamp: startedAt,
+                payload: AgentReplayPayloads.toolCallStarted(tool: tool, args: args)
+            )
             let callResult = await driver.call(tool: tool, input: .object(args.mapValues(\.asDriverValue)))
             last = cuaResultToActionResult(callResult, summary: "Called \(tool)")
+            recordAgentReplay(
+                sessionId: sessionId,
+                type: .toolCallFinished,
+                timestamp: timestamp(),
+                payload: AgentReplayPayloads.toolCallFinished(
+                    tool: tool,
+                    args: args,
+                    result: last,
+                    status: AgentReplayPayloads.actionResultStatus(last))
+            )
             guard case .succeeded = last else {
                 DirectorDiagnostics.loop.error("dispatch failed tool=\(tool, privacy: .public) result=\(Self.actionResultSummary(last), privacy: .public)")
                 return (last, ActionDedup.callSignature(step))
@@ -484,6 +589,15 @@ final class VoiceCuaLoop {
             "risk": .string(ready.riskLevel.rawValue),
             "action_count": .number(Double(ready.actionPlan.actionPlan.count)),
         ]
+        recordAgentReplay(
+            sessionId: sessionId,
+            type: .approvalDecided,
+            timestamp: timestamp(),
+            payload: AgentReplayPayloads.approval(
+                decision: "approved",
+                risk: ready.riskLevel.rawValue,
+                actionCount: ready.actionPlan.actionPlan.count)
+        )
         await runGoalAction(run, ready, run.observations.last, approved: true)
         await recordObservability { client in
             try await client.analytics(
@@ -518,6 +632,25 @@ final class VoiceCuaLoop {
         goalRun = nil
         runResult = PlanRunResult(status: .rejected)
         auditEvents = audit.forSession(currentSession.id)
+        recordAgentReplay(
+            sessionId: sessionId,
+            type: .approvalDecided,
+            timestamp: decidedAt,
+            payload: AgentReplayPayloads.approval(
+                decision: "rejected",
+                risk: ready.riskLevel.rawValue,
+                actionCount: ready.actionPlan.actionPlan.count)
+        )
+        recordAgentReplay(
+            sessionId: sessionId,
+            type: .loopFailed,
+            timestamp: decidedAt,
+            payload: AgentReplayPayloads.loopTerminal(
+                status: "rejected",
+                errorClass: "RejectedBeforeExecution",
+                finalResponse: nil,
+                reason: "Rejected before execution")
+        )
         await recordObservability { client in
             try await client.analytics(
                 stage: .planRejected,
@@ -545,6 +678,16 @@ final class VoiceCuaLoop {
             runResult = nil
             recordIntent(run.sessionId, at, next)
             finishGoal(run, .blocked, at)
+            recordAgentReplay(
+                sessionId: run.sessionId,
+                type: .loopFailed,
+                timestamp: at,
+                payload: AgentReplayPayloads.loopTerminal(
+                    status: "blocked",
+                    errorClass: "Interrupted",
+                    finalResponse: nil,
+                    reason: "Interrupted")
+            )
         }
     }
 
@@ -569,6 +712,16 @@ final class VoiceCuaLoop {
     private func wait(_ ms: Int) async {
         guard ms > 0 else { return }
         try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
+    }
+
+    @discardableResult
+    private func recordAgentReplay(
+        sessionId: String,
+        type: AgentReplayEventType,
+        timestamp: String,
+        payload: Contracts.JSONValue
+    ) -> AgentReplayEvent? {
+        agentReplay?.record(sessionId: sessionId, type: type, timestamp: timestamp, payload: payload)
     }
 
     private func recordSessionStartedObservability(

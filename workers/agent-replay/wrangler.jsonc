@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "handsoff-agent-replay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-22",
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AGENT_REPLAY_SESSIONS",
+        "class_name": "AgentReplaySession",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AgentReplaySession"],
+    },
+  ],
+  "secrets": {
+    "required": ["HANDSOFF_APP_TOKEN", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"],
+  },
+  "vars": {
+    "LANGFUSE_BASE_URL": "https://web-production-88cc3.up.railway.app",
+  },
+}

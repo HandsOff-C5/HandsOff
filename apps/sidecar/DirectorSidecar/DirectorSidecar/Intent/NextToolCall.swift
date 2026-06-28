@@ -58,15 +58,36 @@ enum NextToolCallResolver {
         tools: [DriverToolDefinition] = [],
         model: String = defaultModel,
         intentId: String = "intent-llm",
-        createdAt: String? = nil
+        createdAt: String? = nil,
+        replay: (any AgentReplayRecording)? = nil
     ) async -> Contracts.ResolvedIntent {
         let stamp = createdAt ?? isoNow()
         let id = intentId
+        let messages = NextToolCallPrompt.buildMessages(input, tools: tools)
 
         do {
+            await replay?.record(
+                sessionId: input.sessionId,
+                type: .promptBuilt,
+                timestamp: stamp,
+                payload: .object([
+                    "model": .string(model),
+                    "toolCatalogSize": .number(Double(tools.count)),
+                    "messages": .replayEncoded(messages),
+                ])
+            )
             let completion = try await client.completeNextToolCall(
                 model: model,
-                messages: NextToolCallPrompt.buildMessages(input, tools: tools)
+                messages: messages
+            )
+            await replay?.record(
+                sessionId: input.sessionId,
+                type: .modelResponse,
+                timestamp: nil,
+                payload: .object([
+                    "model": .string(model),
+                    "completion": .replayEncoded(completion),
+                ])
             )
             guard let choice = completion.choices.first else {
                 return .blockedIntent(status: .blocked, input: input, id: id, createdAt: stamp,

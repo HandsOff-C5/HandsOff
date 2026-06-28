@@ -89,6 +89,12 @@ private func finalTranscript(_ text: String) -> Contracts.FinalTranscript {
     return try! JSONDecoder().decode(Contracts.FinalTranscript.self, from: Data(json.utf8))
 }
 
+private func voiceReplayURL(_ name: String) -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("VoiceCuaLoopTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent(name)
+}
+
 private func focusedWindow(pid: Int = 42, windowId: Int = 7) -> CuaWindow {
     CuaWindow(id: "win-1", title: "Codex", app: "Codex", pid: pid, windowId: windowId,
               availability: .available, accessStatus: .accessible, focused: true,
@@ -123,6 +129,7 @@ private func makeLoop(
     driver: FakeLoopDriver,
     resolver: ScriptedResolver,
     toolCallBudget: Int = VoiceCuaLoop.defaultToolCallBudget,
+    agentReplay: (any AgentReplayRecording)? = nil,
     observability: ObservabilityClient? = nil
 ) -> VoiceCuaLoop {
     VoiceCuaLoop(
@@ -131,6 +138,7 @@ private func makeLoop(
         now: { "2026-06-22T12:00:00.000Z" },
         targetResolveDelayMs: 0,
         toolCallBudget: toolCallBudget,
+        agentReplay: agentReplay,
         observability: observability)
 }
 
@@ -364,6 +372,64 @@ struct VoiceCuaLoopTests {
         #expect(records.contains { $0.event == "action.failed" && $0.stage == .actionFailed })
         #expect(records.contains { $0.event == "action.completed" && $0.stage == .actionCompleted })
         #expect(forbiddenObservabilityKey(records) == nil)
+    }
+
+    // Agent Replay: the approved path streams an ordered local replay that can be retried to the
+    // Worker without blocking loop state transitions.
+    @Test func emitsAgentReplayGoldenSequenceForApprovedGoalLoop() async {
+        let agentReplay = AgentReplayEmitter(
+            store: AgentReplayStore(url: voiceReplayURL("voice-loop-agent-replay.json")),
+            autoFlush: false,
+            clock: { "2026-06-22T12:00:00.000Z" }
+        )
+        let driver = FakeLoopDriver(windows: [focusedWindow()], windowState: windowState(commitLabel: "Send"))
+        let resolver = ScriptedResolver([act("click", args: clickSendArgs), done("Clicked Send")])
+        let loop = makeLoop(driver: driver, resolver: resolver, agentReplay: agentReplay)
+
+        await loop.handleFinalTranscript(finalTranscript("send it"))
+        #expect(agentReplay.pendingEvents().map(\.type) == [
+            .sessionStarted,
+            .transcriptFinal,
+            .intentResolved,
+        ])
+
+        await loop.approve()
+
+        let events = agentReplay.pendingEvents()
+        #expect(events.map(\.eventId) == [
+            "session-1:0:session_started",
+            "session-1:1:transcript_final",
+            "session-1:2:intent_resolved",
+            "session-1:3:approval_decided",
+            "session-1:4:tool_call_started",
+            "session-1:5:tool_call_finished",
+            "session-1:6:intent_resolved",
+            "session-1:7:loop_finished",
+        ])
+        #expect(events.map(\.type) == [
+            .sessionStarted,
+            .transcriptFinal,
+            .intentResolved,
+            .approvalDecided,
+            .toolCallStarted,
+            .toolCallFinished,
+            .intentResolved,
+            .loopFinished,
+        ])
+        guard case let .object(transcript) = events[1].payload,
+              case let .object(approval) = events[3].payload,
+              case let .object(toolStart) = events[4].payload,
+              case let .object(toolFinish) = events[5].payload,
+              case let .object(loopFinished) = events[7].payload else {
+            Issue.record("expected object replay payloads")
+            return
+        }
+        #expect(transcript["text"] == .string("send it"))
+        #expect(approval["decision"] == .string("approved"))
+        #expect(toolStart["tool"] == .string("click"))
+        #expect(toolFinish["status"] == .string("succeeded"))
+        #expect(loopFinished["status"] == .string("succeeded"))
+        #expect(loopFinished["finalResponse"] == .string("Clicked Send"))
     }
 
     // U3 autonomous loop: interrupt() stops the loop and finishes the session blocked.
